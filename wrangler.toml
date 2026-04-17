@@ -1,0 +1,6 @@
+﻿name = "chicko-api-proxy"
+main = "src/index.ts"
+compatibility_date = "2024-04-17"
+
+[vars]
+ENVIRONMENT = "development"
