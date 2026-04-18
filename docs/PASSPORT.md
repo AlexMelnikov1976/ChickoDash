@@ -4,8 +4,8 @@
 > История изменений — в разделе [Changelog](#10-changelog) внизу.
 > Если что-то здесь противоречит коду в репо — прав код, этот документ надо обновить.
 
-**Последнее обновление:** 18.04.2026, ночь — healthcheck активен, Волна 2 на 65%
-**Версия паспорта:** 3.9 (консолидирует v3.3–v3.8 + результаты 18.04 ночь)
+**Последнее обновление:** 18.04.2026, ночь (23:00 MSK) — Волна 2 на 75%, observability добавлена
+**Версия паспорта:** 3.10 (консолидирует v3.3–v3.9 + результаты 18.04 ночь)
 
 ---
 
@@ -15,9 +15,9 @@
 
 **Пользователи:** владельцы франчайзи-ресторанов (видят свой ресторан), управляющая компания (видит всю сеть).
 
-**Текущее поколение (v4):** статический HTML-дашборд с hardcoded подключением к ClickHouse. Работает, но не масштабируется.
+**Текущее поколение (v4):** статический HTML-дашборд с hardcoded подключением к ClickHouse.
 
-**Целевое поколение:** тот же дашборд, но данные приходят через защищённый API с JWT + row-level security. **API работает end-to-end, мониторинг активен.** Следующий шаг M4 — интеграция старого HTML-дашборда с API.
+**Целевое поколение:** тот же дашборд, но данные приходят через защищённый API с JWT + row-level security. **API работает end-to-end, мониторинг активен, структурированные логи пишутся.** Следующий шаг M4 — интеграция старого HTML-дашборда с API.
 
 ---
 
@@ -28,13 +28,15 @@
 | **Production API** | https://chicko-api-proxy.chicko-api.workers.dev 🟢 |
 | **GitHub (private)** | github.com/AlexMelnikov1976/chicko-api-proxy |
 | **Локально (Mac)** | `~/Developer/chicko-api-proxy` |
-| **Общий прогресс** | ~55% от плана (Волна 1 ✅, Волна 2 на 65% ✅, API end-to-end работает, Dashboard 0%) |
-| **Активный блокер** | Нет. `/api/query` работает end-to-end (Workers → n8n → ClickHouse). |
+| **Общий прогресс** | ~60% от плана (Волна 1 ✅, Волна 2 на 75% ✅, API end-to-end работает, Dashboard 0%) |
+| **Активный блокер** | Нет. `/api/query` работает end-to-end. |
 | **Ближайший milestone** | M4: Frontend-дашборд v4 переведён на JWT API — ETA 20.04 |
-| **Автодеплой** | ✅ GitHub Actions: push в main → wrangler deploy (~24 сек) |
-| **n8n proxy** | ✅ Active, webhook `/webhook/clickhouse-proxy`, тест end-to-end прошёл |
-| **Мониторинг** | ✅ Healthcheck каждые 3 часа → Telegram алерт при падении/восстановлении |
+| **Автодеплой** | ✅ GitHub Actions: 7 подряд зелёных деплоев за 18.04 |
+| **n8n proxy** | ✅ Active, webhook `/webhook/clickhouse-proxy` |
+| **Мониторинг (uptime)** | ✅ n8n healthcheck каждые 3 часа → Telegram алерт при падении/восстановлении |
+| **Мониторинг (логи)** | ✅ Cloudflare Observability: все `console.log/error` + invocation logs, retention 3 дня |
 | **Срочный долг** | 🔴 Ротация пароля `dashboard_ro` — засветился в shell history и в истории чата с Claude |
+| **Косметический баг** | `[query] user=undefined` в логах — неверное имя поля JWT payload в `src/index.ts`, фикс 2 мин |
 | **Ответственный** | Aleksey Melnikov |
 
 ---
@@ -45,11 +47,12 @@
 |---|---|---|---|
 | Исходный код | GitHub (private) | `github.com/AlexMelnikov1976/chicko-api-proxy` | SSH key на MacBook |
 | Backend API | Cloudflare Workers | `chicko-api-proxy.chicko-api.workers.dev` | `wrangler login` |
-| База данных | Yandex Managed ClickHouse | `rc1d-3r30isjr73k4uue8.mdb.yandexcloud.net:8443` | Только через n8n proxy (прямое из Workers не работает) |
+| База данных | Yandex Managed ClickHouse | `rc1d-3r30isjr73k4uue8.mdb.yandexcloud.net:8443` | Только через n8n proxy |
 | Proxy / оркестратор | n8n self-hosted | `melnikov.app.n8n.cloud` | Web UI |
 | n8n workflow: ClickHouse Proxy | n8n | `/webhook/clickhouse-proxy` | Active с 18.04.2026 |
-| n8n workflow: Healthcheck | n8n | cron каждые 3 часа | Active с 18.04.2026 |
+| n8n workflow: Healthcheck | n8n | cron 3h | Active с 18.04.2026 |
 | CI/CD | GitHub Actions | `.github/workflows/deploy.yml` | Auto на push в main |
+| Observability (логи Worker'а) | Cloudflare Workers Logs | dash → Worker → Observability | Встроенный UI |
 | Локальная разработка | MacBook Air (macOS, zsh) | `~/Developer/chicko-api-proxy` | Терминал |
 | Старый дашборд (v4) | Один HTML файл | `chiko_dashboard_v4__19_.html` | Раздаётся вручную |
 
@@ -69,30 +72,31 @@
 ┌──────────────────────────┐
 │  Cloudflare Workers      │◄─── GitHub Actions (auto-deploy on push)
 │  chicko-api-proxy        │◄─── n8n Healthcheck (GET /health, 3h cron)
-│    • JWT validate        │
+│    • JWT validate        │───► Cloudflare Observability (console.log/error)
 │    • Row-level security  │
+│    • Structured logging  │
 └────────┬─────────────────┘
          │  POST /webhook/clickhouse-proxy
          │  ?user=X&password=Y&database=chicko&query=SQL
          ▼
 ┌──────────────────────────┐
 │  n8n Workflow            │  ✅ ACTIVE
-│  ClickHouse Proxy        │  Webhook → HTTP Request → Respond
+│  ClickHouse Proxy        │
 │  allowUnauthorizedCerts  │
 └────────┬─────────────────┘
-         │  HTTPS
+         │
          ▼
 ┌──────────────────────────┐
 │  Yandex Managed          │
 │  ClickHouse (chicko DB)  │
 └──────────────────────────┘
 
-Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions only)
+Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions)
 ```
 
-**Проверено работающим end-to-end 18.04.2026:** curl → Workers → n8n → ClickHouse → ответ `SELECT 1` за ~30мс round-trip.
+**Проверено работающим 18.04.2026:** curl → Workers → n8n → ClickHouse → ответ `SELECT 1` за ~1.1мс (ClickHouse) / ~30мс total round-trip.
 
-**Healthcheck протестирован 18.04.2026:** сломал URL → пришёл 🔴 DOWN, вернул URL → при следующем прогоне логика правильно промолчала (state cleared после reimport).
+**Healthcheck + Observability активны:** healthcheck каждые 3 часа, Observability пишет все request/response + мои структурированные логи с префиксами `[request]`, `[login]`, `[query]`.
 
 ---
 
@@ -101,65 +105,82 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions only)
 ### 5.1 Почему n8n proxy, а не прямое подключение Workers → ClickHouse?
 
 **Пробовали. Не работает:**
-- HTTPS порт 8443 → SSL error 526 (Yandex использует самоподписанный сертификат, Cloudflare не доверяет)
+- HTTPS порт 8443 → SSL error 526 (Yandex самоподписанный сертификат, Cloudflare не доверяет)
 - HTTP порт 8123 → Connection timeout 522 (ACL закрыт для внешних)
 
-**n8n решает обе проблемы:**
-- n8n уже имеет рабочее подключение к этому ClickHouse (`allowUnauthorizedCerts: true`)
+**n8n решает:**
+- Имеет рабочее подключение к этому ClickHouse (`allowUnauthorizedCerts: true`)
 - Cloudflare Workers свободно общается с любым HTTPS-эндпоинтом n8n
 
-**Плата:** +50-100мс latency. **Проверено 18.04:** реальное round-trip ~30мс, приемлемо.
+**Плата:** +50-100мс latency. Проверено 18.04: реальное round-trip ~30мс, приемлемо.
 
-### 5.2 Почему Cloudflare Workers, а не обычный Node.js backend?
+### 5.2 Почему Cloudflare Workers?
 
-- Бесплатный тир покрывает наши нужды (100k req/day)
-- Глобальный edge → ~20мс до API из любой точки
-- Нет infrastructure-as-a-service-headache
+- Бесплатный тир (100k req/day)
+- Глобальный edge → ~20мс до API
 - Zero-downtime secret updates
+- Встроенная Observability (см. 5.10)
 
-### 5.3 Почему JWT 24h, а не sessions в БД?
+### 5.3 Почему JWT 24h?
 
-- Workers stateless, session store потребовал бы KV или внешний Redis
-- 24h — компромисс для аналитической BI-задачи
-- Ротация `JWT_SECRET` разом разлогинивает всех → есть kill switch
+- Workers stateless
+- 24h — удобно для BI-задачи
+- Ротация `JWT_SECRET` разом разлогинивает всех
 
-### 5.4 Почему row-level security регексом, а не view в ClickHouse?
+### 5.4 Почему row-level security регексом?
 
-- Регекс даёт контроль внутри API-слоя
-- `tenant_id` всегда берётся из JWT, не из body → нельзя обойти RLS
+- Контроль внутри API-слоя
+- `tenant_id` из JWT, не из body → нельзя обойти RLS
 
-### 5.5 Почему документация в git (этот паспорт), а не в Notion?
+### 5.5 Почему документация в git (паспорт), а не в Notion?
 
 - В git — технические детали. В Notion — оперативные задачи и трекинг.
-- Ошибка прошлой версии: 4 MD-файла повторяли друг друга на 70%. Консолидированы в `README.md` + `PASSPORT.md`.
 
-### 5.6 Почему GitHub Actions, а не `wrangler deploy` руками (18.04.2026)
+### 5.6 Почему GitHub Actions (18.04.2026)
 
-- Устраняет риск "забыл задеплоить после коммита"
-- Аудит-лог: кто/когда деплоил
-- Воспроизводимость: чистая Ubuntu + `npm ci`
-- Нулевой риск для prod: упавший workflow не трогает prod
+- Устраняет "забыл задеплоить"
+- Аудит-лог
+- Воспроизводимость
+- Нулевой риск для prod
 
-### 5.7 Почему credentials в URL query params, а не body/headers (долг)
+### 5.7 Почему credentials в URL query params (долг)
 
-- **Исторически:** ClickHouse HTTP API поддерживает query params из коробки
-- **Проблема:** пароль попадает в логи n8n
-- **План:** после ротации пароля — рефакторинг `src/clickhouse.ts` на body/headers
+- ClickHouse HTTP API поддерживает query params из коробки
+- **Проблема:** пароль в логах n8n
+- **План:** после ротации — рефакторинг на body/headers
 
-### 5.8 Почему healthcheck через n8n, а не UptimeRobot (18.04.2026, долг)
+### 5.8 Почему healthcheck 3 часа, а не 5 минут (18.04.2026, долг на UptimeRobot)
 
-- **Сейчас:** n8n делает GET `/health` каждые 3 часа (8 запусков/день = 240/месяц — комфортно для любого тарифа)
-- **Плата:** о падении узнаешь в среднем через 1.5 часа (в худшем случае — 3 часа)
-- **Почему не 5 минут:** n8n Cloud Starter лимит 2500 executions/мес. Healthcheck каждые 5 минут = 8640/мес, сожрал бы весь лимит за 9 дней
-- **Правильный долгосрочный инструмент:** UptimeRobot (бесплатный dedicated-сервис для healthcheck'ов, проверка каждые 5 минут, алерты в Telegram). Мигрируем когда проект будет иметь реальных пользователей и 1.5 часа downtime станет неприемлемо.
-- **Урок:** workflow-движки не оптимизированы под частые простые запросы. n8n — для оркестрации, UptimeRobot — для uptime. Используй правильный инструмент.
+- n8n Cloud имеет лимит executions (2500/мес на Starter)
+- Healthcheck каждые 5 мин = 8640/мес, сожрал бы лимит за 9 дней
+- **Правильный долгосрочный инструмент:** UptimeRobot (бесплатный dedicated-сервис). Мигрируем когда появятся реальные пользователи.
 
-### 5.9 Почему healthcheck проверяет только HTTP status code, а не body (18.04.2026)
+### 5.9 Почему healthcheck проверяет только HTTP status code (18.04.2026)
 
-- Первая версия проверяла `statusCode === 200 && body.status === 'ok'`
-- Ловили ложные алерты: при неожиданном формате ответа (HTML-страница 404) body не парсился как JSON, `isHealthy` становился false
-- Упрощено до `statusCode >= 200 && statusCode < 300`. Для `/health` достаточно.
+- Первая версия проверяла body.status — ловили ложные алерты на Cloudflare 404 HTML
+- Упрощено до `statusCode >= 200 && < 300`. Для `/health` достаточно.
 - Принцип: **меньше зависимостей — меньше багов**
+
+### 5.10 Почему Cloudflare Workers Logs, а не Sentry (18.04.2026)
+
+- **Попытка зайти в Sentry:** 403 Forbidden на signup-page со всех браузеров, с VPN и без. Сам сайт у них "All Systems Operational" — это не технический сбой, а гео-блокировка на уровне браузерного fingerprint (VPN не помогает).
+- **Cloudflare Workers Logs** — встроенная альтернатива. Пишет `console.log/error` + invocation logs каждого request'а. UI в Cloudflare → Worker → Observability.
+- **Плата:** нет такого UX как Sentry (группировка issues, release tracking, alert rules). Retention 3 дня на бесплатном тире.
+- **Плюсы:** ноль настройки, ноль зависимостей, никакой гео-блокировки.
+- **Дальнейший путь:** если Sentry когда-то станет доступен — можно добавить его поверх, `console.error` всё равно попадут и туда и сюда.
+
+### 5.11 wrangler.toml как IaC для observability (18.04.2026)
+
+- Включить Logs можно через UI Cloudflare, но **при следующем `wrangler deploy` настройка UI может перезаписаться тем, что в `wrangler.toml`**
+- Поэтому блок `[observability]` + `[observability.logs]` добавлен в `wrangler.toml` — теперь каждый деплой подтверждает включённость
+- Принцип: **всё, что влияет на работу системы, должно быть в git**
+
+### 5.12 Structured logging с префиксами (18.04.2026)
+
+- Формат: `[request] POST /api/query`, `[query] user=... tenant=... sql_length=...`, `[login] error: ... stack: ...`
+- **Что логируется:** метод, путь, email пользователя, ID tenant'а, длина SQL, время выполнения, код ответа, stack trace при ошибке
+- **Что НЕ логируется:** пароли, JWT-токены, содержимое SQL (может содержать PII), данные из ClickHouse
+- Единые префиксы в квадратных скобках позволяют фильтровать в Observability UI по категориям
 
 ---
 
@@ -169,31 +190,30 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions only)
 
 | Дата | Что | Действие | Причина | Кто сделал |
 |---|---|---|---|---|
-| 18.04.2026 вечер | `CLICKHOUSE_HOST` (Cloudflare secret) | Обновлён: `rc1d-...:8443` → `https://melnikov.app.n8n.cloud/webhook/clickhouse-proxy` | Переключение с прямого адреса ClickHouse на n8n-прокси | Aleksey |
-| 18.04.2026 | Cloudflare API Token (для CI) | Создан новый токен (scope: Edit Cloudflare Workers) | Нужен для GitHub Actions. Сохранён в GitHub Secrets как `CLOUDFLARE_API_TOKEN` | Aleksey |
-| 🔴 TBD URGENT | ClickHouse `dashboard_ro` пароль | **Ротация обязательна** | Старый пароль `chiko_dash_2026` засветился в: (1) старом HTML-дашборде v4, (2) shell history MacBook, (3) истории чата с Claude, (4) в логах n8n execution history. | Ожидает (утро 19.04) |
-| 🟠 TBD | iiko passwords (`1234567890`, `79062181048`) | Ротация рекомендуется | Засветились при экспорте полного n8n workspace 18.04. Плюс оба слабые. | Ожидает |
-| 17.04.2026 | Локальный `.dev.vars` | Удалён старый пароль, placeholder | Подготовка к ротации | Aleksey |
-| TBD | `JWT_SECRET` (production) | Ротация при переходе к real users | Текущий — dev-level | Ожидает |
+| 18.04.2026 вечер | `CLICKHOUSE_HOST` (Cloudflare secret) | Обновлён: `rc1d-...:8443` → `https://melnikov.app.n8n.cloud/webhook/clickhouse-proxy` | Переключение на n8n-прокси | Aleksey |
+| 18.04.2026 | Cloudflare API Token (для CI) | Создан (scope: Edit Cloudflare Workers) | GitHub Actions. Сохранён как `CLOUDFLARE_API_TOKEN` | Aleksey |
+| 🔴 TBD URGENT | ClickHouse `dashboard_ro` пароль | **Ротация обязательна** | Старый пароль `chiko_dash_2026` засветился в: (1) старом HTML-дашборде v4, (2) shell history MacBook, (3) истории чата с Claude, (4) n8n execution history | Ожидает (утро 19.04) |
+| 🟠 TBD | iiko passwords (`1234567890`, `79062181048`) | Ротация рекомендуется | Засветились при первом (ошибочном) экспорте n8n workspace 18.04. Плюс оба слабые. | Ожидает |
+| 17.04.2026 | Локальный `.dev.vars` | Очищен от старого пароля | Подготовка к ротации | Aleksey |
+| TBD | `JWT_SECRET` (production) | Ротация при переходе к real users | Dev-level, для MVP | Ожидает |
 
 ### Где живут credentials
 
 | Значение | Где лежит | Кто видит |
 |---|---|---|
 | `CLICKHOUSE_PASSWORD` production | Cloudflare Workers secrets | Только `wrangler secret` |
-| `CLICKHOUSE_PASSWORD` локально | `~/Developer/chicko-api-proxy/.dev.vars` | Только на MacBook (в `.gitignore`) |
+| `CLICKHOUSE_PASSWORD` локально | `~/Developer/chicko-api-proxy/.dev.vars` | Только на MacBook (gitignored) |
 | `CLICKHOUSE_HOST` production | Cloudflare Workers secrets (webhook URL n8n) | Только `wrangler secret` |
 | `JWT_SECRET` production | Cloudflare Workers secrets | Только `wrangler secret` |
 | `CLOUDFLARE_API_TOKEN` (для CI) | GitHub Secrets | Только GitHub Actions |
 | Telegram bot credential `Chicko` (n8n) | n8n Credentials vault | Только через n8n UI |
-| ClickHouse `dashboard_ro` credentials | Yandex Cloud + менеджер паролей Aleksey | Только Aleksey |
+| ClickHouse `dashboard_ro` credentials | Yandex Cloud + менеджер паролей | Только Aleksey |
 | SSH-ключ к GitHub | `~/.ssh/id_ed25519` на MacBook | Только Aleksey |
 
 **Правила:**
 - Никогда не коммитить в git
 - При смене — **сначала** менеджер паролей, **потом** Cloudflare secrets, **потом** n8n, **потом** `.dev.vars`
-- После каждой ротации — запись в таблицу выше
-- **Не пересылать пароли в текстовых каналах** (чат с LLM, Slack, email). Если попали — ротировать следующим же действием.
+- Не пересылать пароли в текстовых каналах. Если попали — ротировать следующим же действием.
 
 ---
 
@@ -202,70 +222,63 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions only)
 ```
 ~/Developer/chicko-api-proxy/
 ├── src/
-│   ├── index.ts          # Main worker: routing + CORS
-│   ├── auth.ts           # JWT generation / validation
-│   └── clickhouse.ts     # ClickHouse client + row-level security
+│   ├── index.ts              # Main worker: routing + CORS + structured logging
+│   ├── auth.ts               # JWT generation / validation
+│   └── clickhouse.ts         # ClickHouse client + row-level security
 ├── infra/
 │   └── n8n/
-│       └── clickhouse_proxy.json   # ✅ n8n workflow (в git с 18.04.2026)
+│       ├── clickhouse_proxy.json   # ✅ в git с 18.04.2026
+│       └── healthcheck.json        # ✅ в git с 18.04.2026
 ├── docs/
-│   ├── PASSPORT.md       # Этот файл
-│   └── archive/          # Старые MD-файлы
+│   ├── PASSPORT.md           # Этот файл
+│   └── archive/              # Старые MD-файлы (TODO)
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml    # ✅ GitHub Actions автодеплой (с 18.04.2026)
+│       └── deploy.yml        # ✅ GitHub Actions автодеплой
 ├── .gitignore
-├── .dev.vars             # Gitignored. Локальные секреты
-├── README.md             # Краткий техдок + API reference
+├── .dev.vars                 # Gitignored. Локальные секреты
+├── README.md
 ├── package.json
 ├── package-lock.json
 ├── tsconfig.json
-└── wrangler.toml
+└── wrangler.toml             # ✅ включает [observability] блок (IaC)
 ```
 
 **Что не в git:** `node_modules/`, `.wrangler/`, `.dev.vars`, `dist/`.
-
-**TODO:** экспортировать Healthcheck workflow в `infra/n8n/healthcheck.json` следующей сессией.
 
 ---
 
 ## 8. План развития — Волны инфраструктуры
 
 **Синхронизация с экосистемой n8n:**
-- USER_CONTEXT в Weekly Advisor расширен блоком про стек Chicko Analytics
+- USER_CONTEXT в Weekly Advisor расширен блоком про Chicko
 - Запись в базе Проектов Notion обновлена
 - Скилл chiko-franchise-dashboard обновлён до v1.1
 
 
 
-### ✅ Волна 1: Критическая инфраструктура (завершена 17.04.2026 вечером)
+### ✅ Волна 1: Критическая инфраструктура (завершена 17.04.2026)
 
-| Шаг | Статус |
-|---|---|
-| Проект перенесён с Google Drive → `~/Developer/chicko-api-proxy` | ✅ |
-| `git init` + `.gitignore` + первый коммит | ✅ |
-| GitHub private repo + SSH key | ✅ |
-| Git identity настроена | ✅ |
-| 4 старых MD-файла консолидированы в README.md + паспорт | ✅ |
-| n8n workflow JSON в `infra/n8n/` | ✅ (18.04.2026) |
-| `docs/archive/` с историей старой документации | ⏳ |
+Все пункты закрыты в одну сессию. Детали в changelog.
 
-### 🟠 Волна 2: Автоматизация deploy и мониторинга (65% готово)
+### 🟠 Волна 2: Автоматизация deploy и мониторинга (75% готово)
 
-| Шаг | Время | Экономия | Статус |
-|---|---|---|---|
-| GitHub Actions workflow `.github/workflows/deploy.yml` | ~40 мин | 3-5 мин × каждый deploy | ✅ **18.04.2026** |
-| Cloudflare API Token → GitHub Secrets | ~10 мин | Часть выше | ✅ **18.04.2026** |
-| **Активация n8n proxy** — workflow собран с нуля, импортирован, активирован | ~60 мин | Разблокировка `/api/query` (M3) | ✅ **18.04.2026** |
-| **Обновление `CLICKHOUSE_HOST` secret** на webhook URL n8n | ~5 мин | Часть выше | ✅ **18.04.2026** |
-| Экспорт n8n ClickHouse Proxy в `infra/n8n/` + git commit | ~10 мин | Versioning инфры | ✅ **18.04.2026** |
-| **n8n healthcheck workflow** (3h cron → Telegram при падении/восстановлении) | ~40 мин | Узнаёшь о падении до того как клиент позвонит | ✅ **18.04.2026** |
-| 🔴 **Ротация пароля ClickHouse** — URGENT после компрометации | ~20 мин | Закрытие security-риска | ⏳ NEXT (утро 19.04) |
-| Экспорт n8n Healthcheck в `infra/n8n/healthcheck.json` + commit | ~5 мин | Versioning | ⏳ |
-| Sentry в Workers (DSN в secret + `init()` в `index.ts`) | ~20 мин | Stack-trace любой 500-ки в prod | ⏸ |
-| Рефакторинг clickhouse.ts: credentials в body, не в URL (см. 5.7) | ~30 мин | Password больше не в логах | ⏸ (после ротации) |
+| Шаг | Время | Статус |
+|---|---|---|
+| GitHub Actions workflow (автодеплой) | ~40 мин | ✅ **18.04.2026** |
+| Cloudflare API Token → GitHub Secrets | ~10 мин | ✅ **18.04.2026** |
+| Активация n8n proxy (M3 закрыт) | ~60 мин | ✅ **18.04.2026** |
+| Обновление `CLICKHOUSE_HOST` secret | ~5 мин | ✅ **18.04.2026** |
+| Экспорт n8n ClickHouse Proxy в `infra/n8n/` | ~10 мин | ✅ **18.04.2026** |
+| n8n healthcheck workflow + Telegram | ~40 мин | ✅ **18.04.2026** |
+| Экспорт n8n Healthcheck в `infra/n8n/` | ~5 мин | ✅ **18.04.2026** |
+| Cloudflare Workers Logs + structured logging | ~30 мин | ✅ **18.04.2026** |
+| wrangler.toml с `[observability]` блоком (IaC) | (часть выше) | ✅ **18.04.2026** |
+| 🔴 **Ротация пароля ClickHouse** | ~20 мин | ⏳ NEXT (утро 19.04) |
+| Фикс `user=undefined` в логах (читаем auth.ts, корректируем field name) | ~5 мин | ⏳ |
+| Рефакторинг clickhouse.ts: credentials в body (см. 5.7) | ~30 мин | ⏸ (после ротации) |
 
-### 🟡 Волна 3: Трекинг и процесс (план: 1 день)
+### 🟡 Волна 3: Трекинг и процесс
 
 | Шаг | Цель |
 |---|---|
@@ -275,25 +288,25 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions only)
 | n8n workflow: GitHub webhook → Notion update | Автообновление статусов |
 | Google Calendar events с milestones M4-M6 | Дедлайны в календаре |
 
-### 🟢 Волна 4: Автоматизация бизнес-процесса (план: 2-3 дня)
+### 🟢 Волна 4: Автоматизация бизнес-процесса
 
 | Шаг | Цель |
 |---|---|
-| Cloudflare Pages для HTML-дашборда + автодеплой из git | URL вместо раздачи HTML вручную |
-| n8n daily-rebuild: Google Sheets → skill → Pages → Telegram | Дашборд обновляется сам каждое утро |
-| n8n metrics-alerts | Проактивный мониторинг бизнес-метрик |
-| Cloudflare Workers Cron Trigger: warm-cache benchmarks в KV | Dashboard загружается за 50мс |
-| AI-инсайты в Chicko (рекомендация #2 Advisor 18.04) | Умные комментарии к метрикам |
+| Cloudflare Pages для HTML-дашборда | URL вместо раздачи HTML |
+| n8n daily-rebuild: Sheets → skill → Pages → Telegram | Дашборд обновляется сам |
+| n8n metrics-alerts | Проактивный мониторинг метрик |
+| Cloudflare Workers Cron Trigger: warm-cache в KV | Dashboard за 50мс |
+| AI-инсайты (рекомендация #2 Advisor 18.04) | Умные комментарии к метрикам |
 
 ### ⚪ Волна 5: Полировка
 
 - Rate limiting через Workers KV (100 req/hour/user)
-- Unit + integration tests (JWT + RLS-injection)
-- CORS whitelist вместо `*` для production
+- Unit + integration tests
+- CORS whitelist вместо `*`
 - Dashboard usage analytics
 - Обновление wrangler 3.114 → 4.x
-- **Миграция healthcheck с n8n на UptimeRobot** (см. 5.8) — когда появятся реальные пользователи и 1.5 ч downtime станет неприемлемо
-- Перевод iiko-потоков n8n с `passPlain` на Credentials (чтобы export был безопасным для git)
+- **Миграция healthcheck с n8n на UptimeRobot** (см. 5.8) — когда появятся реальные пользователи
+- Перевод iiko-потоков n8n с `passPlain` на Credentials
 
 ---
 
@@ -302,100 +315,105 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions only)
 **Активные:**
 
 1. 🔴 **URGENT: Ротация пароля ClickHouse `dashboard_ro`** — скомпрометирован. Делается утром 19.04.
-2. 🟠 **Ротация iiko passwords** — слабые пароли, засветились. Делается по возможности в ближайшие дни.
-3. ~~**n8n proxy не активирован**~~ — ✅ Закрыто 18.04.2026
-4. ~~**Нет автодеплоя**~~ — ✅ Закрыто 18.04.2026
-5. ~~**Нет мониторинга**~~ — ✅ Закрыто 18.04.2026 (healthcheck)
-6. **Healthcheck не в git** — workflow живёт только в n8n cloud. Нужно экспортировать в `infra/n8n/healthcheck.json`. ETA: следующая сессия.
+2. 🟠 **Ротация iiko passwords** — слабые и засветились.
+3. 🟡 **`user=undefined` в логах** — косметический баг, `payload.user_id` не то поле (смотреть `src/auth.ts`). 5 минут на утро.
+4. ~~**Нет мониторинга**~~ — ✅ Закрыто (healthcheck + Workers Logs)
+5. ~~**n8n proxy не активирован**~~ — ✅ Закрыто
+6. ~~**Нет автодеплоя**~~ — ✅ Закрыто
 
 **Вопросы на решение:**
 
-- **Стоит ли HTML-дашборд v4 трогать сейчас?** После закрытия M3 — да, это и есть M4. ETA: 20.04.
-- **Rate limit — в MVP или позже?** Решение: перенести в Волну 5 (user base маленький).
-- **Multi-tenant или пока один Chicko?** RLS уже написан с прицелом на множественные tenants. Добавлять по запросу.
+- **M4 когда?** Все предпосылки готовы. ETA: 20.04 воскресенье.
+- **Rate limit** — перенесено в Волну 5.
+- **Multi-tenant** — код готов, клиентов пока не подключаем.
 
 ---
 
 ## 10. Changelog (что реально сделано, по датам)
 
-### 18.04.2026, ночь (~1ч работы)
+### 18.04.2026, ночь (23:00 MSK, ~40 мин работы)
+
+**Волна 2, шаг 4 — Cloudflare Workers Observability.**
+
+- Попытка настроить Sentry провалилась: `sentry.io/signup/` возвращает 403 Forbidden со всех браузеров, VPN/без-VPN, mac/Windows. status.sentry.io показывает "All Systems Operational" — это не сбой, это гео-блокировка через браузерный fingerprint (VPN не помогает). Решено не тратить время.
+- Переключились на Cloudflare Workers Logs — встроенный UI, без регистраций
+- В Cloudflare Dashboard включили **Observability → Logs** (Enabled, sampling 100%)
+- В `wrangler.toml` добавлен блок `[observability]` + `[observability.logs]` — теперь настройки Logs описаны как IaC, при каждом деплое подтверждаются
+- В `src/index.ts` добавлено structured logging: `[request]`, `[login]`, `[query]` префиксы. `console.error` со stack trace в catch. Sensitive data (пароли, JWT, SQL) НЕ логируется.
+- `ENVIRONMENT = "development"` → `"production"` в wrangler.toml (давно надо было)
+- Протестировано: 3 curl'а на /health, /api/auth/login, /api/query → в Observability UI увидели все 10 строк логов с правильной группировкой по timestamp
+
+**Что это разблокирует:**
+- При падении Worker'а — stack trace сразу виден в Cloudflare UI, без внешних сервисов
+- Видно kто когда что делал: `[login] attempt for email=...`, `[query] user=... sql_length=...`
+- Теперь можно дебажить prod не только по «упало/живо», но и по «что именно пошло не так»
+
+**Маленький баг замечен и записан как долг:** `[query] user=undefined tenant=undefined` — моё имя поля `payload.user_id` не совпадает с полем в `auth.ts`. Функционал не сломан (JWT валиден, RLS применяется), только лог пишется с `undefined`. Фикс — 5 минут утром.
+
+### 18.04.2026, поздний вечер (~1ч работы)
 
 **Волна 2, шаг 3 — n8n healthcheck workflow активен.**
 
 - Создан workflow `Chicko API Healthcheck` в n8n: Schedule (каждые 3 часа) → HTTP GET `/health` → Evaluate state → IF notify? → Telegram
-- Первая версия использовала проверку `statusCode === 200 && body.status === 'ok'` — оказалось багом: при неожиданном формате ответа body не парсился
-- Упрощена до `statusCode >= 200 && statusCode < 300` — принцип "good enough > perfect"
-- State tracking через `$getWorkflowStaticData` — отправляет алерт только при переходе UP↔DOWN, не на каждом прогоне
-- Протестировано временной поломкой URL (`/health-broken-for-test`): 🔴 DOWN алерт пришёл корректно
-- При исправлении URL и повторном прогоне логика молчит (state был reset при переимпорте workflow v2)
-- Workflow активирован, следующий прогон автоматически через 3 часа
-- Решение про интервал 3 часа (а не 5 минут) см. 5.8 — бережём лимит n8n executions, долг на миграцию в UptimeRobot зафиксирован
-- Алерты летят в тот же Telegram-чат `-1003396450964`, что и остальные ChickoGroup-потоки, credentials `Chicko` переиспользованы
-
-**Что это разблокирует:**
-- О падении API узнаешь в Telegram в среднем через 1.5 часа, а не от звонка клиента
-- Психологическая «свобода»: пока телефон молчит — система жива
-- Появился канал алертов, в который можно складывать и другие события (завтра — алерты про ETL-ошибки, ошибки в Workers через Sentry и т.д.)
-
-**Что в очереди (приоритеты):**
-1. 🔴 Ротация пароля ClickHouse (утром 19.04)
-2. Экспорт healthcheck workflow в `infra/n8n/healthcheck.json`
-3. Sentry в Workers
-4. M4: Frontend v4 → JWT API
+- Первая версия использовала `body.status === 'ok'` — оказалось багом при неожиданном формате ответа (Cloudflare 404 HTML). Упрощено до `statusCode >= 200 && < 300`
+- State tracking через `$getWorkflowStaticData` — алерт только при переходе UP↔DOWN
+- Протестировано: временно сломал URL → прилетел 🔴 DOWN алерт. Вернул URL — логика молчит
+- Интервал 3 часа (не 5 мин) — экономим лимит n8n executions. Долг на миграцию в UptimeRobot зафиксирован (5.8)
+- Алерты в тот же Telegram-чат Chicko, credentials `Chicko` переиспользованы
+- **Экспорт workflow в `infra/n8n/healthcheck.json` + commit** — IaC для обоих workflow в git
 
 ### 18.04.2026, поздний вечер (~1.5ч работы)
 
 **Волна 2, шаг 2 — n8n proxy для ClickHouse активирован. M3 закрыт.**
 
-- Написан n8n workflow `ClickHouse Proxy for Chicko` с нуля (старого JSON не было). Три ноды: Webhook → HTTP Request → Respond to Webhook
-- Импортирован в n8n, сохранён, активирован
-- Обнаружен и удалён старый конфликтующий workflow с таким же webhook path
-- Тест прокси напрямую (через curl с `SELECT 1`) прошёл: ClickHouse вернул корректный JSON за 3мс
-- Обновлён Cloudflare secret `CLICKHOUSE_HOST`: `rc1d-...:8443` → `https://melnikov.app.n8n.cloud/webhook/clickhouse-proxy`. Zero-downtime update
-- **End-to-end тест** через production API прошёл успешно. Первый в жизни проекта успешный полный раунд-трип `/api/query` (~30мс).
-- Workflow JSON экспортирован из n8n и закоммичен в `infra/n8n/clickhouse_proxy.json` — IaC для n8n теперь есть
+- Написан workflow `Chicko API: ClickHouse Proxy` с нуля (старого JSON не было). Три ноды: Webhook → HTTP Request → Respond to Webhook
+- Импортирован, сохранён, активирован
+- Обнаружен и удалён старый конфликтующий workflow
+- Тест прокси (curl с `SELECT 1`) прошёл: ClickHouse вернул корректный JSON за 3мс
+- `CLICKHOUSE_HOST` в Cloudflare обновлён на webhook URL n8n. Zero-downtime
+- **End-to-end тест** через production API прошёл успешно. Первый в жизни проекта успешный полный раунд-трип `/api/query` (~30мс)
+- Workflow JSON экспортирован в `infra/n8n/clickhouse_proxy.json`
 
 **Технические долги зафиксированы:**
-- Пароль ClickHouse идёт в URL query string → попадает в логи n8n. Решение (5.7): после ротации переписать clickhouse.ts на body/headers.
-- iiko-потоки хранят `passPlain` в Set-нодах вместо Credentials — экспорт не безопасен для git. Решение (Волна 5): перевести на Credentials.
+- Пароль в URL query string → в логах n8n. Решение (5.7): рефакторинг после ротации
+- iiko-потоки хранят `passPlain` в Set-нодах. Решение: Волна 5
 
 ### 18.04.2026, вечер (~40 мин работы)
 
 **Волна 2, шаг 1 — GitHub Actions автодеплой:**
-- Создан Cloudflare API-токен (шаблон `Edit Cloudflare Workers`, bounded scope)
-- Токен сохранён в GitHub Secrets как `CLOUDFLARE_API_TOKEN`
-- Добавлен `.github/workflows/deploy.yml`: checkout → setup-node@v4 → npm ci → cloudflare/wrangler-action@v3
-- Первый push прошёл зелёным за 24 секунды
-- Петля «git push → prod» замкнута
+- Cloudflare API Token создан (bounded scope)
+- Токен в GitHub Secrets как `CLOUDFLARE_API_TOKEN`
+- `.github/workflows/deploy.yml`: checkout → setup-node → npm ci → wrangler-action
+- Первый push за 24 секунды. Петля «git push → prod» замкнута
 
 **Параллельно в экосистеме:**
-- Weekly Advisor прислал 4 рекомендации, разобраны (см. ранее)
+- Weekly Advisor → 4 рекомендации, разобраны
 - Cowork ночью перекладывал Downloads → _archive
-- Паспорт доведён до v3.6 с учётом контекста экосистемы n8n
+- Паспорт v3.6 с контекстом экосистемы n8n
 
 ### 17.04.2026, вечер (~2ч работы)
 
 **Волна 1 инфраструктуры завершена:**
-- Проект перенесён с `C:\Users\User\chicko-api-proxy` (Google Drive на старом PC) → `~/Developer/chicko-api-proxy` (MacBook Air)
-- git init, `.gitignore`, git identity
-- SSH-ключ ed25519, приватный GitHub repo, первый push
-- Консолидированы 4 старых MD-файла в `README.md` + `docs/PASSPORT.md`
-- `.dev.vars` очищен от старого пароля ClickHouse
+- Проект перенесён с `C:\Users\User\chicko-api-proxy` (Windows/Google Drive) → `~/Developer/chicko-api-proxy` (MacBook Air)
+- git init + `.gitignore` + git identity
+- SSH-ключ ed25519, приватный GitHub repo
+- Консолидация 4 старых MD-файлов в `README.md` + `docs/PASSPORT.md`
+- `.dev.vars` очищен от старого пароля
 
-### 17.04.2026, утро (~14ч работы за прошлые дни)
+### 17.04.2026, утро
 
-- Backend API на Cloudflare Workers deployed (`/health`, `/api/auth/login`, `/api/query`)
-- JWT generation + validation (24h TTL)
-- Row-level security (автоматическая инъекция `WHERE tenant_id='...'`)
-- Выявлен блокер: прямое подключение Workers → ClickHouse не работает (SSL + ACL)
+- Backend API на Workers deployed (`/health`, `/api/auth/login`, `/api/query`)
+- JWT (24h TTL), row-level security
+- Mock-клиент для локальной разработки
+- Выявлен блокер: прямое подключение Workers → ClickHouse не работает
 - Принято решение: n8n как прокси
 
 ### 15-16.04.2026
 
-- Анализ существующего HTML-дашборда v4
+- Анализ HTML-дашборда v4
 - Архитектурный план (Workers + JWT + RLS + n8n)
 - Первая версия Gantt
-- Зафиксирован режим обучения в памяти Claude
+- Режим обучения в памяти Claude
 
 ---
 
@@ -403,6 +421,7 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions only)
 
 - **Production API:** https://chicko-api-proxy.chicko-api.workers.dev
 - **Production query endpoint:** `POST /api/query` (JWT required)
+- **Observability:** Cloudflare Dashboard → `chicko-api-proxy` → Observability → Events
 - **n8n webhook (внутренний):** https://melnikov.app.n8n.cloud/webhook/clickhouse-proxy
 - **Cloudflare Dashboard:** https://dash.cloudflare.com
 - **GitHub Actions:** https://github.com/AlexMelnikov1976/chicko-api-proxy/actions
@@ -433,29 +452,29 @@ curl -X POST https://chicko-api-proxy.chicko-api.workers.dev/api/query \
 ## 12. Где что искать
 
 - **Как задеплоить код** → `git push origin main` (автоматически)
-- **Как работает API** → [README.md — API Reference](../README.md#api-reference)
+- **Как работает API** → [README.md](../README.md#api-reference)
+- **Как посмотреть логи** → Cloudflare → `chicko-api-proxy` → Observability → Events
 - **Архитектура и почему так** → раздел [5](#5-архитектурные-решения-почему-именно-так)
 - **Журнал паролей** → раздел [6](#6-credentials--журнал-ротаций)
 - **Что делать дальше** → раздел [8](#8-план-развития--волны-инфраструктуры)
-- **Как проверить что всё работает** → раздел [11](#11-контакты-и-доступы), «Тестовый end-to-end запрос»
-- **Исторические документы (v3.x)** → `docs/archive/`
+- **Как проверить что всё работает** → раздел [11](#11-контакты-и-доступы), тестовый запрос
 
 ---
 
 ## 13. Как поддерживать этот документ
 
 **Когда обновлять:**
-- После каждой завершённой Волны или milestone — раздел [8](#8-план-развития--волны-инфраструктуры) + запись в [10](#10-changelog)
-- После ротации любого пароля — новая запись в [6](#6-credentials--журнал-ротаций)
-- После архитектурного решения — абзац в [5](#5-архитектурные-решения-почему-именно-так)
-- После разблокировки блокера — удалить/зачеркнуть из [9](#9-открытые-вопросы-и-блокеры), записать в changelog
+- После каждой завершённой Волны/milestone — [8] + [10]
+- После ротации пароля — [6]
+- После архитектурного решения — [5]
+- После разблокировки блокера — [9] + [10]
 
 **Правила:**
-- Если что-то здесь противоречит коду в репо — прав **код**, документ обновляется
-- Не дублировать содержимое README.md
-- Не плодить новые markdown-файлы рядом — расширяй паспорт или README
+- Если противоречит коду — прав код, документ обновляется
+- Не дублировать README.md
+- Не плодить новые markdown-файлы — расширять паспорт
 
-**Коммит-сообщение для обновлений:**
+**Коммит-сообщение:**
 ```
 docs(passport): [что изменил кратко]
 ```
@@ -463,4 +482,4 @@ docs(passport): [что изменил кратко]
 ---
 
 **Авторы:** Aleksey Melnikov + Claude
-**Версии паспорта:** v3.3 → v3.4 → v3.5 → v3.6 → v3.7 → v3.8 → **v3.9** (текущая, фиксирует healthcheck active + n8n workflow в git, 18.04.2026 ночь)
+**Версии паспорта:** v3.3 → v3.4 → v3.5 → v3.6 → v3.7 → v3.8 → v3.9 → **v3.10** (текущая, фиксирует Cloudflare Observability + structured logging, 18.04.2026 ночь)
