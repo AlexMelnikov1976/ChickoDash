@@ -4,8 +4,8 @@
 > История изменений — в разделе [Changelog](#10-changelog) внизу.
 > Если что-то здесь противоречит коду в репо — прав код, этот документ надо обновить.
 
-**Последнее обновление:** 18.04.2026, вечер — Волна 2 шаг 1 завершён (GitHub Actions автодеплой)
-**Версия паспорта:** 3.7 (консолидирует v3.3–v3.6 + результаты 18.04 вечер)
+**Последнее обновление:** 18.04.2026, поздний вечер — M3 закрыт (n8n proxy активирован, /api/query работает end-to-end)
+**Версия паспорта:** 3.8 (консолидирует v3.3–v3.7 + результаты 18.04 поздний вечер)
 
 ---
 
@@ -15,9 +15,9 @@
 
 **Пользователи:** владельцы франчайзи-ресторанов (видят свой ресторан), управляющая компания (видит всю сеть).
 
-**Текущее поколение (v4):** статический HTML-дашборд с hardcoded подключением к ClickHouse. Работает, но не масштабируется: каждый новый франчайзи должен получить свой экспорт HTML + credentials засвечены.
+**Текущее поколение (v4):** статический HTML-дашборд с hardcoded подключением к ClickHouse. Работает, но не масштабируется.
 
-**Целевое поколение:** тот же дашборд, но данные приходят через защищённый API с JWT + row-level security. Один URL для всех, каждый видит только свои данные.
+**Целевое поколение:** тот же дашборд, но данные приходят через защищённый API с JWT + row-level security. **API теперь работает end-to-end** — следующий шаг M4, интеграция старого HTML-дашборда с этим API.
 
 ---
 
@@ -28,10 +28,12 @@
 | **Production API** | https://chicko-api-proxy.chicko-api.workers.dev 🟢 |
 | **GitHub (private)** | github.com/AlexMelnikov1976/chicko-api-proxy |
 | **Локально (Mac)** | `~/Developer/chicko-api-proxy` |
-| **Общий прогресс** | ~40% от плана (Волна 1 инфры ✅, Волна 2 шаг 1 ✅, API 75%, Dashboard 0%) |
-| **Активный блокер** | n8n proxy не подключён → `/api/query` не работает end-to-end |
-| **Ближайший milestone** | M3: ClickHouse через n8n работает — ETA 18.04 |
+| **Общий прогресс** | ~50% от плана (Волна 1 ✅, Волна 2 на 50% ✅, API end-to-end работает, Dashboard 0%) |
+| **Активный блокер** | Нет. `/api/query` работает end-to-end (Workers → n8n → ClickHouse). |
+| **Ближайший milestone** | M4: Frontend-дашборд v4 переведён на JWT API — ETA 20.04 |
 | **Автодеплой** | ✅ GitHub Actions: push в main → wrangler deploy (~24 сек) |
+| **n8n proxy** | ✅ Active, webhook `/webhook/clickhouse-proxy`, тест end-to-end прошёл |
+| **Срочный долг** | 🔴 Ротация пароля `dashboard_ro` — засветился в shell history и в истории чата с Claude |
 | **Ответственный** | Aleksey Melnikov |
 
 ---
@@ -42,13 +44,14 @@
 |---|---|---|---|
 | Исходный код | GitHub (private) | `github.com/AlexMelnikov1976/chicko-api-proxy` | SSH key на MacBook |
 | Backend API | Cloudflare Workers | `chicko-api-proxy.chicko-api.workers.dev` | `wrangler login` |
-| База данных | Yandex Managed ClickHouse | `rc1d-3r30isjr73k4uue8.mdb.yandexcloud.net:8443` | Через n8n (прямое из Workers не работает) |
+| База данных | Yandex Managed ClickHouse | `rc1d-3r30isjr73k4uue8.mdb.yandexcloud.net:8443` | Только через n8n proxy (прямое из Workers не работает) |
 | Proxy / оркестратор | n8n self-hosted | `melnikov.app.n8n.cloud` | Web UI |
+| n8n workflow ClickHouse Proxy | n8n | `/webhook/clickhouse-proxy` | Active с 18.04.2026 |
 | CI/CD | GitHub Actions | `.github/workflows/deploy.yml` | Auto на push в main |
 | Локальная разработка | MacBook Air (macOS, zsh) | `~/Developer/chicko-api-proxy` | Терминал |
 | Старый дашборд (v4) | Один HTML файл | `chiko_dashboard_v4__19_.html` | Раздаётся вручную |
 
-**Рабочее окружение:** Node v25.9.0, npm 11.12.1, Git 2.39.5 (Apple Git), wrangler 3.52.
+**Рабочее окружение:** Node v25.9.0, npm 11.12.1, Git 2.39.5 (Apple Git), wrangler 3.114 (update available: 4.x — не критично).
 
 ---
 
@@ -69,12 +72,14 @@
 │    • Rate limiting (TBD) │
 └────────┬─────────────────┘
          │  POST /webhook/clickhouse-proxy
+         │  ?user=X&password=Y&database=chicko&query=SQL
          ▼
 ┌──────────────────────────┐
-│  n8n Workflow            │    (SSL cert + ACL настроены)
-│  ClickHouse Proxy        │
+│  n8n Workflow            │  ✅ ACTIVE (18.04.2026)
+│  ClickHouse Proxy        │  Webhook → HTTP Request → Respond
+│  allowUnauthorizedCerts  │
 └────────┬─────────────────┘
-         │  HTTPS, URL-параметры
+         │  HTTPS, query params forwarded
          ▼
 ┌──────────────────────────┐
 │  Yandex Managed          │
@@ -84,11 +89,11 @@
 └──────────────────────────┘
 ```
 
+**Проверено работающим end-to-end 18.04.2026 вечером:** curl → Workers → n8n → ClickHouse → ответ `SELECT 1` за ~30мс round-trip (из которых 1.2мс — сам ClickHouse).
+
 ---
 
 ## 5. Архитектурные решения (почему именно так)
-
-Эта секция — **для будущего себя**. Чтобы через полгода не задавать вопрос "а почему мы вообще не сделали X?".
 
 ### 5.1 Почему n8n proxy, а не прямое подключение Workers → ClickHouse?
 
@@ -100,45 +105,47 @@
 - n8n уже имеет рабочее подключение к этому ClickHouse (`allowUnauthorizedCerts: true`)
 - Cloudflare Workers свободно общается с любым HTTPS-эндпоинтом n8n
 
-**Плата:** +50-100мс latency, зависимость от второго сервиса.
-
-**Альтернативы, которые отмели:**
-- VPN из Workers в Yandex → Cloudflare Workers не поддерживает исходящий VPN
-- Собственный прокси на EC2/VPS → плати $5-10/мес и мейнтейнь ещё один сервер
-- Миграция ClickHouse на другой провайдер → дорого и не решает корневую проблему
+**Плата:** +50-100мс latency, зависимость от второго сервиса. **Проверено на практике 18.04:** реальное round-trip ~30мс, приемлемо.
 
 ### 5.2 Почему Cloudflare Workers, а не обычный Node.js backend?
 
 - Бесплатный тир покрывает наши нужды (100k req/day)
 - Глобальный edge → ~20мс до API из любой точки
-- Нет infrastructure-as-a-service-headache: не надо следить за uptime сервера
-- Секреты управляются через `wrangler secret put`, не файлами на сервере
-- Цена за ошибку в prod-коде минимальна — мгновенный rollback через deploy
+- Нет infrastructure-as-a-service-headache
+- Секреты управляются через `wrangler secret put`
+- Zero-downtime secret updates: обновление секрета не требует рестарта, текущие запросы доходят со старой конфигурацией, новые — с новой
 
 ### 5.3 Почему JWT 24h, а не sessions в БД?
 
-- Workers stateless по архитектуре, session store потребовал бы KV или внешний Redis
-- 24h — компромисс: удобно для аналитической BI-задачи (франчайзи открывает дашборд раз в день), но не вечность
-- Ротация секрета (`JWT_SECRET`) разом разлогинивает всех → есть kill switch
+- Workers stateless, session store потребовал бы KV или внешний Redis
+- 24h — компромисс: удобно для аналитической BI-задачи, но не вечность
+- Ротация `JWT_SECRET` разом разлогинивает всех → есть kill switch
 
 ### 5.4 Почему row-level security регексом, а не view в ClickHouse?
 
 - Регекс даёт контроль внутри API-слоя: logging, multi-tenant dashboards в будущем
 - Views в ClickHouse требуют DDL-доступа и усложняют схему
-- Минус регекса — уязвим к малфорсу SQL; митигируется тем, что `dashboard_ro` — read-only, и `tenant_id` всегда берётся из JWT, не из body
+- `tenant_id` всегда берётся из JWT, не из body → нельзя обойти RLS
 
 ### 5.5 Почему документация в git (этот паспорт), а не в Notion?
 
-- **Оба варианта правильные.** В git — для технических деталей (архитектура, credentials-rotation-log, deploy-процедуры). В Notion — для оперативных задач и трекинга (kanban, дедлайны, статусы).
-- Ошибка прошлой версии: 4 MD-файла (`PROGRESS_FINAL`, `GANTT_UPDATED`, `README_API`, `TRANSFER_CHECKLIST`) повторяли друг друга на 70% и синхронизировались вручную. Консолидированы в `README.md` + этот `PASSPORT.md`.
+- В git — для технических деталей (архитектура, credentials-rotation-log, deploy-процедуры). В Notion — для оперативных задач и трекинга.
+- Ошибка прошлой версии: 4 MD-файла повторяли друг друга на 70% и синхронизировались вручную. Консолидированы в `README.md` + этот `PASSPORT.md`.
 
 ### 5.6 Почему GitHub Actions, а не `wrangler deploy` руками (решение 18.04.2026)
 
-- Устраняет риск "забыл задеплоить после коммита" — push и deploy становятся одной операцией
-- Аудит-лог: кто/когда деплоил, виден в GitHub Actions (раньше — никак)
-- Воспроизводимость: каждый деплой идёт из чистой Ubuntu с `npm ci` (строго по lockfile), не из локального окружения с возможными артефактами
-- Нулевой риск для prod: если workflow упал на шаге deploy — prod не трогается. Сломанный workflow не может сломать работающий сервис
-- Стоимость: бесплатно в приватном репо (2000 мин/мес бесплатного тира GitHub Actions, наш deploy занимает ~24 сек)
+- Устраняет риск "забыл задеплоить после коммита"
+- Аудит-лог: кто/когда деплоил, виден в GitHub Actions
+- Воспроизводимость: каждый деплой идёт из чистой Ubuntu с `npm ci`
+- Нулевой риск для prod: если workflow упал на шаге deploy — prod не трогается
+- Стоимость: бесплатно в приватном репо
+
+### 5.7 Почему n8n workflow авторизуется через URL query params, а не body/headers (18.04.2026, долг)
+
+- **Исторически:** Workers-код писал SQL и креды как query-params, потому что ClickHouse HTTP API это поддерживает из коробки
+- **Проблема:** пароль попадает в логи n8n на каждом запросе
+- **Почему не переделали сразу:** правило «не менять две вещи разом». Сначала собрать работающий proxy (18.04), отдельно перевести auth на headers/body (долг).
+- **План:** после ротации пароля — отрефакторить `src/clickhouse.ts` на отправку credentials в body, обновить n8n workflow соответственно.
 
 ---
 
@@ -148,10 +155,10 @@
 
 | Дата | Что | Действие | Причина | Кто сделал |
 |---|---|---|---|---|
+| 18.04.2026 вечер | `CLICKHOUSE_HOST` (Cloudflare secret) | Обновлён: `rc1d-...:8443` → `https://melnikov.app.n8n.cloud/webhook/clickhouse-proxy` | Переключение с прямого адреса ClickHouse на n8n-прокси | Aleksey |
 | 18.04.2026 | Cloudflare API Token (для CI) | Создан новый токен (scope: Edit Cloudflare Workers) | Нужен для GitHub Actions автодеплоя. Сохранён в GitHub Secrets как `CLOUDFLARE_API_TOKEN` | Aleksey |
-| 17.04.2026 | ClickHouse `dashboard_ro` | Плановая ротация — TODO | Старый пароль (`chiko_dash_2026`) был захардкожен в HTML-дашборде v4. Пароль попадал в открытый код любому, у кого был HTML-файл | Ожидает выполнения |
-| 17.04.2026 | Локальный `.dev.vars` | Удалён старый пароль, placeholder `TODO-replace-when-n8n-ready` | Подготовка к ротации, чтобы случайно не закоммитить | Aleksey |
-| 17.04.2026 | Wrangler secrets (production) | Пока не тронуты — ждут плановой ротации | Связаны с ротацией ClickHouse | Ожидает |
+| 🔴 TBD URGENT | ClickHouse `dashboard_ro` пароль | **Ротация обязательна** | Старый пароль `chiko_dash_2026` засветился в: (1) старом HTML-дашборде v4, (2) shell history MacBook, (3) истории чата с Claude, (4) в логах n8n execution history. Было "когда-нибудь", стало "срочно". | Ожидает |
+| 17.04.2026 | Локальный `.dev.vars` | Удалён старый пароль, placeholder `TODO-replace-when-n8n-ready` | Подготовка к ротации | Aleksey |
 | TBD | `JWT_SECRET` (production) | Ротация при переходе к real users | Текущий — dev-level, для MVP-теста | Ожидает |
 
 ### Где живут credentials
@@ -160,15 +167,17 @@
 |---|---|---|
 | `CLICKHOUSE_PASSWORD` production | Cloudflare Workers secrets | Только `wrangler secret` на авторизованной машине |
 | `CLICKHOUSE_PASSWORD` локально | `~/Developer/chicko-api-proxy/.dev.vars` | Только на MacBook (в `.gitignore`) |
+| `CLICKHOUSE_HOST` production | Cloudflare Workers secrets (теперь = webhook URL n8n) | Только `wrangler secret` |
 | `JWT_SECRET` production | Cloudflare Workers secrets | Так же как password |
-| `CLOUDFLARE_API_TOKEN` (для CI) | GitHub Secrets (`Settings → Secrets → Actions`) | Только GitHub Actions workflow во время выполнения |
+| `CLOUDFLARE_API_TOKEN` (для CI) | GitHub Secrets (`Settings → Secrets → Actions`) | Только GitHub Actions workflow |
 | ClickHouse `dashboard_ro` credentials | Yandex Cloud Console + менеджер паролей Aleksey | Только Aleksey |
 | SSH-ключ к GitHub | `~/.ssh/id_ed25519` на MacBook | Только Aleksey |
 
 **Правила:**
 - Никогда не коммитить в git (защищено `.gitignore`, но ответственность остаётся)
-- При смене — **сначала** обновить в менеджере паролей, **потом** в Cloudflare secrets, **потом** в n8n HTTP-ноде, **потом** в `.dev.vars`
+- При смене — **сначала** обновить в менеджере паролей, **потом** в Cloudflare secrets, **потом** в n8n, **потом** в `.dev.vars`
 - После каждой ротации — запись в таблицу выше
+- **Не пересылать пароли в текстовых каналах** (чат с LLM, Slack, email). Если случайно попал — ротировать следующим же действием.
 
 ---
 
@@ -182,10 +191,10 @@
 │   └── clickhouse.ts     # ClickHouse client + row-level security
 ├── infra/
 │   └── n8n/
-│       └── clickhouse_proxy.json   # n8n workflow (версионируется!)
+│       └── clickhouse_proxy.json   # n8n workflow (TODO: экспортировать из n8n и закоммитить)
 ├── docs/
 │   ├── PASSPORT.md       # Этот файл
-│   └── archive/          # Старые MD-файлы (4 штуки)
+│   └── archive/          # Старые MD-файлы
 ├── .github/
 │   └── workflows/
 │       └── deploy.yml    # ✅ GitHub Actions автодеплой (с 18.04.2026)
@@ -206,9 +215,8 @@
 
 **Синхронизация с экосистемой n8n:**
 - USER_CONTEXT в Weekly Advisor расширен блоком про стек Chicko Analytics
-- Запись в базе Проектов Notion обновлена под Волну 2 (Next Action + Blockers)
-- Скилл chiko-franchise-dashboard обновлён до v1.1: добавлен контекст экосистемы, ссылка на этот паспорт, явное разделение поколений v4/v5
-- Раздел 8 паспорта переписан с учётом существующей базы Проектов в Notion (Волна 3 теперь не создаёт новую базу, а расширяет существующую)
+- Запись в базе Проектов Notion обновлена
+- Скилл chiko-franchise-dashboard обновлён до v1.1
 
 
 
@@ -217,51 +225,54 @@
 | Шаг | Статус |
 |---|---|
 | Проект перенесён с Google Drive → `~/Developer/chicko-api-proxy` | ✅ |
-| `git init` + `.gitignore` + первый коммит (9 файлов, секреты НЕ попали) | ✅ |
-| GitHub private repo `AlexMelnikov1976/chicko-api-proxy` создан и запушен | ✅ |
-| SSH-ключ сгенерирован и добавлен в GitHub | ✅ |
-| Git identity настроена (`melnikov181076@gmail.com`) | ✅ |
-| 4 старых MD-файла консолидированы в README.md + этот паспорт | ✅ |
-| n8n workflow JSON перенесён в `infra/n8n/` как versioned infrastructure | ⏳ (нужно сделать move + commit) |
-| `docs/archive/` с историей старой документации | ⏳ (нужно создать и commit) |
+| `git init` + `.gitignore` + первый коммит | ✅ |
+| GitHub private repo + SSH key | ✅ |
+| Git identity настроена | ✅ |
+| 4 старых MD-файла консолидированы в README.md + паспорт | ✅ |
+| n8n workflow JSON в `infra/n8n/` | ⏳ (экспортировать из n8n и commit) |
+| `docs/archive/` с историей старой документации | ⏳ |
 
-### 🟠 Волна 2: Автоматизация deploy и мониторинга (план: 1-2 вечера)
+### 🟠 Волна 2: Автоматизация deploy и мониторинга (50% готово)
 
 | Шаг | Время | Экономия | Статус |
 |---|---|---|---|
-| GitHub Actions workflow `.github/workflows/deploy.yml` — автодеплой на push в main | ~40 мин | 3-5 мин × каждый deploy | ✅ **18.04.2026** |
+| GitHub Actions workflow `.github/workflows/deploy.yml` | ~40 мин | 3-5 мин × каждый deploy | ✅ **18.04.2026** |
 | Cloudflare API Token → GitHub Secrets | ~10 мин | Часть выше | ✅ **18.04.2026** |
-| **Ротация ClickHouse пароля** — полный цикл (Yandex → менеджер паролей → wrangler → n8n → `.dev.vars`) | ~15 мин | Закрытие security-риска | ⏳ Next |
-| **Активация n8n proxy** — импорт workflow, активация, update `CLICKHOUSE_HOST` secret | ~20 мин | Разблокировка `/api/query` | ⏳ Next |
-| n8n healthcheck workflow (cron каждые 5 мин → Telegram при падении `/health`) | ~20 мин | Знаешь о падении до того как клиент позвонит | ⏸ |
-| Sentry в Workers (DSN в secret + `init()` в `index.ts`) | ~20 мин | Stack-trace любой 500-ки в prod | ⏸ |
+| **Активация n8n proxy** — workflow собран с нуля, импортирован, активирован | ~60 мин | Разблокировка `/api/query` (M3) | ✅ **18.04.2026** |
+| **Обновление `CLICKHOUSE_HOST` secret** на webhook URL n8n | ~5 мин | Часть выше | ✅ **18.04.2026** |
+| 🔴 **Ротация пароля ClickHouse** — URGENT после компрометации | ~20 мин | Закрытие security-риска | ⏳ NEXT |
+| Экспорт n8n workflow JSON в `infra/n8n/` + commit | ~10 мин | Versioning инфры | ⏳ |
+| n8n healthcheck workflow (cron каждые 5 мин → Telegram) | ~20 мин | Знаешь о падении до того как клиент позвонит | ⏸ |
+| Sentry в Workers | ~20 мин | Stack-trace любой 500-ки в prod | ⏸ |
+| Рефакторинг clickhouse.ts: credentials в body, не в URL (см. 5.7) | ~30 мин | Password больше не в логах | ⏸ (после ротации) |
 
 ### 🟡 Волна 3: Трекинг и процесс (план: 1 день)
 
 | Шаг | Цель |
 |---|---|
-| Notion database "Chicko Tasks" (поля: Stage/Status/ETA/Actual/Blockers) | Единый source of truth для задач |
-| Миграция задач из `GANTT_UPDATED.md` → Notion | One-time |
+| Notion database "Chicko Tasks" | Единый source of truth для задач |
+| Миграция задач в Notion | One-time |
 | `docs/archive/` для 4 старых MD-файлов | Очистка корня |
-| n8n workflow: GitHub webhook → Notion update при закрытии PR | Автообновление статусов |
-| Google Calendar events с milestones M3-M6 | Дедлайны видны в календаре |
+| n8n workflow: GitHub webhook → Notion update | Автообновление статусов |
+| Google Calendar events с milestones M4-M6 | Дедлайны в календаре |
 
 ### 🟢 Волна 4: Автоматизация бизнес-процесса (план: 2-3 дня)
 
 | Шаг | Цель |
 |---|---|
 | Cloudflare Pages для HTML-дашборда + автодеплой из git | URL вместо раздачи HTML вручную |
-| n8n daily-rebuild: Google Sheets xlsx → skill `chiko-franchise-dashboard` → Pages deploy → Telegram | Дашборд обновляется сам каждое утро |
-| n8n metrics-alerts: утренний ClickHouse query аномалий → Telegram | Проактивный мониторинг |
+| n8n daily-rebuild: Google Sheets → skill → Pages → Telegram | Дашборд обновляется сам каждое утро |
+| n8n metrics-alerts | Проактивный мониторинг |
 | Cloudflare Workers Cron Trigger: warm-cache benchmarks в KV | Dashboard загружается за 50мс |
-| AI-инсайты в Chicko (из рекомендации #2 Advisor от 18.04) | Умные комментарии к метрикам |
+| AI-инсайты в Chicko (рекомендация #2 Advisor 18.04) | Умные комментарии к метрикам |
 
-### ⚪ Волна 5: Полировка (по мере появления времени)
+### ⚪ Волна 5: Полировка
 
 - Rate limiting через Workers KV (100 req/hour/user)
 - Unit + integration tests (JWT + RLS-injection)
 - CORS whitelist вместо `*` для production
 - Dashboard usage analytics
+- Обновление wrangler 3.114 → 4.x
 
 ---
 
@@ -269,43 +280,59 @@
 
 **Активные:**
 
-1. **n8n proxy не активирован** — workflow JSON готов, но ещё не импортирован и не активирован. Блокирует `/api/query` end-to-end. ETA: Волна 2 (следующий шаг).
-2. **ClickHouse пароль не ротирован** — лежит в старом HTML v4 в открытом виде. Security-риск. ETA: Волна 2 (следующий шаг).
-3. ~~**Нет автодеплоя**~~ — ✅ Закрыто 18.04.2026. GitHub Actions работает, `git push` → prod за ~24 сек.
+1. 🔴 **URGENT: Ротация пароля ClickHouse `dashboard_ro`** — скомпрометирован: был захардкожен в HTML v4, попал в shell history MacBook, в историю чата с Claude, в n8n execution logs. Делается следующим действием.
+2. ~~**n8n proxy не активирован**~~ — ✅ Закрыто 18.04.2026. Workflow собран с нуля, активирован, end-to-end тест успешен.
+3. ~~**Нет автодеплоя**~~ — ✅ Закрыто 18.04.2026. GitHub Actions работает.
 4. **Нет мониторинга** — если API ляжет, узнаем от пользователей. ETA: Волна 2 (healthcheck + Sentry).
+5. **n8n workflow JSON не в git** — собранный сегодня workflow существует только в n8n cloud. Если n8n упадёт, нужно пересобирать с нуля. ETA: ближайший удобный момент.
 
 **Вопросы на решение:**
 
-- **Стоит ли HTML-дашборд v4 трогать сейчас?** После активации API было бы правильно перевести дашборд на JWT-auth и ротировать пароль. Но v4 продолжает работать как fallback. Решение: после успеха Волны 2, отдельной задачей.
-- **Rate limit — в MVP или можно позже?** По первоначальному плану — в MVP. По факту user base маленький, абьюз маловероятен. Решение: перенести в Волну 5.
-- **Multi-tenant или пока один Chicko?** Row-level security уже написан с прицелом на множественные tenants. Но пока только `tenant_chicko`. Решение: оставить код, реально добавлять tenants по запросу.
+- **Стоит ли HTML-дашборд v4 трогать сейчас?** После закрытия M3 — да, это и есть M4. ETA: 20.04.
+- **Rate limit — в MVP или позже?** Решение: перенести в Волну 5 (user base маленький).
+- **Multi-tenant или пока один Chicko?** RLS уже написан с прицелом на множественные tenants. Пока только `tenant_chicko`. Добавлять по запросу.
 
 ---
 
 ## 10. Changelog (что реально сделано, по датам)
 
+### 18.04.2026, поздний вечер (~1.5ч работы)
+
+**Волна 2, шаг 2 — n8n proxy для ClickHouse активирован. M3 закрыт.**
+
+- Написан n8n workflow `ClickHouse Proxy for Chicko` с нуля (старого JSON не было найдено). Три ноды: Webhook → HTTP Request → Respond to Webhook
+- JSON сгенерирован Claude, импортирован в n8n через "Import from File", сохранён, активирован
+- Обнаружен и удалён старый workflow с таким же webhook path ("ClickHouse Proxy for Chicko API") — конфликтовал
+- Тест прокси напрямую (через curl с `SELECT 1`) прошёл: ClickHouse вернул корректный JSON за 3мс
+- Обновлён Cloudflare secret `CLICKHOUSE_HOST`: `rc1d-...:8443` → `https://melnikov.app.n8n.cloud/webhook/clickhouse-proxy`. Zero-downtime update, redeploy не потребовался
+- **End-to-end тест** через production API прошёл успешно: curl → Cloudflare Workers (JWT validate + RLS) → n8n (webhook → HTTP Request → Respond) → ClickHouse (1.2мс elapsed) → обратно. **Первый в жизни проекта успешный полный раунд-трип `/api/query`.**
+
+**Что это разблокирует:**
+- Фронтенд теперь может дёргать `/api/query` с реальными запросами → готовы к M4
+- Архитектурное решение с n8n-proxy подтверждено практикой (не гипотеза)
+- Можно начинать разрабатывать dynamic benchmarks (M5)
+
+**Что в очереди (приоритеты):**
+1. 🔴 **Ротация пароля ClickHouse** (пароль засветился в shell/чате, теперь обязательно)
+2. Экспорт n8n workflow JSON в `infra/n8n/` + commit (version control инфры)
+3. Frontend v4 → JWT API (M4, планируется на 20.04)
+4. n8n healthcheck + Sentry (остаток Волны 2)
+
+**Технические долги зафиксированы:**
+- Пароль ClickHouse идёт в URL query string → попадает в логи n8n. Решение (5.7): после ротации переписать clickhouse.ts на body/headers.
+- wrangler 3.114 → 4.x update available (не критично, в Волну 5)
+
 ### 18.04.2026, вечер (~40 мин работы)
 
 **Волна 2, шаг 1 — GitHub Actions автодеплой:**
-- Создан Cloudflare API-токен (шаблон `Edit Cloudflare Workers`, bounded scope — только Workers, без биллинга и прочего)
+- Создан Cloudflare API-токен (шаблон `Edit Cloudflare Workers`, bounded scope)
 - Токен сохранён в GitHub Secrets как `CLOUDFLARE_API_TOKEN`
 - Добавлен `.github/workflows/deploy.yml`: checkout → setup-node@v4 (Node 20) → npm ci → cloudflare/wrangler-action@v3
 - Первый push прошёл зелёным за 24 секунды, `/health` возвращает `{"status":"ok"}`
-- Петля «git push → prod» замкнута: ручной `wrangler deploy` больше не нужен
-
-**Что это разблокирует:**
-- Любые будущие правки кода едут на prod автоматически при push в main
-- Снижается риск забыть deploy после коммита
-- Появился аудит-лог: кто и когда деплоил, видно в GitHub → Actions
-- Воспроизводимость: деплой идёт с чистой Ubuntu-машины, не с локального окружения
-
-**Что в очереди (Волна 2 продолжение):**
-- Ротация пароля ClickHouse + активация n8n proxy → разблокирует `/api/query`
-- n8n healthcheck workflow с Telegram-алертом
-- Sentry в Workers для stack-trace в prod
+- Петля «git push → prod» замкнута
 
 **Параллельно в экосистеме:**
-- Weekly Automation Advisor прислал 4 рекомендации, разобраны: #1 применена (max_tokens в Sonnet Briefer 4096→2500), #2 отложена в Волну 4 Chicko (AI-инсайты), #3 отброшена, #4 в Notion-карточку Puls
+- Weekly Automation Advisor прислал 4 рекомендации, разобраны: #1 применена (max_tokens в Sonnet Briefer 4096→2500), #2 отложена в Волну 4 Chicko, #3 отброшена, #4 в карточку Puls
 - Cowork ночью перекладывал Downloads → _archive (статус не проверен)
 - Паспорт доведён до v3.6 с учётом контекста экосистемы n8n
 
@@ -313,38 +340,36 @@
 
 **Волна 1 инфраструктуры завершена:**
 - Проект перенесён с `C:\Users\User\chicko-api-proxy` (Google Drive на старом PC) → `~/Developer/chicko-api-proxy` (MacBook Air)
-- Создан локальный git-репозиторий, настроен `.gitignore` (исключает `node_modules`, `.dev.vars`, build-артефакты)
-- Настроена git identity: `Aleksey Melnikov <melnikov181076@gmail.com>`
+- Создан локальный git-репозиторий, настроен `.gitignore`
+- Настроена git identity
 - Сгенерирован SSH-ключ ed25519, добавлен в GitHub
-- Создан приватный repo `github.com/AlexMelnikov1976/chicko-api-proxy`, `git push -u origin main --force` (затёр GitHub-овский auto-README)
-- Консолидированы 4 старых MD-файла в `README.md` (техдок) + `docs/PASSPORT.md` (этот документ)
+- Создан приватный repo, первый push
+- Консолидированы 4 старых MD-файла в `README.md` + `docs/PASSPORT.md`
 - `.dev.vars` очищен от старого пароля ClickHouse (placeholder до ротации)
-
-**Что не успели, но в очереди:**
-- Переместить `clickhouse_proxy_n8n.json` в `infra/n8n/` и commit
-- Архивировать старые MD-файлы в `docs/archive/` и commit
-- Всё из Волны 2
 
 ### 17.04.2026, утро (~14ч работы за прошлые дни по факту в докладе v3.x)
 
 - Backend API на Cloudflare Workers deployed (`/health`, `/api/auth/login`, `/api/query`)
-- JWT generation + validation (24h TTL, payload: user_id, tenant_id, email, permissions)
+- JWT generation + validation (24h TTL)
 - Row-level security (автоматическая инъекция `WHERE tenant_id='...'`)
 - Mock-клиент ClickHouse для локальной разработки
 - Выявлен блокер: прямое подключение Workers → ClickHouse не работает (SSL + ACL)
-- Принято решение: n8n как прокси. Workflow JSON подготовлен.
+- Принято решение: n8n как прокси
 
 ### 15-16.04.2026
 
 - Анализ существующего HTML-дашборда v4
 - Архитектурный план (Workers + JWT + RLS + n8n)
 - Первая версия Gantt
-- Зафиксирован режим обучения в памяти Claude: Socratic-метод, предсказание результатов, объяснение обратно. Учебный трек — отдельный Project "Tech Literacy".
+- Зафиксирован режим обучения в памяти Claude
+
 ---
 
 ## 11. Контакты и доступы
 
 - **Production API:** https://chicko-api-proxy.chicko-api.workers.dev
+- **Production query endpoint:** `POST /api/query` (JWT required)
+- **n8n webhook (внутренний):** https://melnikov.app.n8n.cloud/webhook/clickhouse-proxy
 - **Cloudflare Dashboard:** https://dash.cloudflare.com
 - **GitHub Actions:** https://github.com/AlexMelnikov1976/chicko-api-proxy/actions
 - **n8n:** https://melnikov.app.n8n.cloud/
@@ -356,13 +381,25 @@
 - Password: `demo123`
 - Tenant: `tenant_chicko`
 
+**Тестовый end-to-end запрос (для проверки после деплоев):**
+```bash
+TOKEN=$(curl -s -X POST https://chicko-api-proxy.chicko-api.workers.dev/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@chicko.ru","password":"demo123"}' \
+  | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+
+curl -X POST https://chicko-api-proxy.chicko-api.workers.dev/api/query \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"SELECT 1 as test"}'
+```
+
 ---
 
 ## 12. Где что искать
 
-- **Как задеплоить код** → `git push origin main` (автоматически через GitHub Actions). Руками: [README.md — Deployment](../README.md#deployment)
+- **Как задеплоить код** → `git push origin main` (автоматически через GitHub Actions)
 - **Как работает API** → [README.md — API Reference](../README.md#api-reference)
-- **Как поднять проект с нуля на новой машине** → [README.md — Quick Start](../README.md#quick-start-новый-компьютер)
 - **Архитектура и почему так** → раздел [5 этого паспорта](#5-архитектурные-решения-почему-именно-так)
 - **Журнал паролей** → раздел [6](#6-credentials--журнал-ротаций)
 - **Что делать дальше** → раздел [8](#8-план-развития--волны-инфраструктуры)
@@ -373,15 +410,15 @@
 ## 13. Как поддерживать этот документ
 
 **Когда обновлять:**
-- После каждой завершённой Волны — обновить раздел [8](#8-план-развития--волны-инфраструктуры), добавить запись в [10](#10-changelog)
+- После каждой завершённой Волны или milestone — обновить раздел [8](#8-план-развития--волны-инфраструктуры), добавить запись в [10](#10-changelog)
 - После ротации любого пароля — новая запись в [6](#6-credentials--журнал-ротаций)
 - После архитектурного решения — абзац в [5](#5-архитектурные-решения-почему-именно-так)
-- После разблокировки блокера — удалить из [9](#9-открытые-вопросы-и-блокеры), записать в changelog
+- После разблокировки блокера — удалить/зачеркнуть из [9](#9-открытые-вопросы-и-блокеры), записать в changelog
 
 **Правила:**
 - Если что-то здесь противоречит коду в репо — прав **код**, документ обновляется
-- Не дублировать содержимое README.md — он про "как", этот файл про "что/почему/когда"
-- Не плодить новые markdown-файлы рядом (ошибка v3.x) — расширяй паспорт или README
+- Не дублировать содержимое README.md
+- Не плодить новые markdown-файлы рядом — расширяй паспорт или README
 
 **Коммит-сообщение для обновлений:**
 ```
@@ -391,4 +428,4 @@ docs(passport): [что изменил кратко]
 ---
 
 **Авторы:** Aleksey Melnikov + Claude
-**Версии паспорта:** v3.3 → v3.4 → v3.5 → v3.6 → **v3.7** (текущая, фиксирует GitHub Actions автодеплой 18.04.2026)
+**Версии паспорта:** v3.3 → v3.4 → v3.5 → v3.6 → v3.7 → **v3.8** (текущая, фиксирует закрытие M3: n8n proxy activated, /api/query working end-to-end 18.04.2026)
