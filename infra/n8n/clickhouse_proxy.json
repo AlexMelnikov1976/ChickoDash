@@ -1,0 +1,116 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clickhouse-proxy",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "88f9943f-a422-468c-9b83-2938086aeb23",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        1984
+      ],
+      "webhookId": "chicko-clickhouse-proxy"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rc1d-3r30isjr73k4uue8.mdb.yandexcloud.net:8443",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user",
+              "value": "={{ $json.query.user }}"
+            },
+            {
+              "name": "password",
+              "value": "={{ $json.query.password }}"
+            },
+            {
+              "name": "database",
+              "value": "={{ $json.query.database }}"
+            },
+            {
+              "name": "add_http_cors_header",
+              "value": "={{ $json.query.add_http_cors_header }}"
+            },
+            {
+              "name": "query",
+              "value": "={{ $json.query.query }}"
+            }
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": true,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "f0e11d0f-58c9-489a-86b1-0be537ec831f",
+      "name": "ClickHouse Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1248,
+        1984
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "6b899c6a-d466-4beb-81c8-7df412149b0f",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1472,
+        1984
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "ClickHouse Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ClickHouse Query": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "dd7c9b72dcbebfe0a9a5f7eab04b4a1b119f29e60458186f1f94d180b54e57cd"
+  }
+}
