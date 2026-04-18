@@ -1,0 +1,169 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 3
+            }
+          ]
+        }
+      },
+      "id": "9d33d89f-de84-460e-843b-81e992457392",
+      "name": "Every 3 hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        256,
+        3344
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://chicko-api-proxy.chicko-api.workers.dev/health",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "29bf87b6-34b6-48a2-a50d-ec403cf0f392",
+      "name": "Check /health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        480,
+        3344
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine current state and whether we should notify.\n// Simplified: health is based ONLY on HTTP status code (2xx = healthy).\n// Body parsing was removed because it caused false negatives when response\n// format was unexpected (e.g. Cloudflare 404 HTML page).\n\nconst resp = $input.first().json;\nconst statusCode = resp.statusCode ?? 0;\n\n// Healthy = any 2xx HTTP status code\nconst isHealthy = statusCode >= 200 && statusCode < 300;\nconst currentState = isHealthy ? 'UP' : 'DOWN';\n\n// Read last known state from static data (persisted across workflow runs)\nconst staticData = $getWorkflowStaticData('global');\nconst lastState = staticData.lastState || 'UP'; // default UP on first run\n\n// Decide what to notify about:\n// - State transition UP -> DOWN: send DOWN alert\n// - State transition DOWN -> UP: send RECOVERY alert\n// - Same state: stay silent\nlet notifyType = null;\nif (lastState === 'UP' && currentState === 'DOWN') {\n  notifyType = 'DOWN';\n} else if (lastState === 'DOWN' && currentState === 'UP') {\n  notifyType = 'RECOVERY';\n}\n\n// Persist new state for next run\nstaticData.lastState = currentState;\nstaticData.lastChecked = new Date().toISOString();\n\nreturn [{\n  json: {\n    statusCode,\n    isHealthy,\n    currentState,\n    lastState,\n    notifyType,\n    timestamp: staticData.lastChecked\n  }\n}];"
+      },
+      "id": "e0c3126f-f918-4708-b8c2-907baef381d3",
+      "name": "Evaluate state",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        3344
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-notify",
+              "leftValue": "={{ $json.notifyType }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ebd77add-1869-4238-8558-0c15c12ff44f",
+      "name": "Should notify?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        928,
+        3344
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "-1003396450964",
+        "text": "={{ $json.notifyType === 'DOWN' \n  ? '🔴 *Chicko API: DOWN*\\n\\n' +\n    '📍 Endpoint: `/health`\\n' +\n    '⏱️ Checked: `' + $json.timestamp + '`\\n' +\n    '🔢 Status code: `' + $json.statusCode + '`\\n\\n' +\n    '_Источник: Chicko API Healthcheck (каждые 3 часа)_'\n  : '🟢 *Chicko API: RECOVERED*\\n\\n' +\n    '📍 Endpoint: `/health`\\n' +\n    '⏱️ Recovered at: `' + $json.timestamp + '`\\n' +\n    '🔢 Status code: `' + $json.statusCode + '`\\n\\n' +\n    '_Источник: Chicko API Healthcheck_'\n}}",
+        "additionalFields": {
+          "disable_notification": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "971f1b85-bef4-4760-b65e-85279b644b80",
+      "name": "Telegram notify",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1152,
+        3344
+      ],
+      "webhookId": "0eb5cedc-7f9a-4a28-8f4b-a65b32b9fa9b",
+      "credentials": {
+        "telegramApi": {
+          "id": "Mk8DzKFysgsnGD1K",
+          "name": "Chicko"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 3 hours": {
+      "main": [
+        [
+          {
+            "node": "Check /health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check /health": {
+      "main": [
+        [
+          {
+            "node": "Evaluate state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate state": {
+      "main": [
+        [
+          {
+            "node": "Should notify?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should notify?": {
+      "main": [
+        [
+          {
+            "node": "Telegram notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "dd7c9b72dcbebfe0a9a5f7eab04b4a1b119f29e60458186f1f94d180b54e57cd"
+  }
+}
