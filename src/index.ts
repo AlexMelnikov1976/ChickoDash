@@ -21,11 +21,14 @@ export default {
     }
 
     const url = new URL(request.url);
-    
+
+    // Entry log for every request (method + path, no body)
+    console.log(`[request] ${request.method} ${url.pathname}`);
+
     if (url.pathname === '/health') {
-      return new Response(JSON.stringify({ 
-        status: 'ok', 
-        timestamp: new Date().toISOString() 
+      return new Response(JSON.stringify({
+        status: 'ok',
+        timestamp: new Date().toISOString()
       }), {
         headers: { 'Content-Type': 'application/json' },
       });
@@ -39,6 +42,7 @@ export default {
       return handleQuery(request, env);
     }
 
+    console.log(`[404] No route for ${request.method} ${url.pathname}`);
     return new Response('Not Found', { status: 404 });
   },
 };
@@ -46,7 +50,10 @@ export default {
 async function handleLogin(request: Request, env: Env): Promise<Response> {
   try {
     const body = await request.json() as { email: string; password: string };
-    
+
+    // Log email only, never password
+    console.log(`[login] attempt for email=${body.email}`);
+
     if (body.email === 'admin@chicko.ru' && body.password === 'demo123') {
       const token = await generateToken({
         user_id: 'user_001',
@@ -54,8 +61,9 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
         email: body.email,
         permissions: ['read', 'write']
       }, env.JWT_SECRET || 'temp-secret-key-change-in-production');
-      
-      return new Response(JSON.stringify({ 
+
+      console.log(`[login] success for email=${body.email}`);
+      return new Response(JSON.stringify({
         success: true,
         token,
         expires_in: 86400
@@ -66,18 +74,20 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
         },
       });
     }
-    
-    return new Response(JSON.stringify({ 
-      error: 'Invalid credentials' 
+
+    console.log(`[login] invalid credentials for email=${body.email}`);
+    return new Response(JSON.stringify({
+      error: 'Invalid credentials'
     }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {
     const err = error as Error;
-    return new Response(JSON.stringify({ 
+    console.error(`[login] error: ${err.message}`, err.stack);
+    return new Response(JSON.stringify({
       error: 'Login failed',
-      message: err.message 
+      message: err.message
     }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
@@ -89,40 +99,46 @@ async function handleQuery(request: Request, env: Env): Promise<Response> {
   try {
     const authHeader = request.headers.get('Authorization');
     const token = extractBearerToken(authHeader);
-    
+
     if (!token) {
-      return new Response(JSON.stringify({ 
+      console.log(`[query] missing or invalid Authorization header`);
+      return new Response(JSON.stringify({
         error: 'Unauthorized',
-        message: 'Missing or invalid Authorization header' 
+        message: 'Missing or invalid Authorization header'
       }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    
+
     const payload = await validateToken(token, env.JWT_SECRET || 'temp-secret-key-change-in-production');
-    
+
     if (!payload) {
-      return new Response(JSON.stringify({ 
+      console.log(`[query] invalid or expired token`);
+      return new Response(JSON.stringify({
         error: 'Unauthorized',
-        message: 'Invalid or expired token' 
+        message: 'Invalid or expired token'
       }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    
+
     const body = await request.json() as { query: string };
-    
+
+    // Log query meta (who + length), not SQL itself — SQL can contain sensitive data
+    console.log(`[query] user=${payload.user_id} tenant=${payload.tenant_id} sql_length=${body.query?.length ?? 0}`);
+
     const clickhouse = new ClickHouseClient({
       host: env.CLICKHOUSE_HOST || 'http://localhost:8123',
       user: env.CLICKHOUSE_USER || 'default',
       password: env.CLICKHOUSE_PASSWORD || '',
     });
-    
+
     const result = await clickhouse.query(body.query, payload.tenant_id);
-    
-    return new Response(JSON.stringify({ 
+
+    console.log(`[query] success user=${payload.user_id} rows=${result.rows} elapsed=${result.statistics?.elapsed ?? 'n/a'}`);
+    return new Response(JSON.stringify({
       status: 'success',
       data: result.data,
       rows: result.rows,
@@ -137,9 +153,10 @@ async function handleQuery(request: Request, env: Env): Promise<Response> {
     });
   } catch (error) {
     const err = error as Error;
-    return new Response(JSON.stringify({ 
+    console.error(`[query] error: ${err.message}`, err.stack);
+    return new Response(JSON.stringify({
       error: 'Query execution failed',
-      message: err.message 
+      message: err.message
     }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
