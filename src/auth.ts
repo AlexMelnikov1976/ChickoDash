@@ -1,4 +1,4 @@
-﻿import { sign, verify } from '@tsndr/cloudflare-worker-jwt';
+import { sign, verify, decode } from '@tsndr/cloudflare-worker-jwt';
 
 export interface JWTPayload {
   user_id: string;
@@ -23,9 +23,13 @@ export async function validateToken(
   try {
     const isValid = await verify(token, secret);
     if (!isValid) return null;
-    
-    const decoded = await verify(token, secret, { throwError: false });
-    return decoded as JWTPayload;
+
+    // verify() returns boolean. To get payload we use decode().
+    // decode() returns { header, payload } object — we need .payload.
+    const decoded = decode(token);
+    if (!decoded || !decoded.payload) return null;
+
+    return decoded.payload as JWTPayload;
   } catch {
     return null;
   }
