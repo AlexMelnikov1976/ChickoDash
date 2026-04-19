@@ -1,6 +1,8 @@
-// Auto-generated from chiko_dashboard_v4 HTML. Do not edit manually.
+// Auto-generated from chiko_dashboard HTML. Do not edit manually.
 // Contains login screen + JWT auth + /api/query integration.
-// v5_dynamic: NET/TOP10 грузятся динамически из mart_restaurant_daily_base.
+// v5_clean: Фаза 1.2 — убран скор/100, 3 тяжёлых блока (donut/gauge/rank),
+//            один глобальный календарь вместо 4, переименована секция
+//            "AI-рекомендации" → "На что обратить внимание".
 
 export const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="ru">
@@ -364,10 +366,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
       </button>
       <div class="cal-dropdown" id="globalCalDrop"></div>
     </div>
-    <div class="score-chip">
-      <div><div class="chip-lbl">Скор точки</div><div class="chip-num" id="chipScore">—</div></div>
-      <div class="chip-grade" id="chipGrade"></div>
-    </div>
   </div>
 </div>
 
@@ -388,7 +386,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 <div class="panel active" id="p-overview">
 
   <div id="alertsBox"></div>
-  <div class="g21">
+  <div>
     <div>
       <div class="g3" style="margin-bottom:10px">
         <div class="kcard"><div class="klbl">Выручка / день</div><div class="kval" id="kv-rev">—</div><div class="kdelta" id="kd-rev"></div><div class="kbench" id="kb-rev"></div><div class="kbar bgo" id="kr-rev" style="width:0"></div></div>
@@ -405,42 +403,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
         <div style="height:115px"><canvas id="miniC"></canvas></div>
       </div>
     </div>
-    <div class="card" style="display:flex;flex-direction:column;align-items:center">
-      <div class="ctitle">🏆 Скор точки</div>
-      <div style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:10px 0">
-        <div class="score-ring"><canvas id="scoreRing" width="144" height="144"></canvas><div class="score-ctr"><div class="score-n" id="scoreN">—</div><div style="font-size:11px;color:var(--text3)">/100</div></div></div>
-        <div class="score-g" id="scoreG"></div>
-        <div class="score-p" id="scoreP"></div>
-      </div>
-      <div style="width:100%;display:flex;flex-direction:column;gap:5px" id="scoreBr"></div>
-    </div>
-  </div>
-  <div class="g3">
-    <div class="card">
-      <div class="ctitle">🍕 Структура выручки</div>
-      <div style="height:145px"><canvas id="donutC"></canvas></div>
-      <div id="donutLeg" style="margin-top:8px"></div>
-    </div>
-    <div class="card">
-      <div class="ctitle">🌡️ Фудкост — зоны риска</div>
-      <div class="gauge-w"><canvas id="gaugeC" width="200" height="110"></canvas></div>
-      <div style="text-align:center;margin-top:2px"><span id="gaugeVal" style="font-family:Cormorant Garamond,serif;font-size:28px;font-weight:700">—</span></div>
-      <div style="display:flex;justify-content:space-between;font-size:9px;margin-top:6px">
-        <span style="color:var(--green)">✅ &lt;22%</span><span style="color:var(--amber)">⚠ 22–26%</span><span style="color:var(--red)">🔴 &gt;26%</span>
-      </div>
-      <div id="gaugeZ" style="font-size:10px;text-align:center;margin-top:6px"></div>
-    </div>
-    <div class="card">
-      <div class="ctitle">📦 Позиция в сети</div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <div style="display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:8px;font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;background:rgba(212,168,75,.15);color:var(--gold);border:1px solid rgba(212,168,75,.25)" id="rankBadge">—</div>
-        <div><div style="font-size:10px;color:var(--text2)">из <span id="rankTot">42</span> точек</div><div style="font-size:11px;color:var(--gold);margin-top:2px" id="rankPct"></div></div>
-      </div>
-      <div id="rankBars" style="max-height:320px;overflow-y:auto"></div>
-    </div>
   </div>
   <div class="card">
-    <div class="ctitle">🤖 AI-рекомендации</div>
+    <div class="ctitle">🔔 На что обратить внимание</div>
     <div id="insBox" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px"></div>
   </div>
 </div>
@@ -452,7 +417,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
       <select id="dynRestSel" onchange="setDynRest(this.value)"
         style="background:var(--card);border:1px solid var(--border2);color:var(--text);padding:6px 10px;border-radius:8px;font-family:Inter,sans-serif;font-size:12px;cursor:pointer;outline:none;max-width:220px">
       </select>
-      <div class="cal-picker-wrap"><button class="cal-btn" onclick="toggleCal('dyn',event)"><span class="ico">📅</span><span id="dynCalLbl">Период</span></button><div class="cal-dropdown" id="dynCalDrop"></div></div>
     </div>
     <div class="pgroup">
       <button class="pbtn active" onclick="setDynQ(7,this)">7д</button>
@@ -546,9 +510,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
   </div>
   <div class="prow">
     <div style="font-size:13px;font-weight:600">Сравнение точек <span style="background:rgba(212,168,75,.15);color:var(--gold);font-size:10px;padding:2px 8px;border-radius:12px;margin-left:6px">до 5 точек</span></div>
-    <div style="display:flex;align-items:center;gap:8px">
-      <div class="cal-picker-wrap"><button class="cal-btn" onclick="toggleCal('cmp',event)"><span class="ico">📅</span><span id="cmpCalLbl">Период</span></button><div class="cal-dropdown" id="cmpCalDrop"></div></div>
-    </div>
+    <div style="display:flex;align-items:center;gap:8px"></div>
   </div>
 
   <div class="comp-area" id="compSlots"></div>
@@ -1189,13 +1151,12 @@ function goTab(el) {
 
 function renderAll() {
   renderKPIs();
-  renderScore();
   renderMiniTrend();
-  renderDonut();
-  renderGauge();
-  renderRankBars();
   renderInsights();
   renderAlerts();
+  // renderScore, renderDonut, renderGauge, renderRankBars — отключены
+  // после разгрузки первого экрана. Функции сохранены в коде для
+  // возможного возврата на другие вкладки в будущем.
 }
 
 // ═══ UTILS ═══
@@ -1264,7 +1225,7 @@ const MNAMES_FULL = ['Январь','Февраль','Март','Апрель','
 
 function buildCalendars(){
   const maxD=new Date(MAX_DATE||'2026-04-30');
-  ['global','dyn','cmp'].forEach(key=>{
+  ['global'].forEach(key=>{ // Фаза 1.2: остался только глобальный календарь
     CAL_STATE[key]={start:MIN_DATE,end:MAX_DATE,picking:0,year:maxD.getFullYear(),month:maxD.getMonth()};
     CAL_MODES[key]='day';
     renderCal(key);
@@ -1473,11 +1434,22 @@ function calApply(key,ev){
   updateCalLabel(key);
   document.getElementById(key+'CalDrop').classList.remove('open');
   if(key==='global'){
-    loadNetworkBenchmarks(S.globalStart, S.globalEnd)
-      .then(()=>{try{renderAll();}catch(e){alert('Ошибка при применении дат:\\n'+e.message);console.error(e);}});
+    // При изменении глобального календаря синкаем периоды всех вкладок
+    // (Фаза 1.2: один календарь на 4 вкладки, см. паспорт 5.28)
+    S.dynStart = S.cmpStart = S.globalStart;
+    S.dynEnd   = S.cmpEnd   = S.globalEnd;
+    loadNetworkBenchmarks(S.globalStart, S.globalEnd).then(()=>{
+      try {
+        renderAll();
+        // Перерисовываем всё, даже если сейчас видна другая вкладка
+        if (typeof renderDynamics === 'function') renderDynamics();
+        if (typeof renderCompare === 'function') renderCompare();
+      } catch(e) {
+        alert('Ошибка при применении дат:\\n'+e.message);
+        console.error(e);
+      }
+    });
   }
-  else if(key==='dyn'){try{renderDynamics();}catch(e){console.error(e);}}
-  else if(key==='cmp'){try{renderCompare();}catch(e){console.error(e);}}
 }
 function updateCalLabel(key){
   const st=CAL_STATE[key];
@@ -1658,6 +1630,8 @@ function setKPI(id,raw,fmt,unit,prevRaw,netBench,lb,benchLbl,barPct,barCls){
 
 // ═══ SCORE ═══
 function renderScore(){
+  // Функция сохранена для возможного возврата. Если DOM-элементов нет — выходим.
+  if (!document.getElementById('scoreRing')) return;
   // Recalculate score dynamically from selected period's data
   const ts = getGlobalTs();
   let score, dispRank, rankN;
@@ -1753,6 +1727,7 @@ function renderMiniTrend(){
 
 // ═══ DONUT ═══
 function renderDonut(){
+  if (!document.getElementById('donutC')) return;
   const ts=getGlobalTs();
   const bar=safeAvg(ts,'bar')||0,kit=safeAvg(ts,'kitchen')||0,del=safeAvg(ts,'delivery')||0;
   const rev=safeAvg(ts,'revenue')||R.revenue||1;
@@ -1767,6 +1742,7 @@ function renderDonut(){
 
 // ═══ GAUGE ═══
 function renderGauge(){
+  if (!document.getElementById('gaugeC')) return;
   const ts=getGlobalTs();
   const fc=safeAvg(ts,'foodcost');
   if(fc===null){const gv=document.getElementById('gaugeVal');if(gv)gv.textContent='—';return}
@@ -1804,6 +1780,7 @@ function renderGauge(){
 
 // ═══ RANK BARS ═══
 function renderRankBars(){
+  if (!document.getElementById('rankBars')) return;
   // Calculate period avg revenue for each restaurant
   const withRev = RESTS.map(r2=>{
     const ts2 = r2.ts.filter(t=>t.date>=S.globalStart&&t.date<=S.globalEnd&&t.revenue>0);
