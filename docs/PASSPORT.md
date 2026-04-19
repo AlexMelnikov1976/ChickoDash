@@ -4,8 +4,8 @@
 > История изменений — в разделе [Changelog](#10-changelog) внизу.
 > Если что-то здесь противоречит коду в репо — прав код, этот документ надо обновить.
 
-**Последнее обновление:** 18.04.2026, ночь (23:00 MSK) — Волна 2 на 75%, observability добавлена
-**Версия паспорта:** 3.10 (консолидирует v3.3–v3.9 + результаты 18.04 ночь)
+**Последнее обновление:** 19.04.2026, день (13:00) — готова инфраструктура для magic-link auth, код пишем в следующей сессии
+**Версия паспорта:** 3.11 (консолидирует v3.3–v3.10 + результаты 19.04 утром/днём)
 
 ---
 
@@ -13,11 +13,14 @@
 
 **Chicko Analytics** — аналитическая платформа для франчайзи сети ресторанов Chicko. Показывает ключевые метрики (выручка, средний чек, foodcost, дисконт, доля доставки), сравнивает каждый ресторан с сетью и Top-10, строит динамику и выдаёт рекомендации.
 
-**Пользователи:** владельцы франчайзи-ресторанов (видят свой ресторан), управляющая компания (видит всю сеть).
+**Пользователи:** владельцы франчайзи-ресторанов. На старте — 42 пользователя.
 
-**Текущее поколение (v4):** статический HTML-дашборд с hardcoded подключением к ClickHouse.
-
-**Целевое поколение:** тот же дашборд, но данные приходят через защищённый API с JWT + row-level security. **API работает end-to-end, мониторинг активен, структурированные логи пишутся.** Следующий шаг M4 — интеграция старого HTML-дашборда с API.
+**Продуктовое решение (принято 19.04.2026):**
+- Каждый франчайзи логинится своим email (любым — Gmail, Yandex, Mail.ru, корпоративный)
+- После входа видит **все данные всей сети** — это и есть ключевая фишка продукта («сравнение внутри сети»)
+- Никакой фильтрации данных по пользователю (RLS в API нет)
+- Login нужен только для контроля доступа, аудита и будущих ролей
+- Продукт — vertical SaaS для ресторанного бизнеса, стратегия: Chicko → другие сети ресторанов → кинотеатры (июньская конференция)
 
 ---
 
@@ -28,15 +31,15 @@
 | **Production API** | https://chicko-api-proxy.chicko-api.workers.dev 🟢 |
 | **GitHub (private)** | github.com/AlexMelnikov1976/chicko-api-proxy |
 | **Локально (Mac)** | `~/Developer/chicko-api-proxy` |
-| **Общий прогресс** | ~60% от плана (Волна 1 ✅, Волна 2 на 75% ✅, API end-to-end работает, Dashboard 0%) |
-| **Активный блокер** | Нет. `/api/query` работает end-to-end. |
-| **Ближайший milestone** | M4: Frontend-дашборд v4 переведён на JWT API — ETA 20.04 |
-| **Автодеплой** | ✅ GitHub Actions: 7 подряд зелёных деплоев за 18.04 |
-| **n8n proxy** | ✅ Active, webhook `/webhook/clickhouse-proxy` |
-| **Мониторинг (uptime)** | ✅ n8n healthcheck каждые 3 часа → Telegram алерт при падении/восстановлении |
-| **Мониторинг (логи)** | ✅ Cloudflare Observability: все `console.log/error` + invocation logs, retention 3 дня |
-| **Срочный долг** | 🔴 Ротация пароля `dashboard_ro` — засветился в shell history и в истории чата с Claude |
-| **Косметический баг** | `[query] user=undefined` в логах — неверное имя поля JWT payload в `src/index.ts`, фикс 2 мин |
+| **Общий прогресс** | ~65% от плана (Волна 1 ✅, Волна 2 на 85% ✅, auth-инфра готова, код следующей сессией) |
+| **Активный блокер** | Нет |
+| **Ближайший milestone** | M4: Frontend-дашборд + magic-link auth — ETA 20-21.04 |
+| **Автодеплой** | ✅ GitHub Actions, 9 подряд зелёных деплоев |
+| **n8n proxy** | ✅ Active |
+| **Мониторинг** | ✅ Healthcheck + Cloudflare Observability + structured logging |
+| **Auth infrastructure** | ✅ Готова: Resend + business-360.ru, 2 KV namespaces созданы |
+| **Срочный долг** | 🔴 Ротация пароля `dashboard_ro` |
+| **Следующий шаг** | Сгенерировать код magic-link auth (следующая сессия) |
 | **Ответственный** | Aleksey Melnikov |
 
 ---
@@ -52,11 +55,15 @@
 | n8n workflow: ClickHouse Proxy | n8n | `/webhook/clickhouse-proxy` | Active с 18.04.2026 |
 | n8n workflow: Healthcheck | n8n | cron 3h | Active с 18.04.2026 |
 | CI/CD | GitHub Actions | `.github/workflows/deploy.yml` | Auto на push в main |
-| Observability (логи Worker'а) | Cloudflare Workers Logs | dash → Worker → Observability | Встроенный UI |
+| Observability | Cloudflare Workers Logs | dash → Worker → Observability | Встроенный UI |
+| **Email provider** | **Resend** | `resend.com`, домен `business-360.ru` | Добавлен 19.04.2026 |
+| **Auth domain** | **business-360.ru** (Reg.ru) | DNS настроен (DKIM+SPF+MX+DMARC) | Reg.ru панель |
+| **Workers KV: USERS** | Cloudflare KV | id `6f095f10194a45ec9cdcc98129fb2426` | Whitelist email'ов |
+| **Workers KV: MAGIC_LINKS** | Cloudflare KV | id `5519cb41b5554c51bf248dbecee1aa6a` | Активные magic-link токены |
 | Локальная разработка | MacBook Air (macOS, zsh) | `~/Developer/chicko-api-proxy` | Терминал |
 | Старый дашборд (v4) | Один HTML файл | `chiko_dashboard_v4__19_.html` | Раздаётся вручную |
 
-**Рабочее окружение:** Node v25.9.0, npm 11.12.1, Git 2.39.5 (Apple Git), wrangler 3.114 (update available: 4.x — не критично).
+**Рабочее окружение:** Node v25.9.0, npm 11.12.1, Git 2.39.5, wrangler 3.114 (долг: обновить до 4.x).
 
 ---
 
@@ -64,25 +71,36 @@
 
 ```
 ┌──────────────────┐
-│  Frontend        │    (пока — HTML файл v4, будущее — Cloudflare Pages)
-│  Dashboard       │
+│  Frontend        │    (v4 HTML → Cloudflare Pages в M4)
+│  Dashboard       │    + форма magic-link логина
 └────────┬─────────┘
-         │  HTTPS + JWT Bearer token
+         │  HTTPS
+         │
+         ├──── POST /api/auth/request-link { email }
+         │      → Worker проверяет whitelist в KV:USERS
+         │      → генерирует токен, кладёт в KV:MAGIC_LINKS (TTL 15 мин)
+         │      → Resend посылает письмо на email
+         │
+         ├──── POST /api/auth/verify { token }
+         │      → Worker достаёт токен из KV:MAGIC_LINKS
+         │      → удаляет токен (одноразовый)
+         │      → выдаёт JWT (30 дней)
+         │
+         └──── POST /api/query { query } + Authorization: Bearer JWT
+                → Worker проверяет JWT, выполняет SQL без RLS
          ▼
 ┌──────────────────────────┐
 │  Cloudflare Workers      │◄─── GitHub Actions (auto-deploy on push)
 │  chicko-api-proxy        │◄─── n8n Healthcheck (GET /health, 3h cron)
-│    • JWT validate        │───► Cloudflare Observability (console.log/error)
-│    • Row-level security  │
+│    • JWT validate        │───► Cloudflare Observability
+│    • NO RLS              │───► Resend API (send magic links)
 │    • Structured logging  │
 └────────┬─────────────────┘
          │  POST /webhook/clickhouse-proxy
-         │  ?user=X&password=Y&database=chicko&query=SQL
          ▼
 ┌──────────────────────────┐
 │  n8n Workflow            │  ✅ ACTIVE
 │  ClickHouse Proxy        │
-│  allowUnauthorizedCerts  │
 └────────┬─────────────────┘
          │
          ▼
@@ -90,13 +108,7 @@
 │  Yandex Managed          │
 │  ClickHouse (chicko DB)  │
 └──────────────────────────┘
-
-Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions)
 ```
-
-**Проверено работающим 18.04.2026:** curl → Workers → n8n → ClickHouse → ответ `SELECT 1` за ~1.1мс (ClickHouse) / ~30мс total round-trip.
-
-**Healthcheck + Observability активны:** healthcheck каждые 3 часа, Observability пишет все request/response + мои структурированные логи с префиксами `[request]`, `[login]`, `[query]`.
 
 ---
 
@@ -104,98 +116,95 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions)
 
 ### 5.1 Почему n8n proxy, а не прямое подключение Workers → ClickHouse?
 
-**Пробовали. Не работает:**
-- HTTPS порт 8443 → SSL error 526 (Yandex самоподписанный сертификат, Cloudflare не доверяет)
-- HTTP порт 8123 → Connection timeout 522 (ACL закрыт для внешних)
-
-**n8n решает:**
-- Имеет рабочее подключение к этому ClickHouse (`allowUnauthorizedCerts: true`)
-- Cloudflare Workers свободно общается с любым HTTPS-эндпоинтом n8n
-
-**Плата:** +50-100мс latency. Проверено 18.04: реальное round-trip ~30мс, приемлемо.
+Прямое подключение не работает: HTTPS 8443 → SSL error 526, HTTP 8123 → Connection timeout 522. n8n уже имеет рабочее подключение (`allowUnauthorizedCerts: true`). Плата: +~30мс latency.
 
 ### 5.2 Почему Cloudflare Workers?
 
-- Бесплатный тир (100k req/day)
-- Глобальный edge → ~20мс до API
-- Zero-downtime secret updates
-- Встроенная Observability (см. 5.10)
+Бесплатный тир, глобальный edge, zero-downtime secret updates, встроенная Observability.
 
-### 5.3 Почему JWT 24h?
+### 5.3 Почему JWT 30 дней (не 24h)
 
-- Workers stateless
-- 24h — удобно для BI-задачи
-- Ротация `JWT_SECRET` разом разлогинивает всех
+24h — было для MVP-теста с одним admin-пользователем. Для реальных франчайзи 30 дней удобнее: открывают закладку — сразу данные. Не надо каждый день получать magic link. Ротация `JWT_SECRET` разом разлогинивает всех → есть kill switch.
 
-### 5.4 Почему row-level security регексом?
+### 5.4 Row-level security регексом — ВЫКИНУТО 19.04.2026
 
-- Контроль внутри API-слоя
-- `tenant_id` из JWT, не из body → нельзя обойти RLS
+Исторически код имел RLS-регекс с `tenant_id`. Обнаружено утром 19.04:
+- В реальной схеме `mart_restaurant_daily_base` **нет колонки `tenant_id`**. RLS ломался на любом реальном SQL.
+- Продуктовое решение: франчайзи Chicko **видят все данные всей сети**. RLS не нужен.
+- Решение: убрать RLS-регекс из `clickhouse.ts`. Все залогиненные видят всё.
+- Multi-tenancy (когда появятся другие клиенты помимо Chicko) будет реализован через **отдельные deployments**, не через row-level фильтры в одной базе.
 
-### 5.5 Почему документация в git (паспорт), а не в Notion?
+### 5.5 Почему документация в git (паспорт)
 
-- В git — технические детали. В Notion — оперативные задачи и трекинг.
+В git — технические детали. В Notion — оперативные задачи.
 
-### 5.6 Почему GitHub Actions (18.04.2026)
+### 5.6 Почему GitHub Actions
 
-- Устраняет "забыл задеплоить"
-- Аудит-лог
-- Воспроизводимость
-- Нулевой риск для prod
+Устраняет "забыл задеплоить", аудит-лог, воспроизводимость.
 
 ### 5.7 Почему credentials в URL query params (долг)
 
-- ClickHouse HTTP API поддерживает query params из коробки
-- **Проблема:** пароль в логах n8n
-- **План:** после ротации — рефакторинг на body/headers
+ClickHouse HTTP API поддерживает query params из коробки. Проблема: пароль в логах n8n. План: после ротации — рефакторинг на body/headers.
 
-### 5.8 Почему healthcheck 3 часа, а не 5 минут (18.04.2026, долг на UptimeRobot)
+### 5.8 Почему healthcheck 3 часа, а не 5 минут
 
-- n8n Cloud имеет лимит executions (2500/мес на Starter)
-- Healthcheck каждые 5 мин = 8640/мес, сожрал бы лимит за 9 дней
-- **Правильный долгосрочный инструмент:** UptimeRobot (бесплатный dedicated-сервис). Мигрируем когда появятся реальные пользователи.
+Экономим лимит n8n executions. UptimeRobot — долгосрочное решение.
 
-### 5.9 Почему healthcheck проверяет только HTTP status code (18.04.2026)
+### 5.9 Почему healthcheck проверяет только HTTP status code
 
-- Первая версия проверяла body.status — ловили ложные алерты на Cloudflare 404 HTML
-- Упрощено до `statusCode >= 200 && < 300`. Для `/health` достаточно.
-- Принцип: **меньше зависимостей — меньше багов**
+Принцип: меньше зависимостей — меньше багов.
 
-### 5.10 Почему Cloudflare Workers Logs, а не Sentry (18.04.2026)
+### 5.10 Почему Cloudflare Workers Logs, а не Sentry
 
-- **Попытка зайти в Sentry:** 403 Forbidden на signup-page со всех браузеров, с VPN и без. Сам сайт у них "All Systems Operational" — это не технический сбой, а гео-блокировка на уровне браузерного fingerprint (VPN не помогает).
-- **Cloudflare Workers Logs** — встроенная альтернатива. Пишет `console.log/error` + invocation logs каждого request'а. UI в Cloudflare → Worker → Observability.
-- **Плата:** нет такого UX как Sentry (группировка issues, release tracking, alert rules). Retention 3 дня на бесплатном тире.
-- **Плюсы:** ноль настройки, ноль зависимостей, никакой гео-блокировки.
-- **Дальнейший путь:** если Sentry когда-то станет доступен — можно добавить его поверх, `console.error` всё равно попадут и туда и сюда.
+Sentry sign-up возвращал 403 со всех IP/браузеров — гео-блокировка. Workers Logs — встроенная альтернатива.
 
-### 5.11 wrangler.toml как IaC для observability (18.04.2026)
+### 5.11 wrangler.toml как IaC для observability
 
-- Включить Logs можно через UI Cloudflare, но **при следующем `wrangler deploy` настройка UI может перезаписаться тем, что в `wrangler.toml`**
-- Поэтому блок `[observability]` + `[observability.logs]` добавлен в `wrangler.toml` — теперь каждый деплой подтверждает включённость
-- Принцип: **всё, что влияет на работу системы, должно быть в git**
+Всё, что влияет на работу системы, должно быть в git.
 
-### 5.12 Structured logging с префиксами (18.04.2026)
+### 5.12 Structured logging с префиксами
 
-- Формат: `[request] POST /api/query`, `[query] user=... tenant=... sql_length=...`, `[login] error: ... stack: ...`
-- **Что логируется:** метод, путь, email пользователя, ID tenant'а, длина SQL, время выполнения, код ответа, stack trace при ошибке
-- **Что НЕ логируется:** пароли, JWT-токены, содержимое SQL (может содержать PII), данные из ClickHouse
-- Единые префиксы в квадратных скобках позволяют фильтровать в Observability UI по категориям
+Единые префиксы `[request]`, `[login]`, `[query]` позволяют фильтровать в Observability UI.
+
+### 5.13 Почему magic-link через email, а не пароли или OAuth (решение 19.04.2026)
+
+**Серия разворотов на 19.04:**
+1. Password + KV → рассматривали. Хранить пароли — security-долг.
+2. Google OAuth → пробовали. Google Cloud регистрация прошла, но **половина франчайзи на не-Gmail адресах** (Yandex, Mail.ru, корпоратив). OAuth через Google ломает UX для них.
+3. Публичный URL без логина → рассматривали. Отброшено: нужен контроль доступа для будущего аудита.
+4. **Magic-link через email** → финальный выбор:
+   - Работает с **любым email** (Gmail, Yandex, Mail.ru, корпоратив)
+   - Не зависит от страны или провайдера
+   - Мы не храним пароли
+   - Не нужна «забыл пароль» функциональность
+   - UX: форма email → ссылка в письме → 30 дней сессия
+
+### 5.14 Почему Resend для email (19.04.2026)
+
+- Бесплатный тир: 3000 писем/мес (нам хватит на 42 пользователя × ~1 письмо/мес)
+- Простой REST API, легко интегрируется с Workers
+- Работает из РФ без VPN (американская компания, но без гео-блокировок для API)
+- EU-регион (Ireland) → низкая latency к РФ
+
+### 5.15 Почему domain business-360.ru (19.04.2026)
+
+- Универсальное нейтральное имя — подходит и для Chicko, и для кинотеатров, и для будущих проектов
+- Уже зарегистрирован на reg.ru
+- DNS (SPF+DKIM+MX+DMARC) настроен 19.04, Resend verified за 10 минут
 
 ---
 
 ## 6. Credentials — журнал ротаций
 
-**Это самый важный раздел для безопасности.** Каждая смена пароля/ключа — отдельная запись.
-
-| Дата | Что | Действие | Причина | Кто сделал |
+| Дата | Что | Действие | Причина | Кто |
 |---|---|---|---|---|
-| 18.04.2026 вечер | `CLICKHOUSE_HOST` (Cloudflare secret) | Обновлён: `rc1d-...:8443` → `https://melnikov.app.n8n.cloud/webhook/clickhouse-proxy` | Переключение на n8n-прокси | Aleksey |
-| 18.04.2026 | Cloudflare API Token (для CI) | Создан (scope: Edit Cloudflare Workers) | GitHub Actions. Сохранён как `CLOUDFLARE_API_TOKEN` | Aleksey |
-| 🔴 TBD URGENT | ClickHouse `dashboard_ro` пароль | **Ротация обязательна** | Старый пароль `chiko_dash_2026` засветился в: (1) старом HTML-дашборде v4, (2) shell history MacBook, (3) истории чата с Claude, (4) n8n execution history | Ожидает (утро 19.04) |
-| 🟠 TBD | iiko passwords (`1234567890`, `79062181048`) | Ротация рекомендуется | Засветились при первом (ошибочном) экспорте n8n workspace 18.04. Плюс оба слабые. | Ожидает |
-| 17.04.2026 | Локальный `.dev.vars` | Очищен от старого пароля | Подготовка к ротации | Aleksey |
-| TBD | `JWT_SECRET` (production) | Ротация при переходе к real users | Dev-level, для MVP | Ожидает |
+| 19.04.2026 | `RESEND_API_KEY` (Cloudflare secret) | Добавлен | Magic-link auth для франчайзи | Aleksey |
+| 19.04.2026 | DNS записи `business-360.ru` (SPF/DKIM/MX/DMARC в Reg.ru) | Добавлены | Verification домена в Resend | Aleksey |
+| 18.04.2026 | `CLICKHOUSE_HOST` | Обновлён на webhook URL n8n | Переключение на proxy | Aleksey |
+| 18.04.2026 | Cloudflare API Token | Создан (scope: Edit Cloudflare Workers) | GitHub Actions | Aleksey |
+| 🔴 TBD URGENT | ClickHouse `dashboard_ro` пароль | **Ротация обязательна** | Засветился в shell history, чате, n8n logs | Ожидает |
+| 🟠 TBD | iiko passwords (`1234567890`, `79062181048`) | Ротация | Слабые и засвеченные | Ожидает |
+| TBD | `JWT_SECRET` (production) | Ротация при переходе к real users | Dev-level для MVP | Ожидает |
 
 ### Где живут credentials
 
@@ -205,15 +214,11 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions)
 | `CLICKHOUSE_PASSWORD` локально | `~/Developer/chicko-api-proxy/.dev.vars` | Только на MacBook (gitignored) |
 | `CLICKHOUSE_HOST` production | Cloudflare Workers secrets (webhook URL n8n) | Только `wrangler secret` |
 | `JWT_SECRET` production | Cloudflare Workers secrets | Только `wrangler secret` |
-| `CLOUDFLARE_API_TOKEN` (для CI) | GitHub Secrets | Только GitHub Actions |
+| `RESEND_API_KEY` production | Cloudflare Workers secrets | Только `wrangler secret` |
+| `CLOUDFLARE_API_TOKEN` (CI) | GitHub Secrets | Только GitHub Actions |
 | Telegram bot credential `Chicko` (n8n) | n8n Credentials vault | Только через n8n UI |
-| ClickHouse `dashboard_ro` credentials | Yandex Cloud + менеджер паролей | Только Aleksey |
+| ClickHouse `dashboard_ro` | Yandex Cloud + менеджер паролей | Только Aleksey |
 | SSH-ключ к GitHub | `~/.ssh/id_ed25519` на MacBook | Только Aleksey |
-
-**Правила:**
-- Никогда не коммитить в git
-- При смене — **сначала** менеджер паролей, **потом** Cloudflare secrets, **потом** n8n, **потом** `.dev.vars`
-- Не пересылать пароли в текстовых каналах. Если попали — ротировать следующим же действием.
 
 ---
 
@@ -223,8 +228,8 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions)
 ~/Developer/chicko-api-proxy/
 ├── src/
 │   ├── index.ts              # Main worker: routing + CORS + structured logging
-│   ├── auth.ts               # JWT generation / validation
-│   └── clickhouse.ts         # ClickHouse client + row-level security
+│   ├── auth.ts               # JWT generation / validation (fix JWT decode bug 19.04)
+│   └── clickhouse.ts         # ClickHouse client (RLS-регекс УБЕРЁМ в следующей сессии)
 ├── infra/
 │   └── n8n/
 │       ├── clickhouse_proxy.json   # ✅ в git с 18.04.2026
@@ -241,7 +246,7 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions)
 ├── package.json
 ├── package-lock.json
 ├── tsconfig.json
-└── wrangler.toml             # ✅ включает [observability] блок (IaC)
+└── wrangler.toml             # ✅ включает [observability] (следующим шагом: kv_namespaces)
 ```
 
 **Что не в git:** `node_modules/`, `.wrangler/`, `.dev.vars`, `dist/`.
@@ -250,63 +255,57 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions)
 
 ## 8. План развития — Волны инфраструктуры
 
-**Синхронизация с экосистемой n8n:**
-- USER_CONTEXT в Weekly Advisor расширен блоком про Chicko
-- Запись в базе Проектов Notion обновлена
-- Скилл chiko-franchise-dashboard обновлён до v1.1
+### ✅ Волна 1: Критическая инфраструктура (закрыта 17.04.2026)
 
-
-
-### ✅ Волна 1: Критическая инфраструктура (завершена 17.04.2026)
-
-Все пункты закрыты в одну сессию. Детали в changelog.
-
-### 🟠 Волна 2: Автоматизация deploy и мониторинга (75% готово)
+### 🟠 Волна 2: Автоматизация deploy и мониторинга (85% готово)
 
 | Шаг | Время | Статус |
 |---|---|---|
-| GitHub Actions workflow (автодеплой) | ~40 мин | ✅ **18.04.2026** |
-| Cloudflare API Token → GitHub Secrets | ~10 мин | ✅ **18.04.2026** |
-| Активация n8n proxy (M3 закрыт) | ~60 мин | ✅ **18.04.2026** |
-| Обновление `CLICKHOUSE_HOST` secret | ~5 мин | ✅ **18.04.2026** |
-| Экспорт n8n ClickHouse Proxy в `infra/n8n/` | ~10 мин | ✅ **18.04.2026** |
-| n8n healthcheck workflow + Telegram | ~40 мин | ✅ **18.04.2026** |
-| Экспорт n8n Healthcheck в `infra/n8n/` | ~5 мин | ✅ **18.04.2026** |
-| Cloudflare Workers Logs + structured logging | ~30 мин | ✅ **18.04.2026** |
-| wrangler.toml с `[observability]` блоком (IaC) | (часть выше) | ✅ **18.04.2026** |
-| 🔴 **Ротация пароля ClickHouse** | ~20 мин | ⏳ NEXT (утро 19.04) |
-| Фикс `user=undefined` в логах (читаем auth.ts, корректируем field name) | ~5 мин | ⏳ |
-| Рефакторинг clickhouse.ts: credentials в body (см. 5.7) | ~30 мин | ⏸ (после ротации) |
+| GitHub Actions workflow | ~40 мин | ✅ 18.04 |
+| Cloudflare API Token → GitHub Secrets | ~10 мин | ✅ 18.04 |
+| Активация n8n proxy (M3) | ~60 мин | ✅ 18.04 |
+| Обновление `CLICKHOUSE_HOST` secret | ~5 мин | ✅ 18.04 |
+| Экспорт n8n workflows (ClickHouse Proxy + Healthcheck) в git | ~15 мин | ✅ 18.04 |
+| n8n healthcheck workflow | ~40 мин | ✅ 18.04 |
+| Cloudflare Workers Logs + structured logging | ~30 мин | ✅ 18.04 |
+| wrangler.toml с `[observability]` (IaC) | — | ✅ 18.04 |
+| Фикс JWT validateToken (decode вместо verify для payload) | ~15 мин | ✅ 19.04 |
+| **Resend + business-360.ru DNS + API key** | ~30 мин | ✅ 19.04 |
+| **2 KV namespaces (USERS, MAGIC_LINKS)** | ~5 мин | ✅ 19.04 |
+| 🔴 **Ротация пароля ClickHouse** | ~20 мин | ⏳ NEXT |
+| Выкинуть RLS из clickhouse.ts | ~10 мин | ⏳ (со следующим кодом) |
+| **Написать magic-link auth код** (auth.ts + index.ts + wrangler.toml с kv_namespaces) | ~60 мин | ⏳ (следующая сессия) |
 
-### 🟡 Волна 3: Трекинг и процесс
+### 🟡 Волна 3: Трекинг и процесс (план: 1 день)
 
 | Шаг | Цель |
 |---|---|
 | Notion database "Chicko Tasks" | Единый source of truth для задач |
 | Миграция задач в Notion | One-time |
-| `docs/archive/` для 4 старых MD-файлов | Очистка корня |
+| `docs/archive/` для старых MD-файлов | Очистка корня |
 | n8n workflow: GitHub webhook → Notion update | Автообновление статусов |
 | Google Calendar events с milestones M4-M6 | Дедлайны в календаре |
+| **Usage tracking в дашборде** | Метрика «кто реально заходит», измерение adoption |
 
 ### 🟢 Волна 4: Автоматизация бизнес-процесса
 
 | Шаг | Цель |
 |---|---|
 | Cloudflare Pages для HTML-дашборда | URL вместо раздачи HTML |
-| n8n daily-rebuild: Sheets → skill → Pages → Telegram | Дашборд обновляется сам |
-| n8n metrics-alerts | Проактивный мониторинг метрик |
-| Cloudflare Workers Cron Trigger: warm-cache в KV | Dashboard за 50мс |
-| AI-инсайты (рекомендация #2 Advisor 18.04) | Умные комментарии к метрикам |
+| n8n daily-rebuild | Дашборд обновляется сам |
+| n8n metrics-alerts | Проактивный мониторинг |
+| Cloudflare Workers Cron Trigger: warm-cache | Dashboard за 50мс |
+| **AI-инсайты в дашборд** | «Что будет», не «что было» — ключевая фишка |
 
 ### ⚪ Волна 5: Полировка
 
-- Rate limiting через Workers KV (100 req/hour/user)
+- Rate limiting через Workers KV
 - Unit + integration tests
-- CORS whitelist вместо `*`
-- Dashboard usage analytics
+- CORS whitelist
+- Dashboard usage analytics (продуктовое)
 - Обновление wrangler 3.114 → 4.x
-- **Миграция healthcheck с n8n на UptimeRobot** (см. 5.8) — когда появятся реальные пользователи
-- Перевод iiko-потоков n8n с `passPlain` на Credentials
+- Миграция healthcheck с n8n на UptimeRobot
+- Перевод iiko-потоков на Credentials
 
 ---
 
@@ -314,106 +313,113 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions)
 
 **Активные:**
 
-1. 🔴 **URGENT: Ротация пароля ClickHouse `dashboard_ro`** — скомпрометирован. Делается утром 19.04.
-2. 🟠 **Ротация iiko passwords** — слабые и засветились.
-3. 🟡 **`user=undefined` в логах** — косметический баг, `payload.user_id` не то поле (смотреть `src/auth.ts`). 5 минут на утро.
-4. ~~**Нет мониторинга**~~ — ✅ Закрыто (healthcheck + Workers Logs)
-5. ~~**n8n proxy не активирован**~~ — ✅ Закрыто
-6. ~~**Нет автодеплоя**~~ — ✅ Закрыто
+1. 🔴 **URGENT: Ротация пароля ClickHouse `dashboard_ro`**
+2. 🟠 **Ротация iiko passwords**
+3. **Домен business-360.ru** сейчас указывает на `95.163.244.138` (A-запись). Неизвестно что там стоит — возможно старый сайт. Если ничего важного — можно использовать `business-360.ru` для дашборда (`dashboard.business-360.ru` поддомен). Надо проверить.
 
 **Вопросы на решение:**
 
-- **M4 когда?** Все предпосылки готовы. ETA: 20.04 воскресенье.
-- **Rate limit** — перенесено в Волну 5.
-- **Multi-tenant** — код готов, клиентов пока не подключаем.
+- **Где хостить frontend?** Cloudflare Pages + собственный subdomain `dashboard.business-360.ru` или `chicko-dashboard.pages.dev`. Решим в следующей сессии при M4.
+- **Доступ УК** (управляющей компании) — отдельная роль или тот же флоу? Пока — тот же флоу, все видят всё.
 
 ---
 
 ## 10. Changelog (что реально сделано, по датам)
 
-### 18.04.2026, ночь (23:00 MSK, ~40 мин работы)
+### 19.04.2026, утро/день (~4ч работы)
+
+**Утро началось с одной задачи и превратилось в архитектурный разбор.**
+
+**Баги и архитектурные открытия:**
+1. Найден **критический баг в `validateToken`**: `verify()` возвращает boolean, код кастил его как JWTPayload → `user_id = undefined` во всех запросах. Исправлено заменой на `decode()` после успешного `verify()`. Коммит `fix(auth): properly decode JWT payload`.
+2. После фикса всплыла **вторая проблема**: RLS-регекс вставлял `WHERE tenant_id='tenant_chicko'` в каждый SQL. В реальной схеме `mart_restaurant_daily_base` **нет колонки `tenant_id`** — проверил через DataGrip прямым запросом к ClickHouse. RLS-регекс блокировал любой реальный запрос с ошибкой `Missing columns: 'tenant_id'`.
+3. Схема `mart_restaurant_daily_base` — 45 колонок: `dept_id`, `dept_uuid`, `restaurant_name`, метрики выручки, foodcost, discount, delivery. Идентификатор ресторана — `dept_uuid`.
+
+**Серия архитектурных разворотов (это важно, чтобы не повторять):**
+- Начал переделывать RLS на фильтр по `dept_uuid` → остановил: user'ы не должны идентифицироваться для фильтра данных
+- Предложил публичный URL без логина → отброшено: нужен контроль доступа
+- Решили: каждый логинится своим email, но все видят все данные сети
+- Сначала выбрали Workers KV + hashed passwords → ты предложил Google OAuth
+- Пошли в Google Cloud Console → регистрация прошла, OAuth client создан. Переименовал app из `n8n` в `Chicko Analytics`. **НО:** половина франчайзи использует не-Gmail (Yandex, Mail.ru) → отброшено.
+- **Финальный выбор:** magic-link через email (универсальный подход, работает с любым email-провайдером)
+
+**Инфраструктура для magic-link настроена:**
+- Зарегистрирован аккаунт в **Resend** (email-провайдер, 3000 писем/мес бесплатно, EU-регион Ireland)
+- Домен **business-360.ru** (на Reg.ru) добавлен в Resend
+- **4 DNS-записи прописаны в панели Reg.ru:**
+  - TXT `resend._domainkey` — DKIM подпись
+  - MX `send` → `feedback-smtp.eu-west-1.amazonses.com` priority 10
+  - TXT `send` → `v=spf1 include:amazonses.com ~all`
+  - TXT `_dmarc` → `v=DMARC1; p=none;` (опциональная)
+- **Domain verified в Resend за ~10 минут** — можно слать письма
+- API key создан в Resend (permission: Sending access, bound to business-360.ru)
+- `RESEND_API_KEY` сохранён в Cloudflare Workers secrets
+- Созданы 2 Workers KV namespaces:
+  - `USERS` (id `6f095f10194a45ec9cdcc98129fb2426`) — whitelist разрешённых email
+  - `MAGIC_LINKS` (id `5519cb41b5554c51bf248dbecee1aa6a`) — временные magic-link токены (TTL 15 мин)
+
+**Что получено по результатам критического разбора стратегии:**
+- Проект признан разумным. Distribution есть (42 франчайзи + конференция кинотеатров в июне).
+- Риски: bus-factor 1, зависимость от iiko, UX adoption ≠ интерес на демо.
+- Совет: не ждать полной полировки. M4 (frontend на API) — приоритет недели. Дать доступ нескольким франчайзи на следующей неделе, собрать реальный feedback.
+- Добавить **usage tracking** в дашборд с первого дня пользования — без него не узнаешь реальный adoption.
+
+**Что в очереди (следующая сессия):**
+1. 🔴 Ротация пароля ClickHouse (обязательно до выдачи доступа франчайзи)
+2. Сгенерировать весь код magic-link auth:
+   - `src/auth.ts` — magic-link generation + JWT 30 дней
+   - `src/index.ts` — endpoints /api/auth/request-link, /api/auth/verify
+   - `src/clickhouse.ts` — без RLS
+   - `wrangler.toml` — kv_namespaces blocks
+3. CLI инструкция как добавить первого тестового пользователя в whitelist
+4. Тест end-to-end: ввожу свой email → получаю письмо → кликаю → залогинен → `/api/query` работает
+5. M4: frontend v4 перевести на новый API
+6. Проверить что стоит на `business-360.ru:95.163.244.138` — возможно ли использовать поддомен `dashboard.business-360.ru`
+
+### 18.04.2026, ночь (~1ч работы)
 
 **Волна 2, шаг 4 — Cloudflare Workers Observability.**
 
-- Попытка настроить Sentry провалилась: `sentry.io/signup/` возвращает 403 Forbidden со всех браузеров, VPN/без-VPN, mac/Windows. status.sentry.io показывает "All Systems Operational" — это не сбой, это гео-блокировка через браузерный fingerprint (VPN не помогает). Решено не тратить время.
-- Переключились на Cloudflare Workers Logs — встроенный UI, без регистраций
-- В Cloudflare Dashboard включили **Observability → Logs** (Enabled, sampling 100%)
-- В `wrangler.toml` добавлен блок `[observability]` + `[observability.logs]` — теперь настройки Logs описаны как IaC, при каждом деплое подтверждаются
+- Попытка Sentry провалилась (403 Forbidden — гео-блокировка через браузерный fingerprint, VPN не помогает)
+- Переключились на Cloudflare Workers Logs
+- Включили Observability → Logs (sampling 100%)
+- В `wrangler.toml` добавлен блок `[observability]` + `[observability.logs]` (IaC)
 - В `src/index.ts` добавлено structured logging: `[request]`, `[login]`, `[query]` префиксы. `console.error` со stack trace в catch. Sensitive data (пароли, JWT, SQL) НЕ логируется.
-- `ENVIRONMENT = "development"` → `"production"` в wrangler.toml (давно надо было)
-- Протестировано: 3 curl'а на /health, /api/auth/login, /api/query → в Observability UI увидели все 10 строк логов с правильной группировкой по timestamp
-
-**Что это разблокирует:**
-- При падении Worker'а — stack trace сразу виден в Cloudflare UI, без внешних сервисов
-- Видно kто когда что делал: `[login] attempt for email=...`, `[query] user=... sql_length=...`
-- Теперь можно дебажить prod не только по «упало/живо», но и по «что именно пошло не так»
-
-**Маленький баг замечен и записан как долг:** `[query] user=undefined tenant=undefined` — моё имя поля `payload.user_id` не совпадает с полем в `auth.ts`. Функционал не сломан (JWT валиден, RLS применяется), только лог пишется с `undefined`. Фикс — 5 минут утром.
+- Протестировано 3 curl'ами → 10 строк логов в Observability UI
 
 ### 18.04.2026, поздний вечер (~1ч работы)
 
 **Волна 2, шаг 3 — n8n healthcheck workflow активен.**
 
-- Создан workflow `Chicko API Healthcheck` в n8n: Schedule (каждые 3 часа) → HTTP GET `/health` → Evaluate state → IF notify? → Telegram
-- Первая версия использовала `body.status === 'ok'` — оказалось багом при неожиданном формате ответа (Cloudflare 404 HTML). Упрощено до `statusCode >= 200 && < 300`
+- Workflow: Schedule (3h) → HTTP GET `/health` → Evaluate state → IF notify? → Telegram
 - State tracking через `$getWorkflowStaticData` — алерт только при переходе UP↔DOWN
-- Протестировано: временно сломал URL → прилетел 🔴 DOWN алерт. Вернул URL — логика молчит
-- Интервал 3 часа (не 5 мин) — экономим лимит n8n executions. Долг на миграцию в UptimeRobot зафиксирован (5.8)
-- Алерты в тот же Telegram-чат Chicko, credentials `Chicko` переиспользованы
-- **Экспорт workflow в `infra/n8n/healthcheck.json` + commit** — IaC для обоих workflow в git
+- Протестировано искусственным падением (temp URL change): DOWN алерт пришёл
+- Workflow JSON закоммичен в `infra/n8n/healthcheck.json`
 
 ### 18.04.2026, поздний вечер (~1.5ч работы)
 
-**Волна 2, шаг 2 — n8n proxy для ClickHouse активирован. M3 закрыт.**
+**Волна 2, шаг 2 — n8n proxy. M3 закрыт.**
 
-- Написан workflow `Chicko API: ClickHouse Proxy` с нуля (старого JSON не было). Три ноды: Webhook → HTTP Request → Respond to Webhook
-- Импортирован, сохранён, активирован
-- Обнаружен и удалён старый конфликтующий workflow
-- Тест прокси (curl с `SELECT 1`) прошёл: ClickHouse вернул корректный JSON за 3мс
-- `CLICKHOUSE_HOST` в Cloudflare обновлён на webhook URL n8n. Zero-downtime
-- **End-to-end тест** через production API прошёл успешно. Первый в жизни проекта успешный полный раунд-трип `/api/query` (~30мс)
-- Workflow JSON экспортирован в `infra/n8n/clickhouse_proxy.json`
-
-**Технические долги зафиксированы:**
-- Пароль в URL query string → в логах n8n. Решение (5.7): рефакторинг после ротации
-- iiko-потоки хранят `passPlain` в Set-нодах. Решение: Волна 5
+- Workflow `Chicko API: ClickHouse Proxy` написан с нуля, активирован
+- `CLICKHOUSE_HOST` обновлён на webhook URL n8n. Zero-downtime
+- End-to-end `/api/query` успешно: ~30мс round-trip
+- Workflow JSON в `infra/n8n/clickhouse_proxy.json`
 
 ### 18.04.2026, вечер (~40 мин работы)
 
-**Волна 2, шаг 1 — GitHub Actions автодеплой:**
-- Cloudflare API Token создан (bounded scope)
-- Токен в GitHub Secrets как `CLOUDFLARE_API_TOKEN`
-- `.github/workflows/deploy.yml`: checkout → setup-node → npm ci → wrangler-action
-- Первый push за 24 секунды. Петля «git push → prod» замкнута
-
-**Параллельно в экосистеме:**
-- Weekly Advisor → 4 рекомендации, разобраны
-- Cowork ночью перекладывал Downloads → _archive
-- Паспорт v3.6 с контекстом экосистемы n8n
+**Волна 2, шаг 1 — GitHub Actions автодеплой.**
 
 ### 17.04.2026, вечер (~2ч работы)
 
-**Волна 1 инфраструктуры завершена:**
-- Проект перенесён с `C:\Users\User\chicko-api-proxy` (Windows/Google Drive) → `~/Developer/chicko-api-proxy` (MacBook Air)
-- git init + `.gitignore` + git identity
-- SSH-ключ ed25519, приватный GitHub repo
-- Консолидация 4 старых MD-файлов в `README.md` + `docs/PASSPORT.md`
-- `.dev.vars` очищен от старого пароля
+**Волна 1 инфраструктуры завершена:** git init, GitHub, SSH, консолидация MD-файлов.
 
-### 17.04.2026, утро
+### 17.04.2026, утро (~14ч работы за прошлые дни)
 
-- Backend API на Workers deployed (`/health`, `/api/auth/login`, `/api/query`)
-- JWT (24h TTL), row-level security
-- Mock-клиент для локальной разработки
-- Выявлен блокер: прямое подключение Workers → ClickHouse не работает
-- Принято решение: n8n как прокси
+Backend API на Workers: `/health`, `/api/auth/login`, `/api/query`. JWT, RLS (выкинем), mock-клиент.
 
 ### 15-16.04.2026
 
-- Анализ HTML-дашборда v4
-- Архитектурный план (Workers + JWT + RLS + n8n)
-- Первая версия Gantt
-- Режим обучения в памяти Claude
+Архитектурный план. Режим обучения в памяти Claude.
 
 ---
 
@@ -421,20 +427,21 @@ Telegram alerts ◄──── n8n Healthcheck (UP↔DOWN transitions)
 
 - **Production API:** https://chicko-api-proxy.chicko-api.workers.dev
 - **Production query endpoint:** `POST /api/query` (JWT required)
-- **Observability:** Cloudflare Dashboard → `chicko-api-proxy` → Observability → Events
+- **Observability:** Cloudflare Dashboard → `chicko-api-proxy` → Observability
 - **n8n webhook (внутренний):** https://melnikov.app.n8n.cloud/webhook/clickhouse-proxy
 - **Cloudflare Dashboard:** https://dash.cloudflare.com
 - **GitHub Actions:** https://github.com/AlexMelnikov1976/chicko-api-proxy/actions
 - **n8n:** https://melnikov.app.n8n.cloud/
 - **ClickHouse (Yandex Cloud Console):** https://console.cloud.yandex.ru/
 - **GitHub:** https://github.com/AlexMelnikov1976/chicko-api-proxy
+- **Resend:** https://resend.com/domains
+- **Reg.ru (DNS):** https://www.reg.ru/user/account/card/118339981/nss/
 
-**Тестовые credentials (только для dev):**
+**Тестовые credentials (только для dev, до выдачи access франчайзи):**
 - Email: `admin@chicko.ru`
 - Password: `demo123`
-- Tenant: `tenant_chicko`
 
-**Тестовый end-to-end запрос (для проверки после деплоев):**
+**Тестовый end-to-end запрос:**
 ```bash
 TOKEN=$(curl -s -X POST https://chicko-api-proxy.chicko-api.workers.dev/api/auth/login \
   -H "Content-Type: application/json" \
@@ -447,17 +454,19 @@ curl -X POST https://chicko-api-proxy.chicko-api.workers.dev/api/query \
   -d '{"query":"SELECT 1 as test"}'
 ```
 
+(⚠️ В следующей сессии: после внедрения magic-link auth этот тестовый endpoint будет заменён. Пока — для проверки проходимости pipeline.)
+
 ---
 
 ## 12. Где что искать
 
-- **Как задеплоить код** → `git push origin main` (автоматически)
+- **Как задеплоить код** → `git push origin main`
 - **Как работает API** → [README.md](../README.md#api-reference)
-- **Как посмотреть логи** → Cloudflare → `chicko-api-proxy` → Observability → Events
+- **Как посмотреть логи** → Cloudflare → Observability
 - **Архитектура и почему так** → раздел [5](#5-архитектурные-решения-почему-именно-так)
 - **Журнал паролей** → раздел [6](#6-credentials--журнал-ротаций)
 - **Что делать дальше** → раздел [8](#8-план-развития--волны-инфраструктуры)
-- **Как проверить что всё работает** → раздел [11](#11-контакты-и-доступы), тестовый запрос
+- **Тестовый end-to-end запрос** → раздел [11](#11-контакты-и-доступы)
 
 ---
 
@@ -472,9 +481,9 @@ curl -X POST https://chicko-api-proxy.chicko-api.workers.dev/api/query \
 **Правила:**
 - Если противоречит коду — прав код, документ обновляется
 - Не дублировать README.md
-- Не плодить новые markdown-файлы — расширять паспорт
+- Не плодить новые markdown-файлы
 
-**Коммит-сообщение:**
+**Коммит:**
 ```
 docs(passport): [что изменил кратко]
 ```
@@ -482,4 +491,4 @@ docs(passport): [что изменил кратко]
 ---
 
 **Авторы:** Aleksey Melnikov + Claude
-**Версии паспорта:** v3.3 → v3.4 → v3.5 → v3.6 → v3.7 → v3.8 → v3.9 → **v3.10** (текущая, фиксирует Cloudflare Observability + structured logging, 18.04.2026 ночь)
+**Версии паспорта:** v3.3 → v3.4 → v3.5 → v3.6 → v3.7 → v3.8 → v3.9 → v3.10 → **v3.11** (текущая, фиксирует готовность инфраструктуры magic-link + 2 KV namespaces, 19.04.2026 день)
