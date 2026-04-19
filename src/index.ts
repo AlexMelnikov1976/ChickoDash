@@ -8,6 +8,7 @@ import {
   checkRateLimit,
   sendMagicLinkEmail,
 } from './magic_link';
+import { DASHBOARD_HTML } from './dashboard';
 
 export interface Env {
   CLICKHOUSE_HOST: string;
@@ -44,7 +45,19 @@ export default {
     const url = new URL(request.url);
     console.log(`[request] ${request.method} ${url.pathname}`);
 
-    // --- Public endpoints ---
+    // --- Frontend (dashboard HTML) ---
+
+    if ((url.pathname === '/' || url.pathname === '/index.html') && request.method === 'GET') {
+      return new Response(DASHBOARD_HTML, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'public, max-age=300',
+        },
+      });
+    }
+
+    // --- Public API endpoints ---
 
     if (url.pathname === '/health') {
       return jsonResponse({
@@ -65,7 +78,7 @@ export default {
       return handleVerify(request, env);
     }
 
-    // --- Protected endpoints ---
+    // --- Protected API endpoints ---
 
     if (url.pathname === '/api/query' && request.method === 'POST') {
       return handleQuery(request, env);
@@ -133,9 +146,9 @@ async function handleRequestLink(request: Request, env: Env): Promise<Response> 
 /**
  * GET /auth/callback?token=...
  * Called when user clicks the magic link in email.
- * For MVP (no frontend yet): exchanges token for JWT server-side and shows HTML page
- * with the JWT for manual testing.
- * When frontend (M4) exists, this will redirect to dashboard URL with token as param.
+ * Redirects to dashboard (/) with ?login_token=<same_token>.
+ * The frontend picks up login_token from URL and exchanges it for JWT via /api/auth/verify.
+ * Token is NOT consumed here — it's consumed when frontend calls /api/auth/verify.
  */
 async function handleAuthCallback(request: Request, env: Env): Promise<Response> {
   try {
@@ -149,34 +162,16 @@ async function handleAuthCallback(request: Request, env: Env): Promise<Response>
       });
     }
 
-    const email = await consumeToken(env.MAGIC_LINKS, token);
-    if (!email) {
-      console.log(`[callback] invalid or expired token`);
-      return new Response(
-        errorPage('Ссылка недействительна или срок её действия истёк. Запросите новую ссылку.'),
-        { status: 401, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-      );
-    }
+    // Redirect to dashboard root with login_token param
+    const redirectUrl = `${url.origin}/?login_token=${encodeURIComponent(token)}`;
+    console.log(`[callback] redirecting to dashboard with login_token`);
 
-    const userId = await isAllowedUser(env.USERS, email);
-    if (!userId) {
-      // Shouldn't happen (whitelist was checked on request-link), but defense in depth
-      console.log(`[callback] email no longer in whitelist: ${email}`);
-      return new Response(errorPage('Доступ отозван.'), {
-        status: 403,
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
-      });
-    }
-
-    const jwt = await generateJWT(
-      { user_id: userId, email },
-      env.JWT_SECRET || 'temp-secret-key-change-in-production'
-    );
-
-    console.log(`[callback] login success for ${email}, user_id=${userId}`);
-    return new Response(successPage(email, jwt), {
-      status: 200,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    return new Response(null, {
+      status: 302,
+      headers: {
+        'Location': redirectUrl,
+        'Cache-Control': 'no-store',
+      },
     });
   } catch (error) {
     const err = error as Error;
@@ -191,8 +186,8 @@ async function handleAuthCallback(request: Request, env: Env): Promise<Response>
 /**
  * POST /api/auth/verify
  * Body: { token: string }
- * Alternative to /auth/callback: consumes magic-link token, returns JWT as JSON.
- * Used by frontend once it exists.
+ * Consumes magic-link token, returns JWT as JSON.
+ * Used by frontend after user clicks link and is redirected to /?login_token=...
  */
 async function handleVerify(request: Request, env: Env): Promise<Response> {
   try {
@@ -283,41 +278,14 @@ async function handleQuery(request: Request, env: Env): Promise<Response> {
   }
 }
 
-// --- HTML page templates (temporary, for MVP before frontend exists) ---
-
-function successPage(email: string, jwt: string): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Chicko Analytics — вход выполнен</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 640px; margin: 40px auto; padding: 0 24px; }
-    h1 { color: #1a1a1a; }
-    .success { background: #e8f5e9; border: 1px solid #a5d6a7; padding: 16px; border-radius: 8px; margin: 24px 0; }
-    .token-box { background: #f5f5f5; border: 1px solid #ddd; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 12px; word-break: break-all; margin: 12px 0; }
-    button { background: #1a1a1a; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
-    button:hover { background: #333; }
-    .muted { color: #666; font-size: 14px; }
-  </style>
-</head>
-<body>
-  <h1>Вход выполнен ✅</h1>
-  <div class="success">Вы вошли как <strong>${email}</strong></div>
-  <p class="muted">Фронтенд-дашборд пока не подключён. Ниже — ваш JWT-токен для ручного тестирования API:</p>
-  <div class="token-box" id="token">${jwt}</div>
-  <button onclick="navigator.clipboard.writeText(document.getElementById('token').textContent); this.textContent='Скопировано!'">Скопировать токен</button>
-  <p class="muted" style="margin-top: 32px;">Токен действителен 30 дней. Используйте его в заголовке <code>Authorization: Bearer &lt;token&gt;</code> при запросах к <code>/api/query</code>.</p>
-</body>
-</html>`;
-}
+// --- HTML error page template ---
 
 function errorPage(message: string): string {
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Chicko Analytics — ошибка входа</title>
+  <title>Chicko Analytics — ошибка</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 560px; margin: 40px auto; padding: 0 24px; }
     h1 { color: #c62828; }
@@ -325,7 +293,7 @@ function errorPage(message: string): string {
   </style>
 </head>
 <body>
-  <h1>Ошибка входа</h1>
+  <h1>Ошибка</h1>
   <div class="error">${message}</div>
 </body>
 </html>`;
