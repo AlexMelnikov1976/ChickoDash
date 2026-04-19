@@ -2,9 +2,7 @@ import { sign, verify, decode } from '@tsndr/cloudflare-worker-jwt';
 
 export interface JWTPayload {
   user_id: string;
-  tenant_id: string;
   email: string;
-  permissions: string[];
   exp: number;
 }
 
@@ -12,7 +10,7 @@ export async function generateToken(
   payload: Omit<JWTPayload, 'exp'>,
   secret: string
 ): Promise<string> {
-  const exp = Math.floor(Date.now() / 1000) + (60 * 60 * 24); // 24 hours
+  const exp = Math.floor(Date.now() / 1000) + (60 * 60 * 24 * 30); // 30 days
   return await sign({ ...payload, exp }, secret);
 }
 
@@ -25,7 +23,6 @@ export async function validateToken(
     if (!isValid) return null;
 
     // verify() returns boolean. To get payload we use decode().
-    // decode() returns { header, payload } object — we need .payload.
     const decoded = decode(token);
     if (!decoded || !decoded.payload) return null;
 

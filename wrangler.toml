@@ -14,3 +14,11 @@ enabled = true
 head_sampling_rate = 1
 persist = true
 invocation_logs = true
+
+[[kv_namespaces]]
+binding = "USERS"
+id = "6f095f10194a45ec9cdcc98129fb2426"
+
+[[kv_namespaces]]
+binding = "MAGIC_LINKS"
+id = "5519cb41b5554c51bf248dbecee1aa6a"
