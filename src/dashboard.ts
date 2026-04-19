@@ -1,5 +1,6 @@
-// Auto-generated from chiko_dashboard_v4 HTML. Do not edit manually — edit the HTML source.
+// Auto-generated from chiko_dashboard_v4 HTML. Do not edit manually.
 // Contains login screen + JWT auth + /api/query integration.
+// v5_dynamic: NET/TOP10 грузятся динамически из mart_restaurant_daily_base.
 
 export const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="ru">
@@ -901,8 +902,11 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 
 let RESTS = [];
-let NET   = { revenue: 120000, avgCheck: 1400, checks: 90, foodcost: 23, discount: 6.5, deliveryPct: 15 };
-let TOP10 = { revenue: 350000, avgCheck: 1800, foodcost: 21, discount: 5, deliveryPct: 20 };
+// NET и TOP10 — значения по сети. Заполняются динамически через loadNetworkBenchmarks()
+// за тот же период что выбран пользователем (см. решение паспорта 5.25).
+// Начальные дефолты — только на случай если запрос не вернёт данных.
+let NET   = { revenue: 0, avgCheck: 0, checks: 0, foodcost: 0, discount: 0, deliveryPct: 0, restCount: 0 };
+let TOP10 = { revenue: 0, avgCheck: 0, foodcost: 0, discount: 0, deliveryPct: 0 };
 let ALL_DATES = [];
 let MIN_DATE = '';
 let MAX_DATE = '';
@@ -1021,20 +1025,15 @@ async function init() {
       r.avgRevenue=revs.length?revs.reduce((a,b)=>a+b,0)/revs.length:0;
       r.avgRevenue7=revs.slice(-7).length?revs.slice(-7).reduce((a,b)=>a+b,0)/revs.slice(-7).length:0;
     }
-    showLoader('Загрузка бенчмарков...');
-    const bench = await fetchCK(\`SELECT metric_name, metric_avg, metric_p25, metric_p75, metric_p90 FROM chicko.mart_benchmarks_daily WHERE benchmark_group_type='network' AND dt=(SELECT max(dt) FROM chicko.mart_benchmarks_daily WHERE benchmark_group_type='network')\`);
-    const bm={};
-    for(const b of bench) bm[b.metric_name]=b;
-    if(bm['revenue_total_rub']){ NET.revenue=Math.round(+bm['revenue_total_rub'].metric_avg); TOP10.revenue=Math.round(+bm['revenue_total_rub'].metric_p90); }
-    if(bm['avg_check_total_rub']){ NET.avgCheck=Math.round(+bm['avg_check_total_rub'].metric_avg); TOP10.avgCheck=Math.round(+bm['avg_check_total_rub'].metric_p90); }
-    if(bm['checks_total']) NET.checks=Math.round(+bm['checks_total'].metric_avg);
-    if(bm['foodcost_total_pct']){ NET.foodcost=+(+bm['foodcost_total_pct'].metric_avg).toFixed(1); TOP10.foodcost=+(+bm['foodcost_total_pct'].metric_p25).toFixed(1); }
-    if(bm['discount_total_pct']){ NET.discount=+(+bm['discount_total_pct'].metric_avg).toFixed(1); TOP10.discount=+(+bm['discount_total_pct'].metric_p25).toFixed(1); }
-    if(bm['delivery_share_pct']){ NET.deliveryPct=+(+bm['delivery_share_pct'].metric_avg).toFixed(1); TOP10.deliveryPct=+(+bm['delivery_share_pct'].metric_p90).toFixed(1); }
+    // Сетевые бенчмарки грузятся отдельной функцией чуть ниже, после установки
+    // глобального периода из ALL_DATES. Оставляем NET/TOP10 нулевыми до того момента.
     ALL_DATES=[...new Set(RESTS.flatMap(r=>r.ts.map(t=>t.date)))].sort();
     MIN_DATE=ALL_DATES[0]||''; MAX_DATE=ALL_DATES[ALL_DATES.length-1]||'';
     S.globalStart=S.dynStart=S.cmpStart=MIN_DATE;
     S.globalEnd=S.dynEnd=S.cmpEnd=MAX_DATE;
+    // Загружаем бенчмарки сети за тот же период что у точки (решение паспорта 5.25)
+    showLoader('Расчёт показателей по сети...');
+    await loadNetworkBenchmarks(S.globalStart, S.globalEnd);
     // Populate hidden select for compat
     const sel=document.getElementById('mainSel');
     sel.innerHTML='';
@@ -1107,6 +1106,73 @@ async function selectRest(idx) {
       RESTAURANT_RECS = recsData;
       renderScore(); renderInsights();
     } catch(e) { console.warn('Score/recs:', e.message); }
+  }
+}
+
+
+// ═══ Сетевые бенчмарки (динамические перцентили за текущий период) ═══
+//
+// Заменяет старый запрос к mart_benchmarks_daily (который давал снимок за
+// последние 30 дней перед вчера) на расчёт медианы/перцентилей по
+// mart_restaurant_daily_base за тот же период что выбрал пользователь.
+//
+// Результат кладётся в глобальные NET и TOP10 — остальной код работает без правок.
+//
+// В TOP10 раньше лежал p90 (выручка, avgCheck) и p25 (foodcost, discount —
+// там "меньше = лучше"). Сохраняем ту же семантику, чтобы сравнения
+// "лидеры" и "среднее" продолжали работать.
+async function loadNetworkBenchmarks(startDate, endDate) {
+  const sql = \`
+    SELECT
+      quantile(0.50)(revenue_total_rub)      AS rev_median,
+      quantile(0.90)(revenue_total_rub)      AS rev_p90,
+      quantile(0.50)(avg_check_total_rub)    AS chk_median,
+      quantile(0.90)(avg_check_total_rub)    AS chk_p90,
+      quantile(0.50)(checks_total)           AS cnt_median,
+      quantile(0.50)(foodcost_total_pct)     AS fc_median,
+      quantile(0.25)(foodcost_total_pct)     AS fc_p25,
+      quantile(0.50)(discount_total_pct)     AS disc_median,
+      quantile(0.25)(discount_total_pct)     AS disc_p25,
+      quantile(0.50)(delivery_share_pct)     AS del_median,
+      quantile(0.90)(delivery_share_pct)     AS del_p90,
+      count(DISTINCT dept_uuid)              AS rest_count
+    FROM chicko.mart_restaurant_daily_base
+    WHERE report_date BETWEEN '\${startDate}' AND '\${endDate}'
+      AND is_anomaly_day = 0
+      AND revenue_total_rub > 0
+  \`;
+  try {
+    const rows = await fetchCK(sql);
+    if (!rows.length) {
+      console.warn('[benchmarks] пустой результат за период', startDate, endDate);
+      return;
+    }
+    const b = rows[0];
+    const restCount = +b.rest_count || 0;
+
+    // Fallback: если в расчёте меньше 3 ресторанов — данные ненадёжны,
+    // оставляем NET и TOP10 нулевыми, UI покажет прочерки вместо метрик сети.
+    if (restCount < 3) {
+      console.warn('[benchmarks] недостаточно ресторанов для сравнения:', restCount);
+      NET.restCount = restCount;
+      return;
+    }
+
+    NET.revenue    = Math.round(+b.rev_median);
+    NET.avgCheck   = Math.round(+b.chk_median);
+    NET.checks     = Math.round(+b.cnt_median);
+    NET.foodcost   = +(+b.fc_median).toFixed(1);
+    NET.discount   = +(+b.disc_median).toFixed(1);
+    NET.deliveryPct= +(+b.del_median).toFixed(1);
+    NET.restCount  = restCount;
+
+    TOP10.revenue    = Math.round(+b.rev_p90);
+    TOP10.avgCheck   = Math.round(+b.chk_p90);
+    TOP10.foodcost   = +(+b.fc_p25).toFixed(1);
+    TOP10.discount   = +(+b.disc_p25).toFixed(1);
+    TOP10.deliveryPct= +(+b.del_p90).toFixed(1);
+  } catch(e) {
+    console.error('[benchmarks] ошибка загрузки:', e.message);
   }
 }
 
@@ -1406,7 +1472,10 @@ function calApply(key,ev){
   else if(key==='cmp'){S.cmpStart=st.start;S.cmpEnd=st.end;}
   updateCalLabel(key);
   document.getElementById(key+'CalDrop').classList.remove('open');
-  if(key==='global'){try{renderAll();}catch(e){alert('Ошибка при применении дат:\\n'+e.message);console.error(e);}}
+  if(key==='global'){
+    loadNetworkBenchmarks(S.globalStart, S.globalEnd)
+      .then(()=>{try{renderAll();}catch(e){alert('Ошибка при применении дат:\\n'+e.message);console.error(e);}});
+  }
   else if(key==='dyn'){try{renderDynamics();}catch(e){console.error(e);}}
   else if(key==='cmp'){try{renderCompare();}catch(e){console.error(e);}}
 }
