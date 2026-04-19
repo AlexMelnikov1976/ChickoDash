@@ -1,8 +1,9 @@
 // Auto-generated from chiko_dashboard HTML. Do not edit manually.
-// Contains login screen + JWT auth + /api/query integration.
-// v5_clean: Фаза 1.2 — убран скор/100, 3 тяжёлых блока (donut/gauge/rank),
-//            один глобальный календарь вместо 4, переименована секция
-//            "AI-рекомендации" → "На что обратить внимание".
+// v5_alerts: Фаза 1.2b — плашки стали говорящими.
+//   - period context в каждом алерте ("за N дней")
+//   - фильтры против бессмысленных выводов на коротких периодах:
+//     тренд "3 дня подряд" требует ≥7 дней, DOW-анализ ≥14 дней
+//   - insights: убрана "модельная оценка", суммы стали диапазонами
 
 export const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="ru">
@@ -1472,59 +1473,66 @@ function renderAlerts(){
   const chk_avg=safeAvg(ts,'avgCheck')||0;
   const cnt_avg=safeAvg(ts,'checks')||0;
 
-  // Trend analysis
-  const last3=ts.slice(-3);
-  const declining3=last3.length>=3&&last3[0].revenue>last3[1].revenue&&last3[1].revenue>last3[2].revenue;
-  const growing3=last3.length>=3&&last3[0].revenue<last3[1].revenue&&last3[1].revenue<last3[2].revenue;
+  // Период — подпись для понятности алертов
+  const daysN = ts.length;
+  const periodTxt = \`за \${daysN} \${daysN===1?'день':daysN<5?'дня':'дней'}\`;
 
-  // DOW best/worst
+  // Trend analysis: показываем только если период ≥ 7 дней (иначе "3 дня подряд" бессмыслен)
+  const last3=ts.slice(-3);
+  const declining3=daysN>=7 && last3.length>=3 && last3[0].revenue>last3[1].revenue && last3[1].revenue>last3[2].revenue;
+  const growing3  =daysN>=7 && last3.length>=3 && last3[0].revenue<last3[1].revenue && last3[1].revenue<last3[2].revenue;
+
+  // DOW best/worst: только если период ≥ 14 дней (каждый день недели встречается минимум 2 раза)
   const byDow={};
   ts.forEach(t=>{const d=getDOW(t.date);if(!byDow[d])byDow[d]=[];byDow[d].push(t.revenue)});
-  const dowAvgs=Object.entries(byDow).map(([d,v])=>({d:+d,avg:avgArr(v)})).sort((a,b)=>b.avg-a.avg);
-  const bestDow=dowAvgs[0],worstDow=dowAvgs[dowAvgs.length-1];
+  const dowAvgs=Object.entries(byDow).map(([d,v])=>({d:+d,avg:avgArr(v),n:v.length})).sort((a,b)=>b.avg-a.avg);
+  const minSamples = Math.min(...dowAvgs.map(x=>x.n));
+  const dowReliable = daysN >= 14 && minSamples >= 2;
+  const bestDow = dowReliable ? dowAvgs[0] : null;
+  const worstDow= dowReliable ? dowAvgs[dowAvgs.length-1] : null;
 
   const msgs=[];
 
-  // Critical foodcost
-  if(fc_avg!==null&&fc_avg>26) msgs.push({c:'a-red',t:\`🔴 <b>Критический фудкост:</b> \${fmtN(fc_avg)}% — превышает норму на \${fmtN(fc_avg-22)}%. Ежедневные потери: \${fmtR((fc_avg-22)/100*rev_avg)}/день\`});
-  else if(fc_avg!==null&&fc_avg>22) msgs.push({c:'a-amber',t:\`⚠️ <b>Фудкост \${fmtN(fc_avg)}% в зоне риска.</b> Норма — до 22%. Потенциал оптимизации: +\${fmtR((fc_avg-22)/100*rev_avg)}/день\`});
+  // Фудкост
+  if(fc_avg!==null&&fc_avg>26) msgs.push({c:'a-red',t:\`🔴 <b>Критический фудкост: \${fmtN(fc_avg)}%</b> — превышает норму 22% на \${fmtN(fc_avg-22)} п.п. (среднее \${periodTxt}). Потери ~\${fmtR((fc_avg-22)/100*rev_avg)}/день при текущем уровне выручки.\`});
+  else if(fc_avg!==null&&fc_avg>22) msgs.push({c:'a-amber',t:\`⚠️ <b>Фудкост \${fmtN(fc_avg)}% выше нормы</b> (норма до 22%), среднее \${periodTxt}. Снижение до 22% высвободит ~\${fmtR((fc_avg-22)/100*rev_avg)}/день.\`});
 
-  // Revenue trend
-  if(declining3) msgs.push({c:'a-red',t:\`📉 <b>Выручка снижается 3 дня подряд.</b> Последние значения: \${last3.map(t=>fmtR(t.revenue)).join(' → ')}. Проверьте качество и сервис.\`});
-  else if(growing3) msgs.push({c:'a-green',t:\`📈 <b>Выручка растёт 3 дня подряд!</b> \${last3.map(t=>fmtR(t.revenue)).join(' → ')}. Отличная динамика.\`});
+  // Тренд
+  if(declining3) msgs.push({c:'a-red',t:\`📉 <b>Выручка снижается 3 последних дня.</b> \${last3.map(t=>fmtR(t.revenue)).join(' → ')}. Проверьте качество, сервис и операционные процессы.\`});
+  else if(growing3) msgs.push({c:'a-green',t:\`📈 <b>Выручка растёт 3 последних дня.</b> \${last3.map(t=>fmtR(t.revenue)).join(' → ')}. Хорошая динамика — зафиксируйте что сработало.\`});
 
-  // Discount
-  if(disc_avg>NET.discount*1.4) msgs.push({c:'a-amber',t:\`🏷️ <b>Скидки \${fmtN(disc_avg)}% — значительно выше сети (\${NET.discount}%).</b> Потеря маржи: \${fmtR(rev_avg*disc_avg/100-rev_avg*NET.discount/100)}/день = \${fmtR((rev_avg*disc_avg/100-rev_avg*NET.discount/100)*26)}/мес\`});
+  // Скидки
+  if(disc_avg>NET.discount*1.4) msgs.push({c:'a-amber',t:\`🏷️ <b>Скидки \${fmtN(disc_avg)}% — в 1.4× выше сети (\${NET.discount}%)</b>, среднее \${periodTxt}. Потеря ~\${fmtR(rev_avg*(disc_avg-NET.discount)/100)}/день = \${fmtR(rev_avg*(disc_avg-NET.discount)/100*30)}/мес. Проверьте: акции возвращают гостей или просто режут маржу?\`});
 
-  // Delivery
-  if(del_avg<NET.deliveryPct*0.6) msgs.push({c:'a-amber',t:\`🛵 <b>Доставка \${fmtN(del_avg,1)}% выручки — в 2 раза ниже сети (\${NET.deliveryPct}%).</b> Потенциал: +\${fmtR((NET.deliveryPct-del_avg)/100*rev_avg)}/день\`});
+  // Доставка
+  if(del_avg<NET.deliveryPct*0.6) msgs.push({c:'a-amber',t:\`🛵 <b>Доставка \${fmtN(del_avg,1)}% выручки — в 2× ниже сети (\${NET.deliveryPct}%)</b>, среднее \${periodTxt}. Если догнать сеть: ~\${fmtR((NET.deliveryPct-del_avg)/100*rev_avg)}/день выручки от доставки.\`});
 
-  // Avg check below network
-  if(chk_avg<NET.avgCheck*0.85) msgs.push({c:'a-amber',t:\`🧾 <b>Средний чек \${fmtR(chk_avg)} на \${fmtN(pctD(chk_avg,NET.avgCheck))}% ниже сети (\${fmtR(NET.avgCheck)}).</b> Внедрите допродажи и combo-наборы.\`});
+  // Средний чек
+  if(chk_avg<NET.avgCheck*0.85) msgs.push({c:'a-amber',t:\`🧾 <b>Средний чек \${fmtR(chk_avg)} на \${fmtN(Math.abs(pctD(chk_avg,NET.avgCheck)))}% ниже сети (\${fmtR(NET.avgCheck)})</b>, среднее \${periodTxt}. Работайте с допродажами и комбо-наборами.\`});
 
-  // Best/worst DOW
+  // Дни недели — только при достаточном периоде
   if(bestDow&&worstDow&&bestDow.d!==worstDow.d){
     const ratio=(bestDow.avg/worstDow.avg).toFixed(1);
-    msgs.push({c:'a-blue',t:\`📅 <b>\${DOW_NAMES[bestDow.d]} — лучший день недели</b> (ср. \${fmtR(bestDow.avg)}), \${DOW_NAMES[worstDow.d]} — слабейший (\${fmtR(worstDow.avg)}). Разрыв ×\${ratio}.\`});
+    msgs.push({c:'a-blue',t:\`📅 <b>\${DOW_NAMES[bestDow.d]} — лучший день недели</b> (ср. \${fmtR(bestDow.avg)}), \${DOW_NAMES[worstDow.d]} — слабейший (\${fmtR(worstDow.avg)}). Разрыв ×\${ratio}. Данные \${periodTxt}.\`});
   }
 
-  // Revenue vs TOP10
-  if(rev_avg>TOP10.revenue*0.85) msgs.push({c:'a-green',t:\`🏆 <b>Вы в ТОП-15% сети!</b> Средняя выручка \${fmtR(rev_avg)} близка к лидерам (\${fmtR(TOP10.revenue)}).\`});
-  else if(rev_avg<NET.revenue*0.7) msgs.push({c:'a-red',t:\`⬇️ <b>Выручка на \${fmtN(pctD(rev_avg,NET.revenue))}% ниже среднего по сети.</b> Средняя: \${fmtR(rev_avg)}, сеть: \${fmtR(NET.revenue)}. Требуется план действий.\`});
+  // TOP/BOTTOM позиция
+  if(rev_avg>TOP10.revenue*0.85) msgs.push({c:'a-green',t:\`🏆 <b>Вы в ТОП-15% сети!</b> Средняя выручка \${fmtR(rev_avg)} близка к лидерам (\${fmtR(TOP10.revenue)}), \${periodTxt}.\`});
+  else if(rev_avg<NET.revenue*0.7) msgs.push({c:'a-red',t:\`⬇️ <b>Выручка \${fmtR(rev_avg)} — на \${fmtN(Math.abs(pctD(rev_avg,NET.revenue)))}% ниже медианы сети (\${fmtR(NET.revenue)})</b>, \${periodTxt}. Это системный разрыв — нужен план действий.\`});
 
-  // itemsPerCheck not available in mart v1 — skip this alert
-
-  // Weekday vs weekend ratio
-  const wdTs=ts.filter(t=>!isWeekend(t.date));
-  const weTs=ts.filter(t=>isWeekend(t.date));
-  if(wdTs.length&&weTs.length){
-    const wdR=avgArr(wdTs.map(t=>t.revenue));
-    const weR=avgArr(weTs.map(t=>t.revenue));
-    const ratio2=(weR/wdR).toFixed(1);
-    if(weR/wdR>2) msgs.push({c:'a-blue',t:\`📊 <b>Выходные приносят в \${ratio2}× больше выручки чем будни.</b> Будни: \${fmtR(wdR)}/день, выходные: \${fmtR(weR)}/день. Оптимизируйте загрузку будних смен.\`});
+  // Выходные vs будни — только при периоде ≥ 14 дней
+  if(daysN>=14){
+    const wdTs=ts.filter(t=>!isWeekend(t.date));
+    const weTs=ts.filter(t=>isWeekend(t.date));
+    if(wdTs.length>=4 && weTs.length>=4){
+      const wdR=avgArr(wdTs.map(t=>t.revenue));
+      const weR=avgArr(weTs.map(t=>t.revenue));
+      const ratio2=(weR/wdR).toFixed(1);
+      if(weR/wdR>2) msgs.push({c:'a-blue',t:\`📊 <b>Выходные приносят в \${ratio2}× больше выручки чем будни.</b> Будни: \${fmtR(wdR)}/день, выходные: \${fmtR(weR)}/день (\${periodTxt}). Оптимизируйте загрузку будних смен.\`});
+    }
   }
 
-  // Sort by severity: red first, then amber, then green/blue
+  // Сортировка: сначала красные, потом оранжевые, потом зелёные/синие
   const order={'a-red':0,'a-amber':1,'a-green':2,'a-blue':3};
   msgs.sort((a,b)=>(order[a.c]||9)-(order[b.c]||9));
   document.getElementById('alertsBox').innerHTML=msgs.slice(0,3).map(m=>\`<div class="alert \${m.c}">\${m.t}</div>\`).join('');
@@ -1807,7 +1815,7 @@ function renderInsights(){
     const ins=RESTAURANT_RECS.map(rec=>({
       t:colorMap[rec.category]||'amber', i:iconMap[rec.category]||'💡',
       h:rec.title,
-      b:rec.description+(rec.impact_type==='modeled'?' <span style="font-size:9px;opacity:.6">(модельная оценка)</span>':''),
+      b:rec.description,
       a:(()=>{
         // Always use last 7 days (ignores calendar) → stable monthly forecast
         const last7 = R.ts.slice(-7);
@@ -1823,13 +1831,17 @@ function renderInsights(){
         const daysDone=now.getDate();
         const daysLeft=daysInMonth-daysDone;
         const mult=daysInMonth; // project to full month
-        let eff=0;
-        if(rec.recommendation_code==='HIGH_FOODCOST'&&fc>22) eff=Math.round(net_rub*(fc-22)/100*mult);
-        else if(rec.recommendation_code==='HIGH_DISCOUNT'&&disc>NET.discount) eff=Math.round(rev*(disc-NET.discount)/100*mult);
-        else if(rec.recommendation_code==='LOW_AVG_CHECK'&&cnt>0) eff=Math.round(cnt*(NET.avgCheck-rev/cnt)*0.15*mult);
-        else if(rec.recommendation_code==='LOW_DELIVERY'&&dp<NET.deliveryPct) eff=Math.round(rev*(NET.deliveryPct-dp)/100*mult);
-        else eff=+rec.estimated_effect_rub;
-        return eff>0?\`+\${fmtR(eff)}/мес (прогноз на \${daysInMonth} дней)\`:null;
+        // Диапазоны вместо точечных сумм (решение паспорта 5.31)
+        // Низкая оценка — 60% от теоретического максимума, высокая — 100%
+        let effMax = 0;
+        if(rec.recommendation_code==='HIGH_FOODCOST'&&fc>22) effMax = Math.round(net_rub*(fc-22)/100*mult);
+        else if(rec.recommendation_code==='HIGH_DISCOUNT'&&disc>NET.discount) effMax = Math.round(rev*(disc-NET.discount)/100*mult);
+        else if(rec.recommendation_code==='LOW_AVG_CHECK'&&cnt>0) effMax = Math.round(cnt*(NET.avgCheck-rev/cnt)*0.15*mult);
+        else if(rec.recommendation_code==='LOW_DELIVERY'&&dp<NET.deliveryPct) effMax = Math.round(rev*(NET.deliveryPct-dp)/100*mult);
+        else effMax = +rec.estimated_effect_rub;
+        if (effMax <= 0) return null;
+        const effMin = Math.round(effMax * 0.6);
+        return \`≈ \${fmtR(effMin)}–\${fmtR(effMax)}/мес, если догоните средние по сети\`;
       })(),
     }));
     const ts=getGlobalTs();
