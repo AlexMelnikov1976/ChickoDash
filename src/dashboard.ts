@@ -2809,10 +2809,10 @@ function renderCompare(){
   mkChart('cmpBarC',{type:'bar',data:{
     labels:comps.map(r2=>r2.city),
     datasets:[
-      ...comps.map((r2,i)=>({label:r2.city,data:[getCompMetVal(r2,S.compMetric)],backgroundColor:COMP_COLORS[i]+'99',borderColor:COMP_COLORS[i],borderWidth:1,borderRadius:4})),
+      {data:comps.map(r2=>getCompMetVal(r2,S.compMetric)),backgroundColor:comps.map((_,i)=>COMP_COLORS[i]+'99'),borderColor:comps.map((_,i)=>COMP_COLORS[i]),borderWidth:1,borderRadius:4},
       {label:'Сеть',data:comps.map(()=>netVals[S.compMetric]),type:'line',borderColor:'rgba(142,170,206,.4)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false}
     ]
-  },options:chartOpts(v=>isRub?fmtR(v):v)});
+  },options:{...chartOpts(v=>isRub?fmtR(v):v),plugins:{legend:{display:false}}}});
 
   const baseDates=getCmpTs(comps[0]).map(t=>t.label||fmtD(t.date));
   mkChart('cmpTrC',{type:'line',data:{labels:baseDates,datasets:comps.map((r2,i)=>({label:r2.city,data:getCmpTs(r2).map(t=>t.revenue),borderColor:COMP_COLORS[i],backgroundColor:COMP_COLORS[i]+'15',borderWidth:i===0?2.5:1.5,pointRadius:i===0?3:2,fill:false,tension:.3}))},options:chartOpts(v=>fmtR(v))});
