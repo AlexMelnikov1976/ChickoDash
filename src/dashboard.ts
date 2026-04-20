@@ -1,4 +1,7 @@
-// Auto-generated from chiko_dashboard HTML. Do not edit manually.
+// Chicko Analytics Dashboard
+// © 2026 System360 by Alex Melnikov. All rights reserved.
+// Proprietary software — unauthorized copying or distribution prohibited.
+//
 // v6_likeforlike: Фаза 1.3 — like-for-like сравнения по дням недели.
 //   - Загружаются профили сети и ресторана по dow за 90 дней
 //   - renderKPIs показывает 3 сравнения: vs моя норма / медиана сети / топ-25%
@@ -2944,6 +2947,11 @@ async function fbSend(){
 
 init();
 </script>
+
+<!-- Footer -->
+<div style="text-align:center;padding:24px 20px 80px;font-size:10px;color:var(--text3);letter-spacing:0.5px">
+  © 2026 System360 by Alex Melnikov. All rights reserved.
+</div>
 
 <!-- Feedback widget -->
 <button class="fb-float" onclick="fbOpen()" title="Обратная связь">💬</button>
