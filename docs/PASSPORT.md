@@ -2,8 +2,8 @@
 
 > **Живой документ.** Обновляется после каждой значимой сессии работы.
 
-**Последнее обновление:** 20.04.2026, ~22:10 MSK — Фаза 2.1: перенос DOW-профилей на сервер
-**Версия паспорта:** 3.23
+**Последнее обновление:** 20.04.2026, ~23:00 MSK — Фаза 2 ЗАВЕРШЕНА: защита IP на уровне кода
+**Версия паспорта:** 3.24
 
 ---
 
@@ -13,7 +13,7 @@
 
 **Пользователи:** 42 франчайзи сети Chicko + управляющая компания.
 
-**Текущий фокус:** **Фаза 2 — защита IP** (перенос логики в Worker API), параллельно Фаза 1.5 остаток.
+**Текущий фокус:** MVP + защита IP завершены. Следующие задачи — UX-полировка, товарный знак, пилот.
 
 ---
 
@@ -23,10 +23,10 @@
 |---|---|
 | **Production URL** | https://chicko-api-proxy.chicko-api.workers.dev 🟢 |
 | **GitHub** | github.com/AlexMelnikov1976/chicko-api-proxy |
-| **Общий прогресс** | ~96% MVP; начата Фаза 2 (защита IP). DOW-профили уехали на сервер |
+| **Общий прогресс** | ~97% MVP; **Фаза 2 защиты IP завершена** — 3/3 этапа |
 | **Закрыто P0-пунктов** | **19/22** (86%) |
-| **Последний коммит** | `57ab88d` refactor(security): move DOW profiles logic to server |
-| **Следующий фокус** | #Phase2.2 computeForecast → сервер → #Phase2.3 закрытие /api/query |
+| **Последний коммит** | `4e02b90` refactor(security): remove /api/query, whitelisted endpoints only |
+| **Следующий фокус** | Восстановленные Phase 1.5 правки → #76 P&L → UX-проход → товарный знак |
 
 ---
 
@@ -150,20 +150,22 @@ Yandex Managed ClickHouse (БД: chicko, user: dashboard_ro)
 ```
 ~/Developer/chicko-api-proxy/
 ├── src/
-│   ├── index.ts          # Main worker: routing + CORS
-│   ├── auth.ts           # JWT generation / validation
-│   ├── magic_link.ts     # Magic-link auth через Resend
-│   ├── clickhouse.ts     # ClickHouse client
-│   ├── dow_profiles.ts   # ⭐ Server-side DOW profiles endpoint (Phase 2.1)
-│   └── dashboard.ts      # HTML dashboard (self-contained)
+│   ├── index.ts              # Main worker: routing + CORS (no SQL)
+│   ├── auth.ts               # JWT generation / validation
+│   ├── magic_link.ts         # Magic-link auth через Resend
+│   ├── clickhouse.ts         # ClickHouse client
+│   ├── dow_profiles.ts       # ⭐ GET /api/dow-profiles (Phase 2.1)
+│   ├── forecast.ts           # ⭐ GET /api/forecast — Алгоритм Г (Phase 2.2)
+│   ├── data_endpoints.ts     # ⭐ GET /api/{restaurants,benchmarks,restaurant-meta} (Phase 2.3)
+│   └── dashboard.ts          # HTML dashboard (self-contained, без SQL)
 ├── docs/
-│   ├── PASSPORT.md       # Этот файл
-│   └── USERS.md          # Реестр пользователей + инструкции KV
+│   ├── PASSPORT.md           # Этот файл
+│   └── USERS.md              # Реестр пользователей + инструкции KV
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml    # GitHub Actions auto-deploy
+│       └── deploy.yml        # GitHub Actions auto-deploy
 ├── wrangler.toml
-├── .dev.vars             # Gitignored
+├── .dev.vars                 # Gitignored
 ├── README.md
 ├── package.json
 └── tsconfig.json
@@ -187,18 +189,23 @@ Yandex Managed ClickHouse (БД: chicko, user: dashboard_ro)
 | **1.4** | 🟡 частично 20.04 | **#71 блок прогноза** ✅ deployed, #76 P&L ⏳ |
 | **1.5** | 🟡 частично 21.04 | #75 Сравнение частично (группировка, лидеры, layout, синхр. селектора), UX даты, стрелки Динамики; #73/#74 ждут скрин |
 
-### 🔵 Волна 4.5 (M5.5): Защита IP — **АКТИВНАЯ**
+### ✅ Волна 4.5 (M5.5): Защита IP — **ЗАВЕРШЕНА 20.04.2026**
 
-| Фаза | Статус | Что сделано |
+| Фаза | Статус | Результат |
 |---|---|---|
-| **2.1** | ✅ deployed 20.04 (коммит `57ab88d`) | DOW-профили → сервер (`/api/dow-profiles`). SQL схема mart-таблицы скрыта от браузера для DOW |
-| **2.2** | ⏳ следующая | `computeForecast` (алгоритм Г) → `/api/forecast` |
-| **2.3** | ⏳ после 2.2 | Закрытие `/api/query`, замена на whitelisted endpoints. После этого клиент не сможет выполнить произвольный SQL |
+| **2.1** | ✅ deployed 20.04 (коммит `57ab88d`) | DOW-профили → `/api/dow-profiles`. SQL-агрегация с quantile перенесена на сервер |
+| **2.2** | ✅ deployed 20.04 | computeForecast (Алгоритм Г) → `/api/forecast`. YoY-коэффициент и каскад fallback'ов на сервере |
+| **2.3** | ✅ deployed 20.04 (коммит `4e02b90`) | Закрыт `/api/query`. Клиент использует только whitelisted: `/api/{restaurants,benchmarks,restaurant-meta,dow-profiles,forecast}` |
 
-**Параллельно (не-технические шаги):**
-- Товарный знак System360 в Роспатенте (10-15К через агентство, 6-12 мес)
-- Приказ о коммерческой тайне + NDA в договоры
-- Шаблон договора с отчуждением прав для подрядчиков
+**Проверено в проде:**
+- `/api/query` возвращает 404 (универсальный SQL-прокси удалён)
+- В `view-source` дашборда: 0 упоминаний `quantile`, `mart_restaurant_daily_base`, `fetchCK`
+- Network tab при переключении ресторана показывает только specific endpoints
+
+**Параллельно (не-технические шаги, на ближайшие недели):**
+- ⏳ Товарный знак System360 в Роспатенте (10-15К через агентство, 6-12 мес)
+- ⏳ Приказ о коммерческой тайне + NDA в договоры
+- ⏳ Шаблон договора с отчуждением прав для подрядчиков
 
 ### 🟢 Волна 5: Пилот с франчайзи
 ### ⚪ Волна 6: Расширение (#77 1С Калининграда, labor cost, сегментация)
@@ -215,6 +222,62 @@ Yandex Managed ClickHouse (БД: chicko, user: dashboard_ro)
 ---
 
 ## 10. Changelog
+
+### 20.04.2026, ночь (~3 часа работы) — Фаза 2 ЗАВЕРШЕНА
+
+**Контекст:** Продолжение защиты IP. Цель — сделать копирование логики дороже подписки на продукт.
+
+#### Фаза 2.2 — Перенос алгоритма Г на сервер (коммит между 2.1 и 2.3)
+
+**Новый файл `src/forecast.ts` (327 строк):**
+- Эндпоинт `GET /api/forecast?restaurant_id=N` или `?network=1`
+- Содержит `computeForecastCore` — чистую функцию с Алгоритмом Г:
+  - Вариант А: ≥7 дней → DOW-медианы текущего месяца
+  - Вариант Б: <7 дней + есть прошлый год → DOW прошлого года × коэффициент YoY
+  - Вариант В: fallback → 90-дневный DOW-профиль
+- 2 SQL: сырые данные за 500 дней (покрывают все 3 варианта) + fallback DOW
+- `MAX_DATE` определяется сервером из данных — клиент даже дату не задаёт
+
+**`src/dashboard.ts`:**
+- Удалены: `medianArr` + `computeForecast` (~110 строк алгоритма)
+- Добавлены: `FORECAST_CACHE`, `fetchForecast`, async `renderForecast` с skeleton-состоянием и защитой от race condition
+
+**Скрыто от браузера:** формула коэффициента YoY (`prevMonthRev / prevMonthPYRev`), каскад 3-уровневого fallback'а, логика определения префиксов месяцев.
+
+#### Фаза 2.3 — Закрытие `/api/query` (коммит `4e02b90`)
+
+**Новый файл `src/data_endpoints.ts` (303 строки):**
+- `GET /api/restaurants?full_history=0|1` — список ресторанов + ts (заменил 2 SQL к `mart_restaurant_daily_base`)
+- `GET /api/benchmarks?start=...&end=...` — NET + TOP10 (заменил агрегацию с quantile)
+- `GET /api/restaurant-meta?restaurant_id=N` — scores + recommendations (заменил 2 SQL к mart_scores и mart_recommendations)
+
+**`src/index.ts`:**
+- Удалён `handleQuery` (универсальный SQL-прокси)
+- Удалён импорт `ClickHouseClient`
+- Добавлены 3 новых роута
+
+**`src/dashboard.ts`:**
+- Удалена функция `fetchCK` полностью
+- Замена на `apiGet` + 3 тонких обёртки (`apiRestaurants`, `apiBenchmarks`, `apiRestaurantMeta`)
+
+#### Проверка защиты в проде
+
+Выполнено на `https://chicko-api-proxy.chicko-api.workers.dev`:
+
+1. **`/api/query` недоступен:** `fetch('/api/query', ...)` → `404 Not Found` ✅
+2. **Whitelisted endpoints работают:** `/api/benchmarks` возвращает готовый NET/TOP10 JSON без raw-данных ✅
+3. **View Source чист:** 0 совпадений `quantile`, `mart_restaurant_daily_base`, `fetchCK` ✅
+4. **Network tab:** при переключении ресторана только `/api/{dow-profiles, forecast, benchmarks, restaurant-meta}` — ни одного `/api/query` ✅
+
+#### Инцидент: откат Phase 1.5 правок
+
+При начале Phase 2.1 `dashboard.ts` был скопирован из `/mnt/user-data/uploads/` (это была версия ДО Phase 1.5), из-за чего все правки Phase 1.5 (группировка Сравнения, формат дат DD.MM, 🏆 лидеры, sync селектора, инверсия стрелок в Динамике) откатились. После деплоя Phase 2.3 Alex заметил что вкладка Сравнение вернулась к старой плашке «KPI за / vs».
+
+**Решение:** правки Phase 1.5 накачены на текущий файл вручную — CSS grid для 5 точек, `fmtD()`, `setCmpGroup`, `S.restIdx` sync, инверсия стрелок. Проверено: оба слоя (Phase 1.5 + Phase 2) на месте.
+
+**Вывод для следующих сессий:** перед большими рефакторингами проверять актуальность базового файла через grep на ключевых маркерах (`cmpGroupBtns`, `fmtD`, etc.).
+
+**Архитектурное решение 5.38** (было добавлено в v3.23) — полностью реализовано.
 
 ### 20.04.2026, вечер (~1 час работы) — коммит `57ab88d`
 
@@ -434,14 +497,19 @@ Yandex Managed ClickHouse (БД: chicko, user: dashboard_ro)
 
 ### Следующие сессии
 
-**🔵 Фаза 2.2 (~2-3ч, высокий приоритет):** `computeForecast` → `/api/forecast`. Алгоритм Г с YoY на сервер.
-**🔵 Фаза 2.3 (~3-4ч):** Закрытие `/api/query`, замена на whitelisted endpoints (`/api/restaurants-list`, `/api/daily-history`, `/api/benchmarks`).
-**Фаза 1.4 остаток (~2-3ч):** #76 упрощение P&L
-**Фаза 1.5 остаток (~2ч):** #75 Сравнение (доработка: like-for-like DOW в нижней таблице «vs Сеть / ТОП-10»)
-**UX-проход (~2ч):** #23, #25, #26, #43, #48, #51
+**После завершения Фазы 2 — все задачи продуктового развития:**
+
+**Фаза 1.4 остаток (~2-3ч):** #76 упрощение P&L калькулятора
+**Фаза 1.5 остаток (~2ч):** #75 доработка Сравнения (like-for-like DOW в нижней таблице «vs Сеть / ТОП-10»)
+**UX-проход (~2ч):** #23 шрифты, #25 цветовая слепота, #26 1366px, #43 доставка 0%, #48 формат денег, #51 tooltip anomaly_day
 **Мелочь замеченная в проде:** дубликат названия в заголовке прогноза «Чико (Калининград-1) (Калининград-1)»
+
+**Параллельно:**
+- Запустить регистрацию товарного знака System360 через агентство
+- Подписать приказ о коммерческой тайне
+- Запланировать пилот с 3-5 франчайзи (Волна 5)
 
 ---
 
 **Авторы:** Aleksey Melnikov + Claude
-**Версии:** v3.3 → ... → v3.22 → **v3.23** (Phase 2.1: DOW profiles moved to server, 20.04.2026)
+**Версии:** v3.3 → ... → v3.23 → **v3.24** (Phase 2 completed: IP protection via server API, 20.04.2026)
