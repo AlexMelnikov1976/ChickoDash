@@ -1,9 +1,9 @@
 // Auto-generated from chiko_dashboard HTML. Do not edit manually.
-// v5_alerts: Фаза 1.2b — плашки стали говорящими.
-//   - period context в каждом алерте ("за N дней")
-//   - фильтры против бессмысленных выводов на коротких периодах:
-//     тренд "3 дня подряд" требует ≥7 дней, DOW-анализ ≥14 дней
-//   - insights: убрана "модельная оценка", суммы стали диапазонами
+// v6_likeforlike: Фаза 1.3 — like-for-like сравнения по дням недели.
+//   - Загружаются профили сети и ресторана по dow за 90 дней
+//   - renderKPIs показывает 3 сравнения: vs моя норма / медиана сети / топ-25%
+//   - renderAlerts и renderInsights используют like-for-like базу
+//   - #70 закрыт бонусом: отклонения теперь во всех 6 KPI-карточках
 
 export const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="ru">
@@ -870,6 +870,16 @@ let RESTS = [];
 // Начальные дефолты — только на случай если запрос не вернёт данных.
 let NET   = { revenue: 0, avgCheck: 0, checks: 0, foodcost: 0, discount: 0, deliveryPct: 0, restCount: 0 };
 let TOP10 = { revenue: 0, avgCheck: 0, foodcost: 0, discount: 0, deliveryPct: 0 };
+
+// DOW-профили: like-for-like сравнения. Загружаются один раз при старте
+// и при смене выбранного ресторана. Окно — 90 дней.
+// NET_DOW[1..7] — профиль сети по дням недели (1=Пн..7=Вс, ISO).
+// MY_DOW[1..7]  — профиль текущего ресторана по дням недели.
+// В каждом элементе: {rev_p50, rev_p75, chk_p50, chk_p75, cnt_p50, fc_p50, fc_p25, disc_p50, disc_p25, del_p50, del_p75, n}
+// n — число точек данных (дней) в расчёте, для fallback'а.
+let NET_DOW = {};
+let MY_DOW  = {};
+let MY_DOW_DAYS = 0; // всего дней истории у текущего ресторана (для фоллбэка <14 → скрываем "вашу норму")
 let ALL_DATES = [];
 let MIN_DATE = '';
 let MAX_DATE = '';
@@ -1059,6 +1069,12 @@ async function selectRest(idx) {
   buildSelList(RESTS);
   RESTAURANT_SCORE = null; RESTAURANT_RECS = [];
   renderAll();
+  // Загружаем DOW-профили для like-for-like сравнений (сеть + мой ресторан, 90 дней).
+  // Делаем это в фоне — первый renderAll уже прошёл с NET/TOP10 из loadNetworkBenchmarks,
+  // а после загрузки DOW просто перерисуем заново.
+  if (R && R.id) {
+    loadDowProfiles(R.id).then(()=>{ try { renderAll(); } catch(e) { console.error('[dow-rerender]', e); }});
+  }
   if (R && R.id) {
     try {
       const [scoreData, recsData] = await Promise.all([
@@ -1137,6 +1153,142 @@ async function loadNetworkBenchmarks(startDate, endDate) {
   } catch(e) {
     console.error('[benchmarks] ошибка загрузки:', e.message);
   }
+}
+
+// ═══ Like-for-like профили по дням недели ═══
+// Загружают за последние 90 дней:
+//  • профиль сети: "типичный понедельник / вторник / ... в сети"
+//  • профиль выбранного ресторана: "наша норма понедельника / вторника / ..."
+// ClickHouse toDayOfWeek() возвращает 1..7 (1=Пн..7=Вс, ISO).
+async function loadDowProfiles(restaurantId) {
+  const today = new Date().toISOString().slice(0,10);
+  const d90 = new Date(Date.now()-90*864e5).toISOString().slice(0,10);
+
+  // --- Профиль сети ---
+  const sqlNet = \`
+    SELECT
+      toDayOfWeek(report_date) AS dow,
+      quantile(0.50)(revenue_total_rub)    AS rev_p50,
+      quantile(0.75)(revenue_total_rub)    AS rev_p75,
+      quantile(0.50)(avg_check_total_rub)  AS chk_p50,
+      quantile(0.75)(avg_check_total_rub)  AS chk_p75,
+      quantile(0.50)(checks_total)         AS cnt_p50,
+      quantile(0.75)(checks_total)         AS cnt_p75,
+      quantile(0.50)(foodcost_total_pct)   AS fc_p50,
+      quantile(0.25)(foodcost_total_pct)   AS fc_p25,
+      quantile(0.50)(discount_total_pct)   AS disc_p50,
+      quantile(0.25)(discount_total_pct)   AS disc_p25,
+      quantile(0.50)(delivery_share_pct)   AS del_p50,
+      quantile(0.75)(delivery_share_pct)   AS del_p75,
+      count() AS n
+    FROM chicko.mart_restaurant_daily_base
+    WHERE report_date BETWEEN '\${d90}' AND '\${today}'
+      AND is_anomaly_day = 0
+      AND revenue_total_rub > 0
+    GROUP BY dow
+  \`;
+  try {
+    const rows = await fetchCK(sqlNet);
+    NET_DOW = {};
+    for (const r of rows) {
+      NET_DOW[+r.dow] = {
+        rev_p50:+r.rev_p50, rev_p75:+r.rev_p75,
+        chk_p50:+r.chk_p50, chk_p75:+r.chk_p75,
+        cnt_p50:+r.cnt_p50, cnt_p75:+r.cnt_p75,
+        fc_p50:+r.fc_p50,   fc_p25:+r.fc_p25,
+        disc_p50:+r.disc_p50, disc_p25:+r.disc_p25,
+        del_p50:+r.del_p50, del_p75:+r.del_p75,
+        n:+r.n
+      };
+    }
+  } catch(e) {
+    console.error('[dow-net] ошибка:', e.message);
+    NET_DOW = {};
+  }
+
+  // --- Профиль ресторана ---
+  if (!restaurantId) { MY_DOW={}; MY_DOW_DAYS=0; return; }
+  const sqlMy = \`
+    SELECT
+      toDayOfWeek(report_date) AS dow,
+      quantile(0.50)(revenue_total_rub)    AS rev_p50,
+      quantile(0.50)(avg_check_total_rub)  AS chk_p50,
+      quantile(0.50)(checks_total)         AS cnt_p50,
+      quantile(0.50)(foodcost_total_pct)   AS fc_p50,
+      quantile(0.50)(discount_total_pct)   AS disc_p50,
+      quantile(0.50)(delivery_share_pct)   AS del_p50,
+      count() AS n
+    FROM chicko.mart_restaurant_daily_base
+    WHERE dept_id = \${restaurantId}
+      AND report_date BETWEEN '\${d90}' AND '\${today}'
+      AND is_anomaly_day = 0
+      AND revenue_total_rub > 0
+    GROUP BY dow
+  \`;
+  try {
+    const rows = await fetchCK(sqlMy);
+    MY_DOW = {};
+    let totalDays = 0;
+    for (const r of rows) {
+      MY_DOW[+r.dow] = {
+        rev_p50:+r.rev_p50, chk_p50:+r.chk_p50, cnt_p50:+r.cnt_p50,
+        fc_p50:+r.fc_p50, disc_p50:+r.disc_p50, del_p50:+r.del_p50,
+        n:+r.n
+      };
+      totalDays += +r.n;
+    }
+    MY_DOW_DAYS = totalDays;
+  } catch(e) {
+    console.error('[dow-my] ошибка:', e.message);
+    MY_DOW = {}; MY_DOW_DAYS = 0;
+  }
+}
+
+// ═══ Like-for-like вычисления ═══
+// Для массива точек ts (дни текущего периода) возвращает like-for-like
+// бенчмарки: усреднение профилей сети и личных по dow, попадающим в этот период.
+// Результат: { my: {rev,chk,cnt,fc,disc,del}, net_p50: {...}, net_p75: {...},
+//              haveMy: bool, haveNet: bool, n_dow: Set }
+function dowBenchmarks(ts) {
+  const myAgg  = { rev:[], chk:[], cnt:[], fc:[], disc:[], del:[] };
+  const netAgg = { rev:[], chk:[], cnt:[], fc:[], disc:[], del:[],
+                   rev75:[], chk75:[], cnt75:[], fc25:[], disc25:[], del75:[] };
+  const dowSet = new Set();
+  for (const t of ts) {
+    const jsDow = new Date(t.date).getDay(); // 0..6, 0=Sun
+    const chDow = jsDow===0 ? 7 : jsDow;     // 1..7, ISO
+    dowSet.add(chDow);
+    const mp = MY_DOW[chDow];
+    if (mp) {
+      myAgg.rev.push(mp.rev_p50); myAgg.chk.push(mp.chk_p50); myAgg.cnt.push(mp.cnt_p50);
+      myAgg.fc.push(mp.fc_p50);   myAgg.disc.push(mp.disc_p50); myAgg.del.push(mp.del_p50);
+    }
+    const np = NET_DOW[chDow];
+    if (np) {
+      netAgg.rev.push(np.rev_p50);   netAgg.chk.push(np.chk_p50); netAgg.cnt.push(np.cnt_p50);
+      netAgg.fc.push(np.fc_p50);     netAgg.disc.push(np.disc_p50); netAgg.del.push(np.del_p50);
+      netAgg.rev75.push(np.rev_p75); netAgg.chk75.push(np.chk_p75); netAgg.cnt75.push(np.cnt_p75);
+      netAgg.fc25.push(np.fc_p25);   netAgg.disc25.push(np.disc_p25); netAgg.del75.push(np.del_p75);
+    }
+  }
+  const mean = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
+  return {
+    my: {
+      rev:mean(myAgg.rev), chk:mean(myAgg.chk), cnt:mean(myAgg.cnt),
+      fc:mean(myAgg.fc),   disc:mean(myAgg.disc), del:mean(myAgg.del),
+    },
+    net_p50: {
+      rev:mean(netAgg.rev), chk:mean(netAgg.chk), cnt:mean(netAgg.cnt),
+      fc:mean(netAgg.fc),   disc:mean(netAgg.disc), del:mean(netAgg.del),
+    },
+    net_p75: {
+      rev:mean(netAgg.rev75), chk:mean(netAgg.chk75), cnt:mean(netAgg.cnt75),
+      fc:mean(netAgg.fc25),   disc:mean(netAgg.disc25), del:mean(netAgg.del75),
+    },
+    haveMy: MY_DOW_DAYS >= 14,      // требование "нормы": ≥14 дней истории
+    haveNet: Object.keys(NET_DOW).length > 0,
+    dowCount: dowSet.size,
+  };
 }
 
 function goTab(el) {
@@ -1464,76 +1616,81 @@ function getGlobalTs(){return getTsRange(R,S.globalStart,S.globalEnd)}
 
 // ═══ ALERTS ═══
 function renderAlerts(){
-  const ts=getGlobalTs();
+  const ts = getGlobalTs();
   if(!ts.length) return;
-  const fc_avg=safeAvg(ts,'foodcost');
-  const rev_avg=safeAvg(ts,'revenue')||0;
-  const disc_avg=safeAvg(ts,'discount')||0;
-  const del_avg=safeAvg(ts,'deliveryPct')||ts.reduce((a,t)=>a+(t.revenue>0?t.delivery/t.revenue*100:0),0)/(ts.length||1);
-  const chk_avg=safeAvg(ts,'avgCheck')||0;
-  const cnt_avg=safeAvg(ts,'checks')||0;
 
-  // Период — подпись для понятности алертов
+  const cur = {
+    revenue:  safeAvg(ts,'revenue')||0,
+    avgCheck: safeAvg(ts,'avgCheck')||0,
+    checks:   safeAvg(ts,'checks')||0,
+    foodcost: safeAvg(ts,'foodcost'),
+    discount: safeAvg(ts,'discount')||0,
+    delivery: safeAvg(ts,'delivery')||0,
+  };
+  const dp = cur.revenue>0 ? cur.delivery/cur.revenue*100 : 0;
+
+  // Like-for-like бенчмарки
+  const bm = dowBenchmarks(ts);
   const daysN = ts.length;
   const periodTxt = \`за \${daysN} \${daysN===1?'день':daysN<5?'дня':'дней'}\`;
 
-  // Trend analysis: показываем только если период ≥ 7 дней (иначе "3 дня подряд" бессмыслен)
-  const last3=ts.slice(-3);
-  const declining3=daysN>=7 && last3.length>=3 && last3[0].revenue>last3[1].revenue && last3[1].revenue>last3[2].revenue;
-  const growing3  =daysN>=7 && last3.length>=3 && last3[0].revenue<last3[1].revenue && last3[1].revenue<last3[2].revenue;
+  // Выбор базы для сравнения:
+  // 1) если у точки есть "моя норма" — она. Это основная база.
+  // 2) fallback: медиана сети.
+  const cmpBase = bm.haveMy ? 'my' : (bm.haveNet ? 'net_p50' : null);
+  const cmpLabel = bm.haveMy ? 'вашей нормы' : 'медианы сети';
 
-  // DOW best/worst: только если период ≥ 14 дней (каждый день недели встречается минимум 2 раза)
-  const byDow={};
-  ts.forEach(t=>{const d=getDOW(t.date);if(!byDow[d])byDow[d]=[];byDow[d].push(t.revenue)});
-  const dowAvgs=Object.entries(byDow).map(([d,v])=>({d:+d,avg:avgArr(v),n:v.length})).sort((a,b)=>b.avg-a.avg);
-  const minSamples = Math.min(...dowAvgs.map(x=>x.n));
-  const dowReliable = daysN >= 14 && minSamples >= 2;
-  const bestDow = dowReliable ? dowAvgs[0] : null;
-  const worstDow= dowReliable ? dowAvgs[dowAvgs.length-1] : null;
+  // Trend analysis: показываем только если период ≥ 7 дней
+  const last3 = ts.slice(-3);
+  const declining3 = daysN>=7 && last3.length>=3 && last3[0].revenue>last3[1].revenue && last3[1].revenue>last3[2].revenue;
+  const growing3   = daysN>=7 && last3.length>=3 && last3[0].revenue<last3[1].revenue && last3[1].revenue<last3[2].revenue;
 
-  const msgs=[];
+  const msgs = [];
 
-  // Фудкост
-  if(fc_avg!==null&&fc_avg>26) msgs.push({c:'a-red',t:\`🔴 <b>Критический фудкост: \${fmtN(fc_avg)}%</b> — превышает норму 22% на \${fmtN(fc_avg-22)} п.п. (среднее \${periodTxt}). Потери ~\${fmtR((fc_avg-22)/100*rev_avg)}/день при текущем уровне выручки.\`});
-  else if(fc_avg!==null&&fc_avg>22) msgs.push({c:'a-amber',t:\`⚠️ <b>Фудкост \${fmtN(fc_avg)}% выше нормы</b> (норма до 22%), среднее \${periodTxt}. Снижение до 22% высвободит ~\${fmtR((fc_avg-22)/100*rev_avg)}/день.\`});
+  // ФУДКОСТ — без изменений по порогам (22% норма / 26% критично для Chicko),
+  // но с добавлением периода и like-for-like сравнением
+  if (cur.foodcost!==null && cur.foodcost>26) {
+    msgs.push({c:'a-red', t:\`🔴 <b>Критический фудкост: \${fmtN(cur.foodcost)}%</b> — превышает норму 22% на \${fmtN(cur.foodcost-22)} п.п. (среднее \${periodTxt}). Потери ~\${fmtR((cur.foodcost-22)/100*cur.revenue)}/день.\`});
+  } else if (cur.foodcost!==null && cur.foodcost>22) {
+    msgs.push({c:'a-amber', t:\`⚠️ <b>Фудкост \${fmtN(cur.foodcost)}% выше нормы</b> (норма до 22%), среднее \${periodTxt}. Снижение до 22% высвободит ~\${fmtR((cur.foodcost-22)/100*cur.revenue)}/день.\`});
+  }
 
   // Тренд
-  if(declining3) msgs.push({c:'a-red',t:\`📉 <b>Выручка снижается 3 последних дня.</b> \${last3.map(t=>fmtR(t.revenue)).join(' → ')}. Проверьте качество, сервис и операционные процессы.\`});
-  else if(growing3) msgs.push({c:'a-green',t:\`📈 <b>Выручка растёт 3 последних дня.</b> \${last3.map(t=>fmtR(t.revenue)).join(' → ')}. Хорошая динамика — зафиксируйте что сработало.\`});
-
-  // Скидки
-  if(disc_avg>NET.discount*1.4) msgs.push({c:'a-amber',t:\`🏷️ <b>Скидки \${fmtN(disc_avg)}% — в 1.4× выше сети (\${NET.discount}%)</b>, среднее \${periodTxt}. Потеря ~\${fmtR(rev_avg*(disc_avg-NET.discount)/100)}/день = \${fmtR(rev_avg*(disc_avg-NET.discount)/100*30)}/мес. Проверьте: акции возвращают гостей или просто режут маржу?\`});
-
-  // Доставка
-  if(del_avg<NET.deliveryPct*0.6) msgs.push({c:'a-amber',t:\`🛵 <b>Доставка \${fmtN(del_avg,1)}% выручки — в 2× ниже сети (\${NET.deliveryPct}%)</b>, среднее \${periodTxt}. Если догнать сеть: ~\${fmtR((NET.deliveryPct-del_avg)/100*rev_avg)}/день выручки от доставки.\`});
-
-  // Средний чек
-  if(chk_avg<NET.avgCheck*0.85) msgs.push({c:'a-amber',t:\`🧾 <b>Средний чек \${fmtR(chk_avg)} на \${fmtN(Math.abs(pctD(chk_avg,NET.avgCheck)))}% ниже сети (\${fmtR(NET.avgCheck)})</b>, среднее \${periodTxt}. Работайте с допродажами и комбо-наборами.\`});
-
-  // Дни недели — только при достаточном периоде
-  if(bestDow&&worstDow&&bestDow.d!==worstDow.d){
-    const ratio=(bestDow.avg/worstDow.avg).toFixed(1);
-    msgs.push({c:'a-blue',t:\`📅 <b>\${DOW_NAMES[bestDow.d]} — лучший день недели</b> (ср. \${fmtR(bestDow.avg)}), \${DOW_NAMES[worstDow.d]} — слабейший (\${fmtR(worstDow.avg)}). Разрыв ×\${ratio}. Данные \${periodTxt}.\`});
+  if (declining3) {
+    msgs.push({c:'a-red', t:\`📉 <b>Выручка снижается 3 последних дня.</b> \${last3.map(t=>fmtR(t.revenue)).join(' → ')}. Проверьте качество, сервис и операционные процессы.\`});
+  } else if (growing3) {
+    msgs.push({c:'a-green', t:\`📈 <b>Выручка растёт 3 последних дня.</b> \${last3.map(t=>fmtR(t.revenue)).join(' → ')}. Хорошая динамика — зафиксируйте что сработало.\`});
   }
 
-  // TOP/BOTTOM позиция
-  if(rev_avg>TOP10.revenue*0.85) msgs.push({c:'a-green',t:\`🏆 <b>Вы в ТОП-15% сети!</b> Средняя выручка \${fmtR(rev_avg)} близка к лидерам (\${fmtR(TOP10.revenue)}), \${periodTxt}.\`});
-  else if(rev_avg<NET.revenue*0.7) msgs.push({c:'a-red',t:\`⬇️ <b>Выручка \${fmtR(rev_avg)} — на \${fmtN(Math.abs(pctD(rev_avg,NET.revenue)))}% ниже медианы сети (\${fmtR(NET.revenue)})</b>, \${periodTxt}. Это системный разрыв — нужен план действий.\`});
-
-  // Выходные vs будни — только при периоде ≥ 14 дней
-  if(daysN>=14){
-    const wdTs=ts.filter(t=>!isWeekend(t.date));
-    const weTs=ts.filter(t=>isWeekend(t.date));
-    if(wdTs.length>=4 && weTs.length>=4){
-      const wdR=avgArr(wdTs.map(t=>t.revenue));
-      const weR=avgArr(weTs.map(t=>t.revenue));
-      const ratio2=(weR/wdR).toFixed(1);
-      if(weR/wdR>2) msgs.push({c:'a-blue',t:\`📊 <b>Выходные приносят в \${ratio2}× больше выручки чем будни.</b> Будни: \${fmtR(wdR)}/день, выходные: \${fmtR(weR)}/день (\${periodTxt}). Оптимизируйте загрузку будних смен.\`});
-    }
+  // Скидки — like-for-like
+  if (cmpBase && cur.discount > bm[cmpBase].disc*1.4) {
+    const base = bm[cmpBase].disc;
+    const extraPct = cur.discount - base;
+    msgs.push({c:'a-amber', t:\`🏷️ <b>Скидки \${fmtN(cur.discount,1)}% — в 1.4× выше \${cmpLabel} (\${fmtN(base,1)}%)</b>, \${periodTxt}. Потеря ~\${fmtR(cur.revenue*extraPct/100)}/день. Проверьте: акции возвращают гостей или просто режут маржу?\`});
   }
 
-  // Сортировка: сначала красные, потом оранжевые, потом зелёные/синие
-  const order={'a-red':0,'a-amber':1,'a-green':2,'a-blue':3};
+  // Доставка — like-for-like (если есть доставка у ресторана)
+  if (cmpBase && bm[cmpBase].del>5 && dp < bm[cmpBase].del*0.6) {
+    const base = bm[cmpBase].del;
+    msgs.push({c:'a-amber', t:\`🛵 <b>Доставка \${fmtN(dp,1)}% выручки — в 2× ниже \${cmpLabel} (\${fmtN(base,1)}%)</b>, \${periodTxt}. Если догнать: ~\${fmtR((base-dp)/100*cur.revenue)}/день выручки от доставки.\`});
+  }
+
+  // Средний чек — like-for-like
+  if (cmpBase && cur.avgCheck < bm[cmpBase].chk*0.85) {
+    const base = bm[cmpBase].chk;
+    msgs.push({c:'a-amber', t:\`🧾 <b>Средний чек \${fmtR(cur.avgCheck)} на \${fmtN(Math.abs(pctD(cur.avgCheck,base)))}% ниже \${cmpLabel} (\${fmtR(base)})</b>, \${periodTxt}. Работайте с допродажами и комбо-наборами.\`});
+  }
+
+  // Выручка — сравнение с топ-25% сети (если она выше) или с медианой
+  if (bm.haveNet && cur.revenue > bm.net_p75.rev*0.95 && bm.net_p75.rev>0) {
+    msgs.push({c:'a-green', t:\`🏆 <b>Выручка на уровне топ-25% сети!</b> \${fmtR(cur.revenue)}/день против \${fmtR(bm.net_p75.rev)}/день у лидеров (\${periodTxt}).\`});
+  } else if (cmpBase && cur.revenue < bm[cmpBase].rev*0.7) {
+    const base = bm[cmpBase].rev;
+    msgs.push({c:'a-red', t:\`⬇️ <b>Выручка \${fmtR(cur.revenue)} — на \${fmtN(Math.abs(pctD(cur.revenue,base)))}% ниже \${cmpLabel} (\${fmtR(base)})</b>, \${periodTxt}. Это системный разрыв — нужен план действий.\`});
+  }
+
+  // Сортировка
+  const order = {'a-red':0,'a-amber':1,'a-green':2,'a-blue':3};
   msgs.sort((a,b)=>(order[a.c]||9)-(order[b.c]||9));
   document.getElementById('alertsBox').innerHTML=msgs.slice(0,3).map(m=>\`<div class="alert \${m.c}">\${m.t}</div>\`).join('');
 }
@@ -1585,9 +1742,11 @@ function getCompareLabel() {
 
 // ═══ KPIs ═══
 function renderKPIs(){
-  const {cur:ts, prev:prevTs}=getPeriodTs();
+  const ts = getGlobalTs();
   if(!ts.length) return;
-  const kpi={
+
+  // Реальные средние за выбранный период
+  const cur={
     revenue:  safeAvg(ts,'revenue')||0,
     avgCheck: safeAvg(ts,'avgCheck')||0,
     checks:   safeAvg(ts,'checks')||0,
@@ -1595,38 +1754,89 @@ function renderKPIs(){
     discount: safeAvg(ts,'discount')||0,
     delivery: safeAvg(ts,'delivery')||0,
   };
-  const prev=ts.length>=2?ts[ts.length-2]:null;
-  const cmpRev=getCompareValue(kpi.revenue,prevTs,'revenue',false);
-  const cmpChk=getCompareValue(kpi.avgCheck,prevTs,'avgCheck',false);
-  const cmpCnt=getCompareValue(kpi.checks,prevTs,'checks',false);
-  const cmpLbl=getCompareLabel();
-  const dp=kpi.revenue>0?kpi.delivery/kpi.revenue*100:0;
-  const fc=kpi.foodcost;
+  const dp = cur.revenue>0 ? cur.delivery/cur.revenue*100 : 0;
 
-  setKPI('rev',kpi.revenue,fmtR(kpi.revenue),'',cmpRev,NET.revenue,false,fmtR(NET.revenue),kpi.revenue/TOP10.revenue*100,'bgo');
-  setKPI('chk',kpi.avgCheck,fmtR(kpi.avgCheck,true),'',cmpChk,NET.avgCheck,false,fmtR(NET.avgCheck,true),kpi.avgCheck/2200*100,'bb');
-  setKPI('cnt',Math.round(kpi.checks),Math.round(kpi.checks),' чек',cmpCnt,NET.checks,false,NET.checks+' чеков',kpi.checks/200*100,'bb');
-  if(fc!==null){
-    const fcColor=fc>26?'var(--red)':fc>22?'var(--amber)':'var(--green)';
-    const fcBarCls=fc>26?'br':fc>22?'ba':'bg';
-    document.getElementById('kv-fc').innerHTML=fmtN(fc)+'<span class="u">%</span>';
-    document.getElementById('kv-fc').style.color=fcColor;
-    document.getElementById('kd-fc').innerHTML=dHtml(pctD(fc,NET.foodcost),true)+' <span class="nt">vs сеть</span>';
-    document.getElementById('kb-fc').textContent='Сеть: '+NET.foodcost+'%';
-    document.getElementById('kr-fc').className='kbar '+fcBarCls;
-    document.getElementById('kr-fc').style.width=Math.min(100,fc/35*100)+'%';
+  // Like-for-like бенчмарки (моя норма + медиана сети + топ-25% сети) по dow
+  const bm = dowBenchmarks(ts);
+
+  // Главное сравнение — "vs моя норма" (если истории достаточно),
+  // иначе fallback на "vs медиану сети".
+  // Мелкая подпись показывает оба сетевых бенчмарка.
+  //
+  // Для foodcost/скидок: "меньше=лучше", поэтому в dHtml делаем lb=true (перевёртываем цвета).
+  function renderCard(id, value, fmtFn, myVal, netP50, netP75, lessIsBetter, barFn) {
+    const valEl = document.getElementById('kv-'+id);
+    const delEl = document.getElementById('kd-'+id);
+    const benEl = document.getElementById('kb-'+id);
+    const barEl = document.getElementById('kr-'+id);
+    if (!valEl) return;
+
+    // Главное число
+    valEl.innerHTML = fmtFn(value, true);
+
+    // Главное сравнение: если есть "моя норма" — сравнение с ней,
+    // иначе с медианой сети. Если и сети нет — прочерк.
+    let mainCmp = '';
+    if (bm.haveMy && myVal && myVal>0) {
+      mainCmp = dHtml(pctD(value, myVal), lessIsBetter) + ' <span class="nt">vs моя норма</span>';
+    } else if (bm.haveNet && netP50 && netP50>0) {
+      mainCmp = dHtml(pctD(value, netP50), lessIsBetter) + ' <span class="nt">vs медиана сети</span>';
+    }
+    if (delEl) delEl.innerHTML = mainCmp;
+
+    // Фоновый контекст: медиана сети + топ-25% сети
+    // Если есть "моя норма" — показываем её отдельной строкой в первой позиции
+    const parts = [];
+    if (bm.haveMy && myVal && myVal>0)   parts.push('моя норма ' + fmtFn(myVal));
+    if (bm.haveNet && netP50 && netP50>0) parts.push('сеть ' + fmtFn(netP50));
+    if (bm.haveNet && netP75 && netP75>0) {
+      const label = lessIsBetter ? 'топ-25% ≤ ' : 'топ-25% ≥ ';
+      parts.push(label + fmtFn(netP75));
+    }
+    if (benEl) benEl.innerHTML = parts.join(' · ');
+
+    // Прогресс-бар — относительно топ-25% (если есть)
+    if (barEl && barFn) {
+      const pct = barFn(value, netP75, netP50);
+      barEl.style.width = Math.min(100, Math.max(0, pct)) + '%';
+    }
   }
-  const discColor=kpi.discount>NET.discount*1.4?'var(--red)':kpi.discount>NET.discount?'var(--amber)':'var(--text)';
-  document.getElementById('kv-disc').innerHTML=fmtN(kpi.discount,1)+'<span class="u">%</span>';
-  document.getElementById('kv-disc').style.color=discColor;
-  document.getElementById('kd-disc').innerHTML=dHtml(pctD(kpi.discount,NET.discount),true)+' <span class="nt">vs сеть</span>';
-  document.getElementById('kb-disc').textContent='Сеть: '+NET.discount+'%';
-  document.getElementById('kr-disc').className='kbar '+(kpi.discount>10?'br':kpi.discount>NET.discount?'ba':'bg');
-  document.getElementById('kr-disc').style.width=Math.min(100,kpi.discount*5)+'%';
-  document.getElementById('kv-del').innerHTML=fmtN(dp,1)+'<span class="u">%</span>';
-  document.getElementById('kd-del').innerHTML=dHtml(pctD(dp,NET.deliveryPct),false)+' <span class="nt">vs сеть</span>';
-  document.getElementById('kb-del').textContent='Сеть: '+NET.deliveryPct+'%';
-  document.getElementById('kr-del').style.width=Math.min(100,dp/40*100)+'%';
+
+  // Helpers
+  const fmtR_short = (v) => fmtR(v);
+  const fmtR_full  = (v) => fmtR(v, true);
+  const fmtPct1 = (v) => v==null ? '—' : fmtN(v, 1) + '%';
+  const fmtInt  = (v) => v==null ? '—' : Math.round(v) + ' чек';
+
+  renderCard('rev', cur.revenue,  fmtR_short, bm.my.rev,  bm.net_p50.rev,  bm.net_p75.rev,  false,
+             (v,p75,p50) => p75 ? (v/p75)*100 : (p50 ? (v/p50)*60 : 0));
+  renderCard('chk', cur.avgCheck, fmtR_full,  bm.my.chk,  bm.net_p50.chk,  bm.net_p75.chk,  false,
+             (v,p75,p50) => p75 ? (v/p75)*100 : (p50 ? (v/p50)*60 : 0));
+  renderCard('cnt', cur.checks,   fmtInt,     bm.my.cnt,  bm.net_p50.cnt,  bm.net_p75.cnt,  false,
+             (v,p75,p50) => p75 ? (v/p75)*100 : (p50 ? (v/p50)*60 : 0));
+
+  // Foodcost — цвет по порогам (22% / 26%)
+  if (cur.foodcost !== null) {
+    const fc = cur.foodcost;
+    const fcColor = fc>26 ? 'var(--red)' : fc>22 ? 'var(--amber)' : 'var(--green)';
+    const fcBarCls = fc>26 ? 'br' : fc>22 ? 'ba' : 'bg';
+    const el = document.getElementById('kv-fc');
+    if (el) el.style.color = fcColor;
+    const barEl = document.getElementById('kr-fc');
+    if (barEl) barEl.className = 'kbar ' + fcBarCls;
+    renderCard('fc', fc, fmtPct1, bm.my.fc, bm.net_p50.fc, bm.net_p75.fc, true,
+               (v) => Math.min(100, v/35*100));
+  }
+
+  renderCard('disc', cur.discount, fmtPct1, bm.my.disc, bm.net_p50.disc, bm.net_p75.disc, true,
+             (v) => Math.min(100, v*5));
+  const discColor = cur.discount > (bm.net_p50.disc||3.3)*1.4 ? 'var(--red)' :
+                    cur.discount > (bm.net_p50.disc||3.3)     ? 'var(--amber)' : 'var(--text)';
+  const discEl = document.getElementById('kv-disc');
+  if (discEl) discEl.style.color = discColor;
+
+  renderCard('del', dp, fmtPct1, bm.my.del, bm.net_p50.del, bm.net_p75.del, false,
+             (v) => Math.min(100, v/40*100));
 }
 function setKPI(id,raw,fmt,unit,prevRaw,netBench,lb,benchLbl,barPct,barCls){
   document.getElementById('kv-'+id).innerHTML=fmt+(unit?\`<span class="u">\${unit}</span>\`:'');
@@ -1809,69 +2019,194 @@ function renderRankBars(){
 
 // ═══ INSIGHTS ═══
 function renderInsights(){
-  if (RESTAURANT_RECS && RESTAURANT_RECS.length > 0) {
-    const colorMap={margin:'red',efficiency:'red',revenue:'amber',delivery:'amber'};
-    const iconMap={margin:'🏷️',efficiency:'🥩',revenue:'🧾',delivery:'🛵'};
-    const ins=RESTAURANT_RECS.map(rec=>({
-      t:colorMap[rec.category]||'amber', i:iconMap[rec.category]||'💡',
-      h:rec.title,
-      b:rec.description,
-      a:(()=>{
-        // Always use last 7 days (ignores calendar) → stable monthly forecast
-        const last7 = R.ts.slice(-7);
-        const rev=last7.length?last7.reduce((s,t)=>s+t.revenue,0)/last7.length:0;
-        const disc=last7.length?last7.reduce((s,t)=>s+t.discount,0)/last7.length:0;
-        const fc=last7.length?last7.reduce((s,t)=>s+t.foodcost,0)/last7.length:0;
-        const cnt=last7.length?last7.reduce((s,t)=>s+t.checks,0)/last7.length:0;
-        const dp=last7.length?last7.reduce((s,t)=>s+(t.deliveryPct||0),0)/last7.length:0;
-        const net_rub=rev*(1-disc/100);
-        // Days remaining in current month
-        const now=new Date();
-        const daysInMonth=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
-        const daysDone=now.getDate();
-        const daysLeft=daysInMonth-daysDone;
-        const mult=daysInMonth; // project to full month
-        // Диапазоны вместо точечных сумм (решение паспорта 5.31)
-        // Низкая оценка — 60% от теоретического максимума, высокая — 100%
-        let effMax = 0;
-        if(rec.recommendation_code==='HIGH_FOODCOST'&&fc>22) effMax = Math.round(net_rub*(fc-22)/100*mult);
-        else if(rec.recommendation_code==='HIGH_DISCOUNT'&&disc>NET.discount) effMax = Math.round(rev*(disc-NET.discount)/100*mult);
-        else if(rec.recommendation_code==='LOW_AVG_CHECK'&&cnt>0) effMax = Math.round(cnt*(NET.avgCheck-rev/cnt)*0.15*mult);
-        else if(rec.recommendation_code==='LOW_DELIVERY'&&dp<NET.deliveryPct) effMax = Math.round(rev*(NET.deliveryPct-dp)/100*mult);
-        else effMax = +rec.estimated_effect_rub;
-        if (effMax <= 0) return null;
-        const effMin = Math.round(effMax * 0.6);
-        return \`≈ \${fmtR(effMin)}–\${fmtR(effMax)}/мес, если догоните средние по сети\`;
-      })(),
-    }));
-    const ts=getGlobalTs();
-    const byDow={};
-    ts.forEach(t=>{const d=getDOW(t.date);if(!byDow[d])byDow[d]=[];byDow[d].push(t.revenue)});
-    const dowAvgs=Object.entries(byDow).map(([d,v])=>({d:+d,avg:avgArr(v)})).sort((a,b)=>b.avg-a.avg);
-    if(dowAvgs.length>=2){const best=dowAvgs[0],worst=dowAvgs[dowAvgs.length-1];ins.push({t:'blue',i:'📅',h:\`\${DOW_NAMES[best.d]} — лучший день (\${fmtR(best.avg)})\`,b:\`Разрыв с \${DOW_NAMES[worst.d]} (\${fmtR(worst.avg)}) — ×\${(best.avg/worst.avg).toFixed(1)}.\`,a:null});}
-    document.getElementById('insBox').innerHTML=ins.slice(0,6).map(i=>\`<div class="ins-card \${i.t}"><div class="ins-t">\${i.i} \${i.h}</div><div class="ins-b">\${i.b}</div>\${i.a?\`<div class="ins-a">💡 \${i.a}</div>\`:''}</div>\`).join('');
-    return;
+  const ts = getGlobalTs();
+  if (!ts.length) return;
+  const box = document.getElementById('insBox');
+  if (!box) return;
+
+  const cur = {
+    revenue:  safeAvg(ts,'revenue')||0,
+    avgCheck: safeAvg(ts,'avgCheck')||0,
+    checks:   safeAvg(ts,'checks')||0,
+    foodcost: safeAvg(ts,'foodcost'),
+    discount: safeAvg(ts,'discount')||0,
+    delivery: safeAvg(ts,'delivery')||0,
+  };
+  const dp = cur.revenue>0 ? cur.delivery/cur.revenue*100 : 0;
+
+  const bm = dowBenchmarks(ts);
+  const daysN = ts.length;
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+
+  // Умная логика карточек:
+  // - если у нас есть "моя норма" — сравниваем с ней (главное сравнение)
+  // - дополнительно показываем где мы относительно сети (p50 и p75)
+  // - цвет: red / amber / green в зависимости от отклонения
+  // - денежная оценка — диапазон (60-100%) с контекстом
+  const ins = [];
+
+  // Helper: умная карточка для одной метрики
+  // kind='revenue'|'avgCheck'|'foodcost'|'discount'|'delivery'
+  // higherIsBetter: true для выручки, чека, доставки; false для foodcost, discount
+  function buildCard(cfg) {
+    const { icon, name, value, myNorm, netP50, netP75,
+            higherIsBetter, unit, fmt, monthImpactFn } = cfg;
+    if (value == null) return null;
+
+    // Определяем "здоровье" метрики
+    let tone = 'blue'; // neutral default
+    let headline = '';
+    let body = '';
+    let action = null;
+
+    if (bm.haveMy && myNorm && myNorm > 0) {
+      const diffPct = (value - myNorm) / myNorm * 100;
+      const better = higherIsBetter ? diffPct > 0 : diffPct < 0;
+      const magnitude = Math.abs(diffPct);
+
+      if (magnitude < 5) {
+        tone = 'green';
+        headline = \`\${name} \${fmt(value)} — в вашей норме\`;
+        body = \`Ваша норма по таким дням: \${fmt(myNorm)}\${unit||''}. Разница \${fmtN(diffPct,1)}%.\`;
+      } else if (better) {
+        tone = 'green';
+        headline = \`\${name} \${fmt(value)} — лучше вашей нормы на \${fmtN(magnitude,1)}%\`;
+        body = \`Ваша норма \${fmt(myNorm)}\${unit||''}. Зафиксируйте что сработало.\`;
+      } else {
+        tone = magnitude > 15 ? 'red' : 'amber';
+        headline = \`\${name} \${fmt(value)} — хуже вашей нормы на \${fmtN(magnitude,1)}%\`;
+        body = \`Ваша норма по таким дням: \${fmt(myNorm)}\${unit||''}.\`;
+        // Контекст сети
+        if (bm.haveNet && netP50) {
+          const vsNet = (value - netP50)/netP50*100;
+          const vsNetBetter = higherIsBetter ? vsNet > 0 : vsNet < 0;
+          if (vsNetBetter) {
+            body += \` При этом по сети вы всё ещё \${higherIsBetter?'выше':'лучше'} медианы (\${fmt(netP50)}).\`;
+          } else {
+            body += \` И ниже медианы сети (\${fmt(netP50)}).\`;
+          }
+        }
+        // Денежный эффект при возврате к норме
+        if (monthImpactFn) {
+          const impactMax = monthImpactFn(value, myNorm);
+          if (impactMax > 0) {
+            const impactMin = Math.round(impactMax * 0.6);
+            action = \`≈ \${fmtR(impactMin)}–\${fmtR(impactMax)}/мес, если вернётесь к своей норме\`;
+          }
+        }
+      }
+    } else if (bm.haveNet && netP50 && netP50 > 0) {
+      // Fallback: нет своей нормы, сравниваем с сетью
+      const diffPct = (value - netP50) / netP50 * 100;
+      const better = higherIsBetter ? diffPct > 0 : diffPct < 0;
+      const magnitude = Math.abs(diffPct);
+
+      if (better) {
+        tone = 'green';
+        headline = \`\${name} \${fmt(value)} — выше медианы сети на \${fmtN(magnitude,1)}%\`;
+        body = \`Медиана сети \${fmt(netP50)}\${unit||''} за такие же дни недели.\`;
+        if (netP75 && (higherIsBetter ? value < netP75 : value > netP75)) {
+          const gap = higherIsBetter ? netP75 - value : value - netP75;
+          body += \` До топ-25% сети: \${fmt(Math.abs(gap))}\${unit||''}.\`;
+        }
+      } else {
+        tone = magnitude > 15 ? 'red' : 'amber';
+        headline = \`\${name} \${fmt(value)} — ниже медианы сети на \${fmtN(magnitude,1)}%\`;
+        body = \`Медиана сети \${fmt(netP50)}\${unit||''} за такие же дни недели.\`;
+        if (monthImpactFn) {
+          const impactMax = monthImpactFn(value, netP50);
+          if (impactMax > 0) {
+            const impactMin = Math.round(impactMax * 0.6);
+            action = \`≈ \${fmtR(impactMin)}–\${fmtR(impactMax)}/мес, если догоните медиану сети\`;
+          }
+        }
+      }
+    } else {
+      return null; // нет данных для сравнения
+    }
+
+    return { t:tone, i:icon, h:headline, b:body, a:action };
   }
-  const ts=getGlobalTs();
-  if(!ts.length) return;
-  const rev=safeAvg(ts,'revenue')||0,chk=safeAvg(ts,'avgCheck')||0,cnt=safeAvg(ts,'checks')||0;
-  const fc=safeAvg(ts,'foodcost'),disc=safeAvg(ts,'discount')||0;
-  const net_rev=rev*(1-disc/100);
-  const del=safeAvg(ts,'delivery')||0,dp=rev>0?del/rev*100:0;
-  const fcV=fc!==null?fc:NET.foodcost;
-  const ins=[];
-  if(disc>NET.discount*1.3){const lost=rev*(disc-NET.discount)/100;ins.push({t:'red',i:'🏷️',h:\`Скидки \${fmtN(disc,1)}% — выше нормы\`,b:\`Потери \${fmtR(lost)}/день. Норма сети \${NET.discount}%.\`,a:\`+\${fmtR(lost*26)}/мес\`});}
-  else ins.push({t:'green',i:'🏷️',h:\`Скидки \${fmtN(disc,1)}% — в норме\`,b:\`Ниже среднего по сети (\${NET.discount}%).\`,a:null});
-  if(TOP10.avgCheck-chk>150){const p=(TOP10.avgCheck-chk)*cnt;ins.push({t:'amber',i:'🧾',h:\`Чек \${fmtR(chk)} — потенциал +\${fmtR(TOP10.avgCheck-chk)}\`,b:\`Лидеры держат \${fmtR(TOP10.avgCheck)}.\`,a:\`+\${fmtR(p*26)}/мес\`});}
-  else ins.push({t:'green',i:'🧾',h:\`Чек \${fmtR(chk)} — выше среднего\`,b:\`Поддерживайте через допродажи.\`,a:null});
-  if(dp<NET.deliveryPct-5){const p=(NET.deliveryPct/100*rev)-del;ins.push({t:'amber',i:'🛵',h:\`Доставка \${fmtN(dp,1)}% — ниже потенциала\`,b:\`Сеть в среднем \${NET.deliveryPct}%.\`,a:\`+\${fmtR(p*26)}/мес\`});}
-  else ins.push({t:'green',i:'🛵',h:\`Доставка \${fmtN(dp,1)}% — в норме\`,b:\`На уровне сети.\`,a:null});
-if(fcV>22){const loss=net_rev*(fcV-22)/100;const now=new Date();const dim=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();ins.push({t:fcV>26?'red':'amber',i:'🥩',h:\`Фудкост \${fmtN(fcV)}% — выше нормы\`,b:\`Норма до 22%. Потери: \${fmtR(loss)}/день.\`,a:\`+\${fmtR(Math.round(loss*dim))}/мес (прогноз на \${dim} дней)\`});}
-  const byDow={};
-  ts.forEach(t=>{const d=getDOW(t.date);if(!byDow[d])byDow[d]=[];byDow[d].push(t.revenue)});
-  const dowAvgs=Object.entries(byDow).map(([d,v])=>({d:+d,avg:avgArr(v)})).sort((a,b)=>b.avg-a.avg);
-  if(dowAvgs.length>=2){const best=dowAvgs[0],worst=dowAvgs[dowAvgs.length-1];ins.push({t:'blue',i:'📅',h:\`\${DOW_NAMES[best.d]} — лучший день (\${fmtR(best.avg)})\`,b:\`Разрыв с \${DOW_NAMES[worst.d]} (\${fmtR(worst.avg)}) — ×\${(best.avg/worst.avg).toFixed(1)}.\`,a:null});}
-  document.getElementById('insBox').innerHTML=ins.slice(0,6).map(i=>\`<div class="ins-card \${i.t}"><div class="ins-t">\${i.i} \${i.h}</div><div class="ins-b">\${i.b}</div>\${i.a?\`<div class="ins-a">💡 \${i.a}</div>\`:''}</div>\`).join('');
+
+  // Выручка
+  ins.push(buildCard({
+    icon:'💰', name:'Выручка', value:cur.revenue,
+    myNorm:bm.my.rev, netP50:bm.net_p50.rev, netP75:bm.net_p75.rev,
+    higherIsBetter:true, unit:'', fmt:v=>fmtR(v),
+    monthImpactFn: (val, target) => Math.round((target-val)*daysInMonth)
+  }));
+
+  // Средний чек
+  ins.push(buildCard({
+    icon:'🧾', name:'Средний чек', value:cur.avgCheck,
+    myNorm:bm.my.chk, netP50:bm.net_p50.chk, netP75:bm.net_p75.chk,
+    higherIsBetter:true, unit:'', fmt:v=>fmtR(v,true),
+    monthImpactFn: (val, target) => Math.round((target-val)*cur.checks*daysInMonth)
+  }));
+
+  // Foodcost
+  if (cur.foodcost !== null) {
+    ins.push(buildCard({
+      icon:'🥩', name:'Фудкост', value:cur.foodcost,
+      myNorm:bm.my.fc, netP50:bm.net_p50.fc, netP75:bm.net_p75.fc,
+      higherIsBetter:false, unit:'%', fmt:v=>fmtN(v,1),
+      monthImpactFn: (val, target) => {
+        // Снижение фудкоста с val до target экономит (val-target)% от выручки
+        const net_rub = cur.revenue * (1 - cur.discount/100);
+        return Math.round(net_rub * (val-target)/100 * daysInMonth);
+      }
+    }));
+  }
+
+  // Скидки
+  ins.push(buildCard({
+    icon:'🏷️', name:'Скидки', value:cur.discount,
+    myNorm:bm.my.disc, netP50:bm.net_p50.disc, netP75:bm.net_p75.disc,
+    higherIsBetter:false, unit:'%', fmt:v=>fmtN(v,1),
+    monthImpactFn: (val, target) => Math.round(cur.revenue*(val-target)/100*daysInMonth)
+  }));
+
+  // Доставка — показываем только если у ресторана есть доставка (>1%)
+  if (dp > 1) {
+    ins.push(buildCard({
+      icon:'🛵', name:'Доставка', value:dp,
+      myNorm:bm.my.del, netP50:bm.net_p50.del, netP75:bm.net_p75.del,
+      higherIsBetter:true, unit:'%', fmt:v=>fmtN(v,1),
+      monthImpactFn: (val, target) => Math.round(cur.revenue*(target-val)/100*daysInMonth)
+    }));
+  }
+
+  // DOW-анализ: показываем только если период ≥ 14 дней и каждый день ≥ 2 точек
+  if (daysN >= 14) {
+    const byDow = {};
+    ts.forEach(t => {
+      const d = getDOW(t.date);
+      if (!byDow[d]) byDow[d] = [];
+      byDow[d].push(t.revenue);
+    });
+    const dowEntries = Object.entries(byDow)
+      .map(([d,v]) => ({d:+d, avg:avgArr(v), n:v.length}))
+      .filter(x => x.n >= 2)
+      .sort((a,b) => b.avg - a.avg);
+    if (dowEntries.length >= 2) {
+      const best = dowEntries[0], worst = dowEntries[dowEntries.length-1];
+      if (best.d !== worst.d && best.avg > worst.avg * 1.15) {
+        ins.push({ t:'blue', i:'📅',
+          h:\`\${DOW_NAMES[best.d]} — лучший день (\${fmtR(best.avg)})\`,
+          b:\`Разрыв с \${DOW_NAMES[worst.d]} (\${fmtR(worst.avg)}) — ×\${(best.avg/worst.avg).toFixed(1)}. За \${daysN} дней.\`,
+          a:null });
+      }
+    }
+  }
+
+  // Рендер: фильтруем null карточки, сортируем (red → amber → green → blue), берём до 6
+  const validIns = ins.filter(x => x);
+  const order = { red:0, amber:1, green:2, blue:3 };
+  validIns.sort((a,b) => (order[a.t]||9) - (order[b.t]||9));
+  box.innerHTML = validIns.slice(0,6).map(i =>
+    \`<div class="ins-card \${i.t}"><div class="ins-t">\${i.i} \${i.h}</div><div class="ins-b">\${i.b}</div>\${i.a?\`<div class="ins-a">💡 \${i.a}</div>\`:''}</div>\`
+  ).join('');
 }
 
 // ═══ DYNAMICS ═══
