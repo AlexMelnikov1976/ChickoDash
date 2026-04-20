@@ -806,7 +806,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 </div><!-- /main -->
 
 <script>
-// ═══ API CONFIG v5.0 (JWT via /api/query) ═══
+// ═══ API CONFIG v6.0 (Phase 2.3: no /api/query, only whitelisted endpoints) ═══
 const API_BASE = location.origin;
 const JWT_KEY = 'chicko_jwt';
 
@@ -823,25 +823,36 @@ function hideLogin() {
   if (scr) scr.classList.add('hidden');
 }
 
-async function fetchCK(sql) {
+// Низкоуровневый GET с JWT и 401-handling. Используется всеми API-хелперами.
+async function apiGet(path) {
   const jwt = getJWT();
   if (!jwt) { showLogin(); throw new Error('Not authenticated'); }
-  const r = await fetch(API_BASE + '/api/query', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + jwt
-    },
-    body: JSON.stringify({ query: sql })
+  const r = await fetch(API_BASE + path, {
+    headers: { 'Authorization': 'Bearer ' + jwt }
   });
   if (r.status === 401) {
-    clearJWT();
-    showLogin();
+    clearJWT(); showLogin();
     throw new Error('Session expired');
   }
   const j = await r.json();
-  if (j.error) throw new Error(j.message || j.error);
+  if (!r.ok || j.error) throw new Error(j.message || j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+// GET /api/restaurants?full_history=0|1 — список ресторанов + ts
+async function apiRestaurants(fullHistory) {
+  const j = await apiGet('/api/restaurants?full_history=' + (fullHistory ? '1' : '0'));
   return j.data || [];
+}
+
+// GET /api/benchmarks?start=...&end=... — медианы сети и топ-10% за период
+async function apiBenchmarks(startDate, endDate) {
+  return await apiGet('/api/benchmarks?start=' + encodeURIComponent(startDate) + '&end=' + encodeURIComponent(endDate));
+}
+
+// GET /api/restaurant-meta?restaurant_id=N — score и рекомендации по точке
+async function apiRestaurantMeta(restId) {
+  return await apiGet('/api/restaurant-meta?restaurant_id=' + restId);
 }
 
 // ═══ Login form handler ═══
@@ -1033,7 +1044,7 @@ async function init() {
   showLoader('Подключение к данным...');
   try {
     showLoader('Загрузка истории с 2024 года...');
-    const rows = await fetchCK(\`SELECT dept_id, restaurant_name, city, toString(report_date) AS report_date_str, revenue_total_rub, revenue_bar_rub, revenue_kitchen_rub, revenue_delivery_rub, avg_check_total_rub, checks_total, foodcost_total_pct, discount_total_pct, delivery_share_pct, is_anomaly_day FROM chicko.mart_restaurant_daily_base WHERE report_date >= today() - 90 AND revenue_total_rub > 0 ORDER BY restaurant_name, report_date\`);
+    const rows = await apiRestaurants(false);
     const restMap = {};
     for (const row of rows) {
       const id = row.dept_id;
@@ -1083,7 +1094,7 @@ async function loadFullHistory(silent=false) {
   if (btn) { btn.textContent = '⏳ Загрузка...'; btn.disabled = true; }
   try {
     if(!silent) showLoader('Загрузка истории с 2024 года...');
-    const rows = await fetchCK(\`SELECT dept_id, restaurant_name, city, toString(report_date) AS report_date_str, revenue_total_rub, revenue_bar_rub, revenue_kitchen_rub, revenue_delivery_rub, avg_check_total_rub, checks_total, foodcost_total_pct, discount_total_pct, delivery_share_pct, is_anomaly_day FROM chicko.mart_restaurant_daily_base WHERE report_date >= '2024-01-01' AND revenue_total_rub > 0 ORDER BY restaurant_name, report_date\`);
+    const rows = await apiRestaurants(true);
     const restMap = {};
     for (const row of rows) {
       const id = row.dept_id;
@@ -1134,12 +1145,9 @@ async function selectRest(idx) {
   }
   if (R && R.id) {
     try {
-      const [scoreData, recsData] = await Promise.all([
-        fetchCK(\`SELECT score_total, risk_level, rank_network, restaurants_in_rank, score_revenue, score_traffic, score_avg_check, score_foodcost, score_discount, score_delivery, score_margin FROM chicko.mart_restaurant_scores WHERE restaurant_id=\${R.id} AND score_window='7d' ORDER BY dt DESC LIMIT 1\`),
-        fetchCK(\`SELECT recommendation_code, title, description, estimated_effect_rub, confidence, impact_type, category FROM chicko.mart_recommendations WHERE restaurant_id=\${R.id} AND dt=(SELECT max(dt) FROM chicko.mart_recommendations WHERE restaurant_id=\${R.id}) ORDER BY priority_score DESC LIMIT 3\`)
-      ]);
-      if (scoreData.length) RESTAURANT_SCORE = scoreData[0];
-      RESTAURANT_RECS = recsData;
+      const meta = await apiRestaurantMeta(R.id);
+      if (meta.score) RESTAURANT_SCORE = meta.score;
+      RESTAURANT_RECS = meta.recommendations || [];
       renderScore(); renderInsights();
     } catch(e) { console.warn('Score/recs:', e.message); }
   }
@@ -1228,65 +1236,35 @@ function toggleNetworkView(on) {
 
 // ═══ Сетевые бенчмарки (динамические перцентили за текущий период) ═══
 //
-// Заменяет старый запрос к mart_benchmarks_daily (который давал снимок за
-// последние 30 дней перед вчера) на расчёт медианы/перцентилей по
-// mart_restaurant_daily_base за тот же период что выбрал пользователь.
+// Phase 2.3 (2026-04-21): SQL-агрегация перенесена на сервер (/api/benchmarks).
+// Клиент передаёт только даты периода, сервер возвращает готовые NET и TOP10.
 //
-// Результат кладётся в глобальные NET и TOP10 — остальной код работает без правок.
-//
-// В TOP10 раньше лежал p90 (выручка, avgCheck) и p25 (foodcost, discount —
-// там "меньше = лучше"). Сохраняем ту же семантику, чтобы сравнения
-// "лидеры" и "среднее" продолжали работать.
+// В TOP10 сервер отдаёт p90 (выручка, avgCheck) и p25 (foodcost, discount —
+// там "меньше = лучше"), чтобы семантика "лидеры" / "среднее" сохранилась.
 async function loadNetworkBenchmarks(startDate, endDate) {
-  const sql = \`
-    SELECT
-      quantile(0.50)(revenue_total_rub)      AS rev_median,
-      quantile(0.90)(revenue_total_rub)      AS rev_p90,
-      quantile(0.50)(avg_check_total_rub)    AS chk_median,
-      quantile(0.90)(avg_check_total_rub)    AS chk_p90,
-      quantile(0.50)(checks_total)           AS cnt_median,
-      quantile(0.50)(foodcost_total_pct)     AS fc_median,
-      quantile(0.25)(foodcost_total_pct)     AS fc_p25,
-      quantile(0.50)(discount_total_pct)     AS disc_median,
-      quantile(0.25)(discount_total_pct)     AS disc_p25,
-      quantile(0.50)(delivery_share_pct)     AS del_median,
-      quantile(0.90)(delivery_share_pct)     AS del_p90,
-      count(DISTINCT dept_uuid)              AS rest_count
-    FROM chicko.mart_restaurant_daily_base
-    WHERE report_date BETWEEN '\${startDate}' AND '\${endDate}'
-      AND is_anomaly_day = 0
-      AND revenue_total_rub > 0
-  \`;
   try {
-    const rows = await fetchCK(sql);
-    if (!rows.length) {
-      console.warn('[benchmarks] пустой результат за период', startDate, endDate);
+    const r = await apiBenchmarks(startDate, endDate);
+    if (r.insufficient_data) {
+      if (r.net && r.net.restCount !== undefined) NET.restCount = r.net.restCount;
+      console.warn('[benchmarks] недостаточно ресторанов за период', startDate, endDate, '— показываем прочерки');
       return;
     }
-    const b = rows[0];
-    const restCount = +b.rest_count || 0;
-
-    // Fallback: если в расчёте меньше 3 ресторанов — данные ненадёжны,
-    // оставляем NET и TOP10 нулевыми, UI покажет прочерки вместо метрик сети.
-    if (restCount < 3) {
-      console.warn('[benchmarks] недостаточно ресторанов для сравнения:', restCount);
-      NET.restCount = restCount;
-      return;
+    if (r.net) {
+      NET.revenue     = r.net.revenue;
+      NET.avgCheck    = r.net.avgCheck;
+      NET.checks      = r.net.checks;
+      NET.foodcost    = r.net.foodcost;
+      NET.discount    = r.net.discount;
+      NET.deliveryPct = r.net.deliveryPct;
+      NET.restCount   = r.net.restCount;
     }
-
-    NET.revenue    = Math.round(+b.rev_median);
-    NET.avgCheck   = Math.round(+b.chk_median);
-    NET.checks     = Math.round(+b.cnt_median);
-    NET.foodcost   = +(+b.fc_median).toFixed(1);
-    NET.discount   = +(+b.disc_median).toFixed(1);
-    NET.deliveryPct= +(+b.del_median).toFixed(1);
-    NET.restCount  = restCount;
-
-    TOP10.revenue    = Math.round(+b.rev_p90);
-    TOP10.avgCheck   = Math.round(+b.chk_p90);
-    TOP10.foodcost   = +(+b.fc_p25).toFixed(1);
-    TOP10.discount   = +(+b.disc_p25).toFixed(1);
-    TOP10.deliveryPct= +(+b.del_p90).toFixed(1);
+    if (r.top10) {
+      TOP10.revenue     = r.top10.revenue;
+      TOP10.avgCheck    = r.top10.avgCheck;
+      TOP10.foodcost    = r.top10.foodcost;
+      TOP10.discount    = r.top10.discount;
+      TOP10.deliveryPct = r.top10.deliveryPct;
+    }
   } catch(e) {
     console.error('[benchmarks] ошибка загрузки:', e.message);
   }

@@ -1,5 +1,4 @@
 import { generateToken as generateJWT, validateToken, extractBearerToken } from './auth';
-import { ClickHouseClient } from './clickhouse';
 import {
   generateToken as generateMagicToken,
   storeToken,
@@ -11,6 +10,7 @@ import {
 import { DASHBOARD_HTML } from './dashboard';
 import { handleDowProfiles } from './dow_profiles';
 import { handleForecast } from './forecast';
+import { handleRestaurantsList, handleBenchmarks, handleRestaurantMeta } from './data_endpoints';
 
 export interface Env {
   CLICKHOUSE_HOST: string;
@@ -83,8 +83,20 @@ export default {
 
     // --- Protected API endpoints ---
 
-    if (url.pathname === '/api/query' && request.method === 'POST') {
-      return handleQuery(request, env);
+    // /api/query REMOVED in Phase 2.3 (2026-04-21).
+    // Replaced with whitelisted specific endpoints below.
+    // Any remaining client code pointing at /api/query will fail with 404.
+
+    if (url.pathname === '/api/restaurants' && request.method === 'GET') {
+      return handleRestaurantsList(request, env);
+    }
+
+    if (url.pathname === '/api/benchmarks' && request.method === 'GET') {
+      return handleBenchmarks(request, env);
+    }
+
+    if (url.pathname === '/api/restaurant-meta' && request.method === 'GET') {
+      return handleRestaurantMeta(request, env);
     }
 
     if (url.pathname === '/api/feedback' && request.method === 'POST') {
@@ -241,55 +253,6 @@ async function handleVerify(request: Request, env: Env): Promise<Response> {
     const err = error as Error;
     console.error(`[verify] error: ${err.message}`, err.stack);
     return jsonResponse({ error: 'Verification failed', message: err.message }, 500);
-  }
-}
-
-/**
- * POST /api/query
- * Requires Bearer JWT. Executes SQL without any RLS — all users see all data.
- */
-async function handleQuery(request: Request, env: Env): Promise<Response> {
-  try {
-    const authHeader = request.headers.get('Authorization');
-    const token = extractBearerToken(authHeader);
-
-    if (!token) {
-      console.log(`[query] missing Authorization header`);
-      return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, 401);
-    }
-
-    const payload = await validateToken(token, env.JWT_SECRET || 'temp-secret-key-change-in-production');
-
-    if (!payload) {
-      console.log(`[query] invalid or expired JWT`);
-      return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, 401);
-    }
-
-    const body = await request.json() as { query: string };
-
-    console.log(`[query] user=${payload.user_id} email=${payload.email} sql_length=${body.query?.length ?? 0}`);
-
-    const clickhouse = new ClickHouseClient({
-      host: env.CLICKHOUSE_HOST || 'http://localhost:8123',
-      user: env.CLICKHOUSE_USER || 'default',
-      password: env.CLICKHOUSE_PASSWORD || '',
-    });
-
-    const result = await clickhouse.query(body.query);
-
-    console.log(`[query] success user=${payload.user_id} rows=${result.rows} elapsed=${result.statistics?.elapsed ?? 'n/a'}`);
-    return jsonResponse({
-      status: 'success',
-      data: result.data,
-      rows: result.rows,
-      statistics: result.statistics,
-      user_id: payload.user_id,
-      email: payload.email,
-    });
-  } catch (error) {
-    const err = error as Error;
-    console.error(`[query] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Query execution failed', message: err.message }, 500);
   }
 }
 
