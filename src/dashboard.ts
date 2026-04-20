@@ -144,8 +144,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-
 .sbr-v{width:32px;text-align:right;color:var(--text3)}
 
 /* COMPARE SLOTS */
-.comp-area{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
-.comp-slot{min-width:170px;flex:1;max-width:220px}
+.comp-area{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+.comp-slot{min-width:0}
 .comp-lbl{font-size:9px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;font-weight:600}
 .comp-sel{width:100%;background:var(--card2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px;font-family:'Inter',sans-serif;font-size:10px;appearance:none;cursor:pointer}
 .comp-sel:focus{outline:none;border-color:var(--teal)}
@@ -545,21 +545,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 
 <!-- ══ COMPARE ══ -->
 <div class="panel" id="p-compare">
-  <div class="period-panel" style="gap:8px;margin-bottom:12px">
-    <span class="plbl">KPI за</span>
-    <div class="pbtns2" id="periodBtns">
-      <button class="pbtn2" onclick="setPeriod('day',this)">День</button>
-      <button class="pbtn2 active" onclick="setPeriod('week',this)">7 дней</button>
-      <button class="pbtn2" onclick="setPeriod('month',this)">30 дней</button>
+  <div class="prow" style="flex-wrap:wrap;gap:10px;margin-bottom:8px">
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="font-size:11px;color:var(--text3)">Группировка:</span>
     </div>
-    <div class="psep"></div>
-    <span class="plbl">vs</span>
-    <div class="pbtns2" id="compareBtns">
-      <button class="pbtn2 active" onclick="setCompareTo('prev',this)">Пред.</button>
-      <button class="pbtn2" onclick="setCompareTo('network',this)">Сеть</button>
-      <button class="pbtn2" onclick="setCompareTo('top10',this)">ТОП-10</button>
+    <div class="pgroup" id="cmpGroupBtns">
+      <button class="pbtn active" onclick="setCmpGroup('day',this)">День</button>
+      <button class="pbtn" onclick="setCmpGroup('week',this)">7д</button>
+      <button class="pbtn" onclick="setCmpGroup('month',this)">Мес</button>
+      <button class="pbtn" onclick="setCmpGroup('quarter',this)">Квар</button>
+      <button class="pbtn" onclick="setCmpGroup('year',this)">Год</button>
     </div>
-    <span class="pdesc" id="periodDesc">Среднее за 7 дней / пред. 7 дней</span>
   </div>
   <div class="prow">
     <div style="font-size:13px;font-weight:600">Сравнение точек <span style="background:rgba(212,168,75,.15);color:var(--gold);font-size:10px;padding:2px 8px;border-radius:12px;margin-left:6px">до 5 точек</span></div>
@@ -581,7 +577,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
     <div style="height:200px"><canvas id="cmpBarC"></canvas></div>
   </div>
   <div class="card" style="margin-bottom:12px">
-    <div class="ctitle">📈 Тренд выручки</div>
+    <div class="ctitle" id="cmpTrTitle">📈 Тренд выручки</div>
     <div style="height:200px"><canvas id="cmpTrC"></canvas></div>
   </div>
   <div class="card" style="margin-bottom:12px">
@@ -956,6 +952,7 @@ const S = {
   dynStart: '',    dynEnd: '',
   cmpStart: '',    cmpEnd: '',
   dynGroup: 'day',
+  cmpGroup: 'day',
   revMetric: 'revenue', dowMetric: 'revenue', dowFilter: 'all', compMetric: 'revenue',
   plChk: 0, plCnt: 0, plFc: 0, plDisc: 0,
 };
@@ -1131,7 +1128,10 @@ async function selectRest(idx) {
     const sw = document.getElementById('selWrap'); if (sw) { sw.style.opacity='1'; sw.style.pointerEvents='auto'; }
   }
   R = RESTS[parseInt(idx)];
+  S.restIdx = parseInt(idx);
   document.getElementById('mainSel').value = idx;
+  // Синхронизируем первый слот Сравнения с выбранным рестораном
+  const cs0 = document.getElementById('cs0'); if (cs0) cs0.value = idx;
   const inp = document.getElementById('selSearch');
   if (inp && R) inp.value = R.city;
   buildSelList(RESTS);
@@ -1498,6 +1498,7 @@ function fmtR(v,full) {
   return Math.round(v).toLocaleString('ru')+'₽';
 }
 function fmtN(v,d=1){return v===null||v===undefined?'—':Number(v).toFixed(d)}
+function fmtD(dateStr){if(!dateStr||dateStr.length<10)return dateStr||'';return dateStr.slice(8,10)+'.'+dateStr.slice(5,7)}
 function pctD(a,b){if(!b) return 0; return (a-b)/Math.abs(b)*100}
 function dHtml(d,lb){
   if(isNaN(d)||Math.abs(d)<0.05) return '';
@@ -2149,7 +2150,7 @@ function renderScore(){
 function renderMiniTrend(){
   // For "day" period show last 7 days for context, else use selected period
   const ts = S.analysisPeriod==='day' ? getGlobalTs().slice(-7) : getGlobalTs();
-  mkChart('miniC',{type:'line',data:{labels:ts.map(t=>t.date.slice(5)),datasets:[{data:ts.map(t=>t.revenue),borderColor:'#D4A84B',backgroundColor:'rgba(212,168,75,.07)',borderWidth:2,pointRadius:2,fill:true,tension:.3},{data:ts.map(()=>NET.revenue),borderColor:'rgba(142,170,206,.3)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false,label:'Сеть'}]},options:{...chartOpts(v=>fmtR(v)),plugins:{legend:{display:false}}}});
+  mkChart('miniC',{type:'line',data:{labels:ts.map(t=>fmtD(t.date)),datasets:[{data:ts.map(t=>t.revenue),borderColor:'#D4A84B',backgroundColor:'rgba(212,168,75,.07)',borderWidth:2,pointRadius:2,fill:true,tension:.3},{data:ts.map(()=>NET.revenue),borderColor:'rgba(142,170,206,.3)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false,label:'Сеть'}]},options:{...chartOpts(v=>fmtR(v)),plugins:{legend:{display:false}}}});
 }
 
 // ═══ DONUT ═══
@@ -2525,7 +2526,7 @@ function renderRevChart(netTs){
   const ts=getDynTs();
   const mc={revenue:'#D4A84B',kitchen:'#4A9EF5',bar:'#9B59B6',delivery:'#2ECC71'};
   const ml={revenue:'Общая',kitchen:'Кухня',bar:'Бар',delivery:'Доставка'};
-  const lbls = ts.map(t => t.label || t.date.slice(5));
+  const lbls = ts.map(t => t.label || fmtD(t.date));
   const metric = S.revMetric;
   const datasets = [{label:ml[metric],data:ts.map(t=>t[metric]||0),backgroundColor:mc[metric]+'99',borderColor:mc[metric],borderWidth:1,borderRadius:4}];
   // Линия сети — реальные данные за тот же период
@@ -2549,7 +2550,7 @@ function renderRevChart(netTs){
 }
 function renderLineChart2(id,key,color,label,netTs,yCb){
   const ts=getDynTs().filter(t=>t[key]!==null&&t[key]!==undefined);
-  const lbls = ts.map(t => t.label || t.date.slice(5));
+  const lbls = ts.map(t => t.label || fmtD(t.date));
   const ds=[{label,data:ts.map(t=>t[key]||0),borderColor:color,backgroundColor:color+'22',borderWidth:2,pointRadius:ts.length>50?0:3,pointBackgroundColor:color,fill:true,tension:.3}];
   // Линия сети — реальные данные
   if (netTs && netTs.length) {
@@ -2599,17 +2600,24 @@ function renderDowFilter(){
   const avgCnt=avgArr(filtered.map(t=>t.checks));
   document.getElementById('dowStats').innerHTML=\`<span style="color:var(--text2)">Среднее за выбранный фильтр:</span> выручка <b style="color:var(--gold)">\${fmtR(avgR)}</b> · чек <b style="color:var(--gold)">\${fmtR(avgC)}</b> · чеков <b style="color:var(--gold)">\${Math.round(avgCnt)}</b> · дней: \${filtered.length}\`;
 
-  mkChart('dowFilterC',{type:'line',data:{labels:filtered.map(t=>t.date.slice(5)+' ('+DOW_NAMES[getDOW(t.date)]+')'),datasets:[{label:'Выручка',data:filtered.map(t=>t.revenue),borderColor:'#D4A84B',backgroundColor:'rgba(212,168,75,.1)',borderWidth:2,pointRadius:4,fill:true,tension:.2}]},options:{...chartOpts(v=>fmtR(v)),plugins:{legend:{display:false}}}});
+  mkChart('dowFilterC',{type:'line',data:{labels:filtered.map(t=>fmtD(t.date)+' ('+DOW_NAMES[getDOW(t.date)]+')'),datasets:[{label:'Выручка',data:filtered.map(t=>t.revenue),borderColor:'#D4A84B',backgroundColor:'rgba(212,168,75,.1)',borderWidth:2,pointRadius:4,fill:true,tension:.2}]},options:{...chartOpts(v=>fmtR(v)),plugins:{legend:{display:false}}}});
 }
 
 function renderDynStats(){
   const ts=getDynTs();
-  const metrics=[{k:'revenue',l:'Выручка',f:fmtR},{k:'avgCheck',l:'Ср. чек',f:fmtR},{k:'checks',l:'Чеков',f:v=>Math.round(v)},{k:'foodcost',l:'Фудкост %',f:v=>v!==null?fmtN(v)+'%':'—'},{k:'discount',l:'Скидки %',f:v=>fmtN(v)+'%'}];
+  const metrics=[{k:'revenue',l:'Выручка',f:fmtR,lb:false},{k:'avgCheck',l:'Ср. чек',f:fmtR,lb:false},{k:'checks',l:'Чеков',f:v=>Math.round(v),lb:false},{k:'foodcost',l:'Фудкост %',f:v=>v!==null?fmtN(v)+'%':'—',lb:true},{k:'discount',l:'Скидки %',f:v=>fmtN(v)+'%',lb:true}];
   document.getElementById('dynStatB').innerHTML=metrics.map(m=>{
     const vals=ts.map(t=>t[m.k]).filter(v=>v!==null&&v!==undefined&&v>0);
     if(!vals.length) return '';
     const mn=Math.min(...vals),mx=Math.max(...vals),avg=avgArr(vals),last=vals[vals.length-1],prev2=vals.length>=2?vals[vals.length-2]:null;
-    const trend=prev2!==null?(last>prev2?'<span class="up">▲</span>':last<prev2?'<span class="dn">▼</span>':'<span class="nt">→</span>'):'';
+    let trend='';
+    if(prev2!==null){
+      const went_up=last>prev2, went_dn=last<prev2;
+      if(went_up||went_dn){
+        const good=m.lb?went_dn:went_up;
+        trend=\`<span class="\${good?'up':'dn'}">\${good?'▲':'▼'} \${Math.abs(((last-prev2)/prev2)*100).toFixed(1)}%</span>\`;
+      } else { trend='<span class="nt">→</span>'; }
+    }
     return \`<tr><td class="c-m">\${m.l}</td><td>\${m.f(mn)}</td><td>\${m.f(mx)}</td><td>\${m.f(avg)}</td><td class="c-s">\${m.f(last)}</td><td>\${trend}</td></tr>\`;
   }).join('');
 }
@@ -2623,7 +2631,7 @@ function buildCompSlots(){
       <div class="comp-lbl" style="color:\${lblColors[i]}">Точка \${i+1}</div>
       <select class="comp-sel" id="cs\${i}" onchange="renderCompare()">
         \${i===0?'':'<option value="">— не выбрана —</option>'}
-        \${RESTS.map((r,j)=>\`<option value="\${j}" \${i===0&&j===0?'selected':''}>\${r.city}</option>\`).join('')}
+        \${RESTS.map((r,j)=>\`<option value="\${j}" \${i===0&&j===S.restIdx?'selected':''}>\${r.city}</option>\`).join('')}
       </select>
     </div>\`).join('');
 }
@@ -2634,7 +2642,7 @@ function getCompRests(){
     return RESTS[parseInt(el.value)];
   }).filter(Boolean);
 }
-function getCmpTs(r){return getTsRange(r,S.cmpStart,S.cmpEnd)}
+function getCmpTs(r){return groupTs(getTsRange(r,S.cmpStart,S.cmpEnd), S.cmpGroup)}
 function getCompMetVal(r2,m){
   const ts=getCmpTs(r2);
   if(!ts.length) return 0;
@@ -2642,27 +2650,40 @@ function getCompMetVal(r2,m){
   return safeAvg(ts,m)||0;
 }
 
+function setCmpGroup(mode,btn){S.cmpGroup=mode;document.querySelectorAll('#cmpGroupBtns .pbtn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderCompare()}
 function setCmpM(m,btn){S.compMetric=m;document.querySelectorAll('#compMBtns .mtbtn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderCompare()}
 function renderCompare(){
   const comps=getCompRests();
   if(!comps.length) return;
+  const groupLabels={day:'дням',week:'неделям',month:'месяцам',quarter:'кварталам',year:'годам'};
+  const trTitle=document.getElementById('cmpTrTitle');
+  if(trTitle) trTitle.innerHTML='📈 Тренд выручки по '+(groupLabels[S.cmpGroup]||'дням');
   const isRub=['revenue','avgCheck'].includes(S.compMetric);
   const netVals={revenue:NET.revenue,avgCheck:NET.avgCheck,checks:NET.checks,foodcost:NET.foodcost,discount:NET.discount,delivPct:NET.deliveryPct};
 
   mkChart('cmpBarC',{type:'bar',data:{
     labels:comps.map(r2=>r2.city),
     datasets:[
-      ...comps.map((r2,i)=>({label:r2.city,data:[getCompMetVal(r2,S.compMetric)],backgroundColor:COMP_COLORS[i]+'99',borderColor:COMP_COLORS[i],borderWidth:1,borderRadius:4})),
+      {data:comps.map(r2=>getCompMetVal(r2,S.compMetric)),backgroundColor:comps.map((_,i)=>COMP_COLORS[i]+'99'),borderColor:comps.map((_,i)=>COMP_COLORS[i]),borderWidth:1,borderRadius:4},
       {label:'Сеть',data:comps.map(()=>netVals[S.compMetric]),type:'line',borderColor:'rgba(142,170,206,.4)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false}
     ]
-  },options:chartOpts(v=>isRub?fmtR(v):v)});
+  },options:{...chartOpts(v=>isRub?fmtR(v):v),plugins:{legend:{display:false}}}});
 
-  const baseDates=getCmpTs(comps[0]).map(t=>t.date.slice(5));
+  const baseDates=getCmpTs(comps[0]).map(t=>t.label||fmtD(t.date));
   mkChart('cmpTrC',{type:'line',data:{labels:baseDates,datasets:comps.map((r2,i)=>({label:r2.city,data:getCmpTs(r2).map(t=>t.revenue),borderColor:COMP_COLORS[i],backgroundColor:COMP_COLORS[i]+'15',borderWidth:i===0?2.5:1.5,pointRadius:i===0?3:2,fill:false,tension:.3}))},options:chartOpts(v=>fmtR(v))});
 
-  const metrics=[{k:'revenue',l:'Выручка',f:fmtR},{k:'avgCheck',l:'Ср. чек',f:fmtR},{k:'checks',l:'Чеков/день',f:v=>Math.round(v)},{k:'foodcost',l:'Фудкост %',f:v=>v!==null?fmtN(v)+'%':'—'},{k:'discount',l:'Скидки %',f:v=>fmtN(v)+'%'},{k:'delivPct',l:'Доставка %',f:v=>fmtN(v,1)+'%'}];
+  const metrics=[{k:'revenue',l:'Выручка',f:fmtR,lb:false},{k:'avgCheck',l:'Ср. чек',f:fmtR,lb:false},{k:'checks',l:'Чеков/день',f:v=>Math.round(v),lb:false},{k:'foodcost',l:'Фудкост %',f:v=>v!==null?fmtN(v)+'%':'—',lb:true},{k:'discount',l:'Скидки %',f:v=>fmtN(v)+'%',lb:true},{k:'delivPct',l:'Доставка %',f:v=>fmtN(v,1)+'%',lb:false}];
   document.getElementById('cmpTH').innerHTML=\`<tr><th>Метрика</th>\${comps.map((r2,i)=>\`<th style="color:\${COMP_COLORS[i]}">\${r2.city}</th>\`).join('')}</tr>\`;
-  document.getElementById('cmpTB').innerHTML=metrics.map(m=>\`<tr><td class="c-m">\${m.l}</td>\${comps.map((r2,i)=>\`<td style="color:\${COMP_COLORS[i]};font-weight:\${i===0?600:400}">\${m.f(getCompMetVal(r2,m.k))}</td>\`).join('')}</tr>\`).join('');
+  document.getElementById('cmpTB').innerHTML=metrics.map(m=>{
+    const vals=comps.map(r2=>getCompMetVal(r2,m.k));
+    const validVals=vals.filter(v=>v!==null&&v!==undefined&&v>0);
+    const best=validVals.length?(m.lb?Math.min(...validVals):Math.max(...validVals)):null;
+    return \`<tr><td class="c-m">\${m.l}</td>\${comps.map((r2,i)=>{
+      const v=vals[i];
+      const isLeader=best!==null&&v===best&&validVals.length>1;
+      return \`<td style="color:\${COMP_COLORS[i]};font-weight:\${i===0?600:400};\${isLeader?'background:rgba(46,204,113,.12);border-radius:4px':''}"><span>\${isLeader?'🏆 ':''}\${m.f(v)}</span></td>\`;
+    }).join('')}</tr>\`;
+  }).join('');
 
   const r=comps[0],dp=r.revenue>0?r.delivery/r.revenue*100:0;
   const rows=[{l:'Выручка/день',s:r.revenue,n:NET.revenue,t:TOP10.revenue,f:fmtR,lb:false},{l:'Ср. чек',s:r.avgCheck,n:NET.avgCheck,t:TOP10.avgCheck,f:fmtR,lb:false},{l:'Чеков/день',s:r.checks,n:NET.checks,t:null,f:v=>Math.round(v),lb:false},{l:'Фудкост %',s:r.foodcost,n:NET.foodcost,t:TOP10.foodcost,f:v=>v!==null?fmtN(v)+'%':'—',lb:true},{l:'Скидки %',s:r.discount,n:NET.discount,t:TOP10.discount,f:v=>fmtN(v,1)+'%',lb:true},{l:'Доставка %',s:dp,n:NET.deliveryPct,t:TOP10.deliveryPct,f:v=>fmtN(v,1)+'%',lb:false}];
@@ -2747,7 +2768,7 @@ function renderWDB(){
   // Chart showing WD vs WE by day
   // Chart showing revenue by day with weekday/weekend color coding
   mkChart('wdC',{type:'bar',data:{
-    labels:ts.map(t=>t.date.slice(5)+' '+DOW_NAMES[getDOW(t.date)]),
+    labels:ts.map(t=>fmtD(t.date)+' '+DOW_NAMES[getDOW(t.date)]),
     datasets:[
       {label:'Выручка',data:ts.map(t=>t.revenue),backgroundColor:ts.map(t=>isWeekend(t.date)?'rgba(212,168,75,.7)':'rgba(74,158,245,.7)'),borderColor:ts.map(t=>isWeekend(t.date)?'#D4A84B':'#4A9EF5'),borderWidth:1,borderRadius:3},
       {label:'Будни (среднее)',data:ts.map(()=>wdR),type:'line',borderColor:'rgba(74,158,245,.5)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false},
