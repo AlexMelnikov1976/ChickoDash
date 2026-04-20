@@ -404,6 +404,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
       </div>
       <select id="mainSel" style="display:none"></select>
     </div>
+    <label id="netToggle" style="display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none;flex-shrink:0">
+      <input type="checkbox" id="netCb" onchange="toggleNetworkView(this.checked)" style="accent-color:var(--gold);cursor:pointer">
+      <span style="font-size:11px;color:var(--text2);white-space:nowrap">Вся сеть</span>
+    </label>
     <!-- Global Calendar Picker -->
     <div class="cal-picker-wrap" id="globalCalWrap">
       <button class="cal-btn" id="globalCalBtn" onclick="toggleCal('global',event)">
@@ -1108,6 +1112,12 @@ async function loadFullHistory(silent=false) {
 }
 
 async function selectRest(idx) {
+  // Сбрасываем режим «Вся сеть» при выборе ресторана
+  if (NETWORK_MODE) {
+    NETWORK_MODE = false;
+    const cb = document.getElementById('netCb'); if (cb) cb.checked = false;
+    const sw = document.getElementById('selWrap'); if (sw) { sw.style.opacity='1'; sw.style.pointerEvents='auto'; }
+  }
   R = RESTS[parseInt(idx)];
   document.getElementById('mainSel').value = idx;
   const inp = document.getElementById('selSearch');
@@ -1132,6 +1142,86 @@ async function selectRest(idx) {
       renderScore(); renderInsights();
     } catch(e) { console.warn('Score/recs:', e.message); }
   }
+}
+
+// ═══ NETWORK VIEW (Вся сеть) ═══
+let NETWORK_MODE = false;
+let SAVED_R = null; // сохраняем выбранный ресторан при переключении
+
+function buildNetworkR() {
+  // Агрегируем все рестораны в виртуальный R
+  const dateMap = {};
+  for (const rest of RESTS) {
+    for (const t of rest.ts) {
+      if (!dateMap[t.date]) dateMap[t.date] = { date:t.date, revenue:0, bar:0, kitchen:0, delivery:0, checks:0, avgCheck:0, foodcost_w:0, discount_w:0, deliveryPct:0, itemsPerCheck:0 };
+      const d = dateMap[t.date];
+      d.revenue += t.revenue;
+      d.bar += t.bar||0;
+      d.kitchen += t.kitchen||0;
+      d.delivery += t.delivery||0;
+      d.checks += t.checks||0;
+      d.foodcost_w += (t.foodcost||0) * t.revenue; // взвешиваем по выручке
+      d.discount_w += (t.discount||0) * t.revenue;
+    }
+  }
+  const ts = Object.values(dateMap).map(d => ({
+    date: d.date,
+    revenue: d.revenue,
+    bar: d.bar,
+    kitchen: d.kitchen,
+    delivery: d.delivery,
+    checks: d.checks,
+    avgCheck: d.checks > 0 ? d.revenue / d.checks : 0,
+    foodcost: d.revenue > 0 ? d.foodcost_w / d.revenue : 0,
+    discount: d.revenue > 0 ? d.discount_w / d.revenue : 0,
+    deliveryPct: d.revenue > 0 ? d.delivery / d.revenue * 100 : 0,
+    itemsPerCheck: 0,
+  })).sort((a,b) => a.date.localeCompare(b.date));
+
+  const last = ts[ts.length-1] || {};
+  return {
+    id: 0,
+    name: 'Вся сеть',
+    city: RESTS.length + ' ресторанов',
+    ts,
+    revenue: last.revenue||0,
+    bar: last.bar||0,
+    kitchen: last.kitchen||0,
+    delivery: last.delivery||0,
+    avgCheck: last.avgCheck||0,
+    checks: last.checks||0,
+    foodcost: last.foodcost||0,
+    discount: last.discount||0,
+    itemsPerCheck: 0,
+  };
+}
+
+function toggleNetworkView(on) {
+  NETWORK_MODE = on;
+  const selWrap = document.getElementById('selWrap');
+  const inp = document.getElementById('selSearch');
+
+  if (on) {
+    SAVED_R = R;
+    R = buildNetworkR();
+    if (selWrap) selWrap.style.opacity = '0.35';
+    if (selWrap) selWrap.style.pointerEvents = 'none';
+    if (inp) inp.value = 'Вся сеть';
+    // Для сети используем NET_DOW, MY_DOW обнуляем
+    MY_DOW = {}; MY_DOW_DAYS = 0;
+    RESTAURANT_SCORE = null; RESTAURANT_RECS = [];
+  } else {
+    if (SAVED_R) R = SAVED_R;
+    SAVED_R = null;
+    if (selWrap) selWrap.style.opacity = '1';
+    if (selWrap) selWrap.style.pointerEvents = 'auto';
+    if (inp && R) inp.value = R.city;
+    // Перезагружаем DOW-профили для ресторана
+    if (R && R.id) {
+      loadDowProfiles(R.id).then(()=>{ try { renderAll(); } catch(e) { console.error(e); }});
+    }
+  }
+  renderAll();
 }
 
 
@@ -1351,8 +1441,6 @@ function goTab(el) {
 // ═══ FORECAST BLOCK (Phase 1.4, #71) ═══
 // Алгоритм Г: текущий месяц (≥7 дней) → прошлый год × k → fallback 90-дневные DOW
 
-let FORECAST_NET = false; // галочка «Вся сеть»
-
 function jsToChDow(jsDow) { return jsDow === 0 ? 7 : jsDow; }
 
 function medianArr(arr) {
@@ -1471,54 +1559,12 @@ function computeForecast(rest) {
   };
 }
 
-function toggleForecastNet(cb) {
-  FORECAST_NET = cb.checked;
-  renderForecast();
-}
-
 function renderForecast() {
   const box = document.getElementById('forecastBox');
-  if (!box) return;
-  if (!R && !FORECAST_NET) { box.innerHTML = ''; return; }
+  if (!box || !R) { if(box) box.innerHTML = ''; return; }
 
-  let fc;
-  let label;
-
-  if (FORECAST_NET) {
-    // Суммируем прогнозы всех ресторанов
-    let totalActual = 0, totalRemaining = 0, totalPrevMonth = 0;
-    let daysElapsed = 0, daysInMonth = 0;
-    let method = '', monthLabel = '', year = 0;
-    const allBars = [];
-
-    for (const rest of RESTS) {
-      const rf = computeForecast(rest);
-      totalActual += rf.actual;
-      totalRemaining += rf.remaining;
-      totalPrevMonth += rf.prevMonthTotal;
-      if (!daysInMonth) {
-        daysElapsed = rf.daysElapsed;
-        daysInMonth = rf.daysInMonth;
-        method = rf.method;
-        monthLabel = rf.monthLabel;
-        year = rf.year;
-      }
-      // Aggregate daily bars
-      for (let i = 0; i < rf.dailyBars.length; i++) {
-        if (!allBars[i]) allBars[i] = { day: rf.dailyBars[i].day, rev: 0, type: rf.dailyBars[i].type };
-        allBars[i].rev += rf.dailyBars[i].rev;
-      }
-    }
-    fc = {
-      actual: totalActual, remaining: totalRemaining, total: totalActual + totalRemaining,
-      daysElapsed, daysInMonth, prevMonthTotal: totalPrevMonth,
-      method, dailyBars: allBars, monthLabel, year,
-    };
-    label = \`Вся сеть (\${RESTS.length} ресторанов)\`;
-  } else {
-    fc = computeForecast(R);
-    label = R.name + ' (' + R.city + ')';
-  }
+  const fc = computeForecast(R);
+  const label = NETWORK_MODE ? \`Вся сеть (\${RESTS.length} ресторанов)\` : R.name + ' (' + R.city + ')';
 
   const pct = fc.total > 0 ? Math.round(fc.actual / fc.total * 100) : 0;
   const vsPrev = fc.prevMonthTotal > 0 ? ((fc.total - fc.prevMonthTotal) / fc.prevMonthTotal * 100) : null;
@@ -1533,10 +1579,6 @@ function renderForecast() {
         <span class="fc-lbl">Прогноз на \${fc.monthLabel}</span>
         <span class="fc-sub">\${label}</span>
       </div>
-      <label class="fc-toggle">
-        <input type="checkbox" \${FORECAST_NET ? 'checked' : ''} onchange="toggleForecastNet(this)">
-        Вся сеть
-      </label>
     </div>
     <div class="fc-row">
       <div>
