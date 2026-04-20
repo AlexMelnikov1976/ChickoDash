@@ -1381,139 +1381,74 @@ function goTab(el) {
   if(tab==='analysis') renderAnalysis();
 }
 
-// ═══ FORECAST BLOCK (Phase 1.4, #71) ═══
-// Алгоритм Г: текущий месяц (≥7 дней) → прошлый год × k → fallback 90-дневные DOW
+// ═══ FORECAST BLOCK (Phase 1.4 #71, Phase 2.2 2026-04-21) ═══
+// Алгоритм Г (текущий месяц / прошлый год × k / 90-дневный DOW fallback)
+// полностью перенесён на сервер. Клиент делает fetch и отрисовывает результат.
 
 function jsToChDow(jsDow) { return jsDow === 0 ? 7 : jsDow; }
 
-function medianArr(arr) {
-  if (!arr.length) return 0;
-  const s = [...arr].sort((a,b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2;
+// Кэш прогнозов: ключ — restaurant_id или '__network__'.
+// При смене ресторана / режима сеть — ищем в кэше; если нет — fetch.
+const FORECAST_CACHE = {};
+let FORECAST_INFLIGHT = null; // для отмены устаревших запросов
+
+async function fetchForecast(restOrNull, networkMode) {
+  const key = networkMode ? '__network__' : (restOrNull && restOrNull.id ? String(restOrNull.id) : null);
+  if (!key) return null;
+  if (FORECAST_CACHE[key]) return FORECAST_CACHE[key];
+
+  const jwt = getJWT();
+  if (!jwt) { showLogin(); return null; }
+
+  const qs = networkMode ? '?network=1' : ('?restaurant_id=' + restOrNull.id);
+  try {
+    const r = await fetch(API_BASE + '/api/forecast' + qs, {
+      headers: { 'Authorization': 'Bearer ' + jwt }
+    });
+    if (r.status === 401) { clearJWT(); showLogin(); return null; }
+    if (!r.ok) { console.error('[forecast] HTTP ' + r.status); return null; }
+    const j = await r.json();
+    FORECAST_CACHE[key] = j;
+    return j;
+  } catch (e) {
+    console.error('[forecast] error:', e.message);
+    return null;
+  }
 }
 
-function computeForecast(rest) {
-  const maxDate = new Date(MAX_DATE);
-  const year = maxDate.getFullYear();
-  const month = maxDate.getMonth(); // 0-based
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const monthPrefix = \`\${year}-\${String(month+1).padStart(2,'0')}\`;
-  const prevMonthPrefix = month === 0
-    ? \`\${year-1}-12\`
-    : \`\${year}-\${String(month).padStart(2,'0')}\`;
-  const prevYearMonthPrefix = \`\${year-1}-\${String(month+1).padStart(2,'0')}\`;
-
-  // Current month data
-  const curData = rest.ts.filter(t => t.date.startsWith(monthPrefix));
-  const curDates = new Set(curData.map(t => t.date));
-  const actualTotal = curData.reduce((s, t) => s + t.revenue, 0);
-  const daysElapsed = curData.length;
-
-  // Build DOW medians from current month
-  const curDowRevs = {};
-  for (const t of curData) {
-    const dow = jsToChDow(new Date(t.date).getDay());
-    if (!curDowRevs[dow]) curDowRevs[dow] = [];
-    curDowRevs[dow].push(t.revenue);
-  }
-  const curDowMedians = {};
-  for (const [dow, vals] of Object.entries(curDowRevs)) {
-    curDowMedians[+dow] = medianArr(vals);
-  }
-
-  // Previous year same month data + YoY coefficient
-  const prevYearData = rest.ts.filter(t => t.date.startsWith(prevYearMonthPrefix));
-  const prevYearDowRevs = {};
-  for (const t of prevYearData) {
-    const dow = jsToChDow(new Date(t.date).getDay());
-    if (!prevYearDowRevs[dow]) prevYearDowRevs[dow] = [];
-    prevYearDowRevs[dow].push(t.revenue);
-  }
-  const prevYearDowMedians = {};
-  for (const [dow, vals] of Object.entries(prevYearDowRevs)) {
-    prevYearDowMedians[+dow] = medianArr(vals);
-  }
-
-  // YoY coefficient from last complete month
-  const prevMonthData = rest.ts.filter(t => t.date.startsWith(prevMonthPrefix));
-  const prevMonthPYPrefix = month === 0
-    ? \`\${year-2}-12\`
-    : \`\${year-1}-\${String(month).padStart(2,'0')}\`;
-  const prevMonthPYData = rest.ts.filter(t => t.date.startsWith(prevMonthPYPrefix));
-  const prevMonthRev = prevMonthData.reduce((s,t) => s + t.revenue, 0);
-  const prevMonthPYRev = prevMonthPYData.reduce((s,t) => s + t.revenue, 0);
-  const yoyK = prevMonthPYRev > 0 ? prevMonthRev / prevMonthPYRev : 1;
-
-  // Determine method & build DOW estimates
-  let method = '';
-  let dowEstimates = {};
-
-  if (daysElapsed >= 7) {
-    // Вариант А: текущий месяц
-    method = 'медианы текущего месяца';
-    dowEstimates = curDowMedians;
-  } else if (prevYearData.length >= 7) {
-    // Вариант Б: прошлый год × k
-    method = \`по \${year-1} году (×\${yoyK.toFixed(2)})\`;
-    for (const [dow, med] of Object.entries(prevYearDowMedians)) {
-      dowEstimates[+dow] = med * yoyK;
-    }
-  } else {
-    // Вариант В: 90-дневные DOW (fallback)
-    method = 'DOW-профиль 90 дней';
-    for (let d = 1; d <= 7; d++) {
-      if (MY_DOW[d]) dowEstimates[d] = MY_DOW[d].rev_p50;
-      else if (NET_DOW[d]) dowEstimates[d] = NET_DOW[d].rev_p50;
-    }
-  }
-
-  // Build daily forecast array
-  const dailyBars = [];
-  let forecastRemaining = 0;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const ds = \`\${year}-\${String(month+1).padStart(2,'0')}-\${String(d).padStart(2,'0')}\`;
-    const actual = curData.find(t => t.date === ds);
-    if (actual) {
-      dailyBars.push({ day: d, rev: actual.revenue, type: 'actual' });
-    } else {
-      const dow = jsToChDow(new Date(ds).getDay());
-      const est = dowEstimates[dow] || 0;
-      forecastRemaining += est;
-      dailyBars.push({ day: d, rev: est, type: 'forecast' });
-    }
-  }
-
-  // Previous full month total (for comparison)
-  const prevMonthTotal = prevMonthData.reduce((s,t) => s + t.revenue, 0);
-
-  return {
-    actual: actualTotal,
-    remaining: forecastRemaining,
-    total: actualTotal + forecastRemaining,
-    daysElapsed,
-    daysInMonth,
-    prevMonthTotal,
-    yoyK,
-    method,
-    dailyBars,
-    monthLabel: MNAMES_FULL[month] || '',
-    year,
-  };
+function invalidateForecastCache() {
+  for (const k of Object.keys(FORECAST_CACHE)) delete FORECAST_CACHE[k];
 }
 
-function renderForecast() {
+async function renderForecast() {
   const box = document.getElementById('forecastBox');
   if (!box || !R) { if(box) box.innerHTML = ''; return; }
 
-  const fc = computeForecast(R);
+  // Skeleton пока идёт запрос (первая отрисовка).
   const label = NETWORK_MODE ? \`Вся сеть (\${RESTS.length} ресторанов)\` : R.name + ' (' + R.city + ')';
+  const haveCache = FORECAST_CACHE[NETWORK_MODE ? '__network__' : String(R.id)];
+  if (!haveCache) {
+    box.innerHTML = \`<div class="fc-block"><div class="fc-hdr"><div class="fc-hdr-left"><span class="fc-lbl">Прогноз</span><span class="fc-sub">\${label}</span></div></div><div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Расчёт прогноза…</div></div>\`;
+  }
+
+  // Capture R/NETWORK_MODE для защиты от race condition
+  const reqR = R, reqNet = NETWORK_MODE;
+  const fc = await fetchForecast(reqR, reqNet);
+
+  // Если за время запроса пользователь успел переключить ресторан — не перезатираем актуальное
+  if (reqR !== R || reqNet !== NETWORK_MODE) return;
+  if (!fc) {
+    box.innerHTML = \`<div class="fc-block" style="padding:20px;color:var(--text3);font-size:12px">Не удалось загрузить прогноз</div>\`;
+    return;
+  }
 
   const pct = fc.total > 0 ? Math.round(fc.actual / fc.total * 100) : 0;
   const vsPrev = fc.prevMonthTotal > 0 ? ((fc.total - fc.prevMonthTotal) / fc.prevMonthTotal * 100) : null;
   const maxBar = Math.max(...fc.dailyBars.map(b => b.rev), 1);
 
-  const prevMonthIdx = (new Date(MAX_DATE).getMonth() - 1 + 12) % 12;
+  // Имя предыдущего месяца — берём из maxDate, пришедшего с сервера
+  const fcMaxDate = fc.maxDate ? new Date(fc.maxDate) : new Date();
+  const prevMonthIdx = (fcMaxDate.getMonth() - 1 + 12) % 12;
   const prevMonthName = MNAMES_FULL[prevMonthIdx] || '';
 
   box.innerHTML = \`<div class="fc-block">

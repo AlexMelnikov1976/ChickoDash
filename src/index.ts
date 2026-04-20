@@ -10,6 +10,7 @@ import {
 } from './magic_link';
 import { DASHBOARD_HTML } from './dashboard';
 import { handleDowProfiles } from './dow_profiles';
+import { handleForecast } from './forecast';
 
 export interface Env {
   CLICKHOUSE_HOST: string;
@@ -92,6 +93,10 @@ export default {
 
     if (url.pathname === '/api/dow-profiles' && request.method === 'GET') {
       return handleDowProfiles(request, env);
+    }
+
+    if (url.pathname === '/api/forecast' && request.method === 'GET') {
+      return handleForecast(request, env);
     }
 
     console.log(`[404] No route for ${request.method} ${url.pathname}`);
