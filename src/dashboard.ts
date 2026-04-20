@@ -344,6 +344,28 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 .fb-cancel:hover{border-color:var(--text2);color:var(--text)}
 .fb-ok{color:var(--green);font-size:12px;text-align:center;margin-top:8px;display:none}
 
+/* FORECAST */
+.fc-block{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:12px}
+.fc-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.fc-hdr-left{display:flex;align-items:center;gap:8px}
+.fc-lbl{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;font-weight:600}
+.fc-sub{font-size:10px;color:var(--text3)}
+.fc-toggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);cursor:pointer;user-select:none}
+.fc-toggle input{accent-color:var(--gold);cursor:pointer}
+.fc-row{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px}
+.fc-big{font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:700;color:var(--gold);line-height:1}
+.fc-pair{display:flex;gap:16px;margin-top:8px}
+.fc-pair-item .fc-pair-lbl{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1px}
+.fc-pair-item .fc-pair-val{font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:700;line-height:1.2}
+.fc-side{display:flex;flex-direction:column;gap:8px}
+.fc-side-card{background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;flex:1}
+.fc-pbar{background:var(--bg2);border-radius:4px;height:5px;margin-top:5px;overflow:hidden}
+.fc-pbar-fill{height:100%;border-radius:4px;transition:width .5s ease}
+.fc-chart{display:flex;gap:1px;align-items:flex-end;height:50px}
+.fc-chart-bar{flex:1;border-radius:2px 2px 0 0;min-width:2px;transition:height .3s}
+.fc-chart-lbl{display:flex;justify-content:space-between;margin-top:3px;font-size:9px;color:var(--text3)}
+.fc-method{font-size:9px;color:var(--text3);margin-top:6px;font-style:italic}
+
 </style>
 </head>
 <body>
@@ -409,6 +431,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 <!-- ══ OVERVIEW ══ -->
 <div class="panel active" id="p-overview">
 
+  <div id="forecastBox"></div>
   <div id="alertsBox"></div>
   <div>
     <div>
@@ -1325,7 +1348,236 @@ function goTab(el) {
   if(tab==='analysis') renderAnalysis();
 }
 
+// ═══ FORECAST BLOCK (Phase 1.4, #71) ═══
+// Алгоритм Г: текущий месяц (≥7 дней) → прошлый год × k → fallback 90-дневные DOW
+
+let FORECAST_NET = false; // галочка «Вся сеть»
+
+function jsToChDow(jsDow) { return jsDow === 0 ? 7 : jsDow; }
+
+function medianArr(arr) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a,b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2;
+}
+
+function computeForecast(rest) {
+  const maxDate = new Date(MAX_DATE);
+  const year = maxDate.getFullYear();
+  const month = maxDate.getMonth(); // 0-based
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthPrefix = \`\${year}-\${String(month+1).padStart(2,'0')}\`;
+  const prevMonthPrefix = month === 0
+    ? \`\${year-1}-12\`
+    : \`\${year}-\${String(month).padStart(2,'0')}\`;
+  const prevYearMonthPrefix = \`\${year-1}-\${String(month+1).padStart(2,'0')}\`;
+
+  // Current month data
+  const curData = rest.ts.filter(t => t.date.startsWith(monthPrefix));
+  const curDates = new Set(curData.map(t => t.date));
+  const actualTotal = curData.reduce((s, t) => s + t.revenue, 0);
+  const daysElapsed = curData.length;
+
+  // Build DOW medians from current month
+  const curDowRevs = {};
+  for (const t of curData) {
+    const dow = jsToChDow(new Date(t.date).getDay());
+    if (!curDowRevs[dow]) curDowRevs[dow] = [];
+    curDowRevs[dow].push(t.revenue);
+  }
+  const curDowMedians = {};
+  for (const [dow, vals] of Object.entries(curDowRevs)) {
+    curDowMedians[+dow] = medianArr(vals);
+  }
+
+  // Previous year same month data + YoY coefficient
+  const prevYearData = rest.ts.filter(t => t.date.startsWith(prevYearMonthPrefix));
+  const prevYearDowRevs = {};
+  for (const t of prevYearData) {
+    const dow = jsToChDow(new Date(t.date).getDay());
+    if (!prevYearDowRevs[dow]) prevYearDowRevs[dow] = [];
+    prevYearDowRevs[dow].push(t.revenue);
+  }
+  const prevYearDowMedians = {};
+  for (const [dow, vals] of Object.entries(prevYearDowRevs)) {
+    prevYearDowMedians[+dow] = medianArr(vals);
+  }
+
+  // YoY coefficient from last complete month
+  const prevMonthData = rest.ts.filter(t => t.date.startsWith(prevMonthPrefix));
+  const prevMonthPYPrefix = month === 0
+    ? \`\${year-2}-12\`
+    : \`\${year-1}-\${String(month).padStart(2,'0')}\`;
+  const prevMonthPYData = rest.ts.filter(t => t.date.startsWith(prevMonthPYPrefix));
+  const prevMonthRev = prevMonthData.reduce((s,t) => s + t.revenue, 0);
+  const prevMonthPYRev = prevMonthPYData.reduce((s,t) => s + t.revenue, 0);
+  const yoyK = prevMonthPYRev > 0 ? prevMonthRev / prevMonthPYRev : 1;
+
+  // Determine method & build DOW estimates
+  let method = '';
+  let dowEstimates = {};
+
+  if (daysElapsed >= 7) {
+    // Вариант А: текущий месяц
+    method = 'медианы текущего месяца';
+    dowEstimates = curDowMedians;
+  } else if (prevYearData.length >= 7) {
+    // Вариант Б: прошлый год × k
+    method = \`по \${year-1} году (×\${yoyK.toFixed(2)})\`;
+    for (const [dow, med] of Object.entries(prevYearDowMedians)) {
+      dowEstimates[+dow] = med * yoyK;
+    }
+  } else {
+    // Вариант В: 90-дневные DOW (fallback)
+    method = 'DOW-профиль 90 дней';
+    for (let d = 1; d <= 7; d++) {
+      if (MY_DOW[d]) dowEstimates[d] = MY_DOW[d].rev_p50;
+      else if (NET_DOW[d]) dowEstimates[d] = NET_DOW[d].rev_p50;
+    }
+  }
+
+  // Build daily forecast array
+  const dailyBars = [];
+  let forecastRemaining = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ds = \`\${year}-\${String(month+1).padStart(2,'0')}-\${String(d).padStart(2,'0')}\`;
+    const actual = curData.find(t => t.date === ds);
+    if (actual) {
+      dailyBars.push({ day: d, rev: actual.revenue, type: 'actual' });
+    } else {
+      const dow = jsToChDow(new Date(ds).getDay());
+      const est = dowEstimates[dow] || 0;
+      forecastRemaining += est;
+      dailyBars.push({ day: d, rev: est, type: 'forecast' });
+    }
+  }
+
+  // Previous full month total (for comparison)
+  const prevMonthTotal = prevMonthData.reduce((s,t) => s + t.revenue, 0);
+
+  return {
+    actual: actualTotal,
+    remaining: forecastRemaining,
+    total: actualTotal + forecastRemaining,
+    daysElapsed,
+    daysInMonth,
+    prevMonthTotal,
+    yoyK,
+    method,
+    dailyBars,
+    monthLabel: MNAMES_FULL[month] || '',
+    year,
+  };
+}
+
+function toggleForecastNet(cb) {
+  FORECAST_NET = cb.checked;
+  renderForecast();
+}
+
+function renderForecast() {
+  const box = document.getElementById('forecastBox');
+  if (!box) return;
+  if (!R && !FORECAST_NET) { box.innerHTML = ''; return; }
+
+  let fc;
+  let label;
+
+  if (FORECAST_NET) {
+    // Суммируем прогнозы всех ресторанов
+    let totalActual = 0, totalRemaining = 0, totalPrevMonth = 0;
+    let daysElapsed = 0, daysInMonth = 0;
+    let method = '', monthLabel = '', year = 0;
+    const allBars = [];
+
+    for (const rest of RESTS) {
+      const rf = computeForecast(rest);
+      totalActual += rf.actual;
+      totalRemaining += rf.remaining;
+      totalPrevMonth += rf.prevMonthTotal;
+      if (!daysInMonth) {
+        daysElapsed = rf.daysElapsed;
+        daysInMonth = rf.daysInMonth;
+        method = rf.method;
+        monthLabel = rf.monthLabel;
+        year = rf.year;
+      }
+      // Aggregate daily bars
+      for (let i = 0; i < rf.dailyBars.length; i++) {
+        if (!allBars[i]) allBars[i] = { day: rf.dailyBars[i].day, rev: 0, type: rf.dailyBars[i].type };
+        allBars[i].rev += rf.dailyBars[i].rev;
+      }
+    }
+    fc = {
+      actual: totalActual, remaining: totalRemaining, total: totalActual + totalRemaining,
+      daysElapsed, daysInMonth, prevMonthTotal: totalPrevMonth,
+      method, dailyBars: allBars, monthLabel, year,
+    };
+    label = \`Вся сеть (\${RESTS.length} ресторанов)\`;
+  } else {
+    fc = computeForecast(R);
+    label = R.name + ' (' + R.city + ')';
+  }
+
+  const pct = fc.total > 0 ? Math.round(fc.actual / fc.total * 100) : 0;
+  const vsPrev = fc.prevMonthTotal > 0 ? ((fc.total - fc.prevMonthTotal) / fc.prevMonthTotal * 100) : null;
+  const maxBar = Math.max(...fc.dailyBars.map(b => b.rev), 1);
+
+  const prevMonthIdx = (new Date(MAX_DATE).getMonth() - 1 + 12) % 12;
+  const prevMonthName = MNAMES_FULL[prevMonthIdx] || '';
+
+  box.innerHTML = \`<div class="fc-block">
+    <div class="fc-hdr">
+      <div class="fc-hdr-left">
+        <span class="fc-lbl">Прогноз на \${fc.monthLabel}</span>
+        <span class="fc-sub">\${label}</span>
+      </div>
+      <label class="fc-toggle">
+        <input type="checkbox" \${FORECAST_NET ? 'checked' : ''} onchange="toggleForecastNet(this)">
+        Вся сеть
+      </label>
+    </div>
+    <div class="fc-row">
+      <div>
+        <div class="fc-big">\${fmtR(fc.total, true)}</div>
+        <div class="fc-pair">
+          <div class="fc-pair-item">
+            <div class="fc-pair-lbl">Факт (1–\${fc.daysElapsed} \${fc.monthLabel.toLowerCase().slice(0,3)})</div>
+            <div class="fc-pair-val" style="color:var(--text)">\${fmtR(fc.actual)}</div>
+          </div>
+          <div class="fc-pair-item">
+            <div class="fc-pair-lbl">Прогноз (\${fc.daysElapsed+1}–\${fc.daysInMonth} \${fc.monthLabel.toLowerCase().slice(0,3)})</div>
+            <div class="fc-pair-val" style="color:var(--text2)">\${fmtR(fc.remaining)}</div>
+          </div>
+        </div>
+      </div>
+      <div class="fc-side">
+        <div class="fc-side-card">
+          <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1px">Выполнение</div>
+          <div style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:\${pct >= 50 ? 'var(--green)' : 'var(--amber)'}">\${pct}%</div>
+          <div class="fc-pbar"><div class="fc-pbar-fill" style="width:\${Math.min(pct,100)}%;background:\${pct >= 50 ? 'var(--green)' : 'var(--amber)'}"></div></div>
+        </div>
+        <div class="fc-side-card">
+          <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1px">vs \${prevMonthName}</div>
+          \${vsPrev !== null
+            ? \`<div style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:\${vsPrev >= 0 ? 'var(--green)' : 'var(--red)'}">\${vsPrev >= 0 ? '+' : ''}\${vsPrev.toFixed(1)}%</div>
+               <div style="font-size:10px;color:var(--text3)">\${prevMonthName}: \${fmtR(fc.prevMonthTotal)}</div>\`
+            : '<div style="font-size:12px;color:var(--text3)">нет данных</div>'
+          }
+        </div>
+      </div>
+    </div>
+    <div class="fc-chart">\${fc.dailyBars.map(b =>
+      \`<div class="fc-chart-bar" style="height:\${Math.max(b.rev / maxBar * 100, 2)}%;background:\${b.type === 'actual' ? 'var(--blue)' : 'rgba(212,168,75,.35)'};border:\${b.type === 'forecast' ? '1px dashed var(--gold)' : 'none'}"></div>\`
+    ).join('')}</div>
+    <div class="fc-chart-lbl"><span>1 \${fc.monthLabel.toLowerCase().slice(0,3)}</span><span style="color:var(--text2)">← факт | прогноз →</span><span>\${fc.daysInMonth} \${fc.monthLabel.toLowerCase().slice(0,3)}</span></div>
+    <div class="fc-method">Метод: \${fc.method}</div>
+  </div>\`;
+}
+
 function renderAll() {
+  renderForecast();
   renderKPIs();
   renderMiniTrend();
   renderInsights();
