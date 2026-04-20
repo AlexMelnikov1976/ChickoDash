@@ -321,6 +321,29 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 .login-msg.error{color:var(--red)}
 .login-msg.info{color:var(--text2)}
 
+/* FEEDBACK */
+.fb-float{position:fixed;bottom:24px;right:24px;z-index:500;width:48px;height:48px;border-radius:50%;background:var(--gold);color:#000;border:none;cursor:pointer;font-size:20px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,.4);transition:transform .2s,background .2s}
+.fb-float:hover{transform:scale(1.1);background:var(--gold2)}
+.fb-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:600;display:none;align-items:center;justify-content:center}
+.fb-overlay.open{display:flex}
+.fb-modal{background:var(--card);border:1px solid var(--border2);border-radius:16px;padding:24px;width:90%;max-width:420px;box-shadow:0 12px 48px rgba(0,0,0,.6)}
+.fb-title{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:var(--gold);margin-bottom:16px}
+.fb-cats{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.fb-cat{padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text2);font-size:11px;cursor:pointer;font-family:'Inter',sans-serif;transition:all .15s}
+.fb-cat:hover{border-color:var(--gold);color:var(--gold)}
+.fb-cat.sel{background:var(--gold);color:#000;border-color:var(--gold);font-weight:600}
+.fb-text{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Inter',sans-serif;font-size:12px;padding:10px;min-height:80px;resize:vertical;margin-bottom:12px}
+.fb-text::placeholder{color:var(--text3)}
+.fb-text:focus{outline:none;border-color:var(--gold)}
+.fb-meta{font-size:10px;color:var(--text3);margin-bottom:14px}
+.fb-actions{display:flex;gap:8px;justify-content:flex-end}
+.fb-send{padding:8px 20px;background:var(--gold);color:#000;border:none;border-radius:8px;font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer}
+.fb-send:hover{background:var(--gold2)}
+.fb-send:disabled{background:var(--border2);color:var(--text3);cursor:not-allowed}
+.fb-cancel{padding:8px 16px;background:transparent;border:1px solid var(--border);color:var(--text2);border-radius:8px;font-family:'Inter',sans-serif;font-size:12px;cursor:pointer}
+.fb-cancel:hover{border-color:var(--text2);color:var(--text)}
+.fb-ok{color:var(--green);font-size:12px;text-align:center;margin-top:8px;display:none}
+
 </style>
 </head>
 <body>
@@ -2581,8 +2604,73 @@ function calcPL(){
     {label:'Прибыль',data:[Math.max(0,current.profit),Math.max(0,adjusted.profit)],backgroundColor:'#2ECC7188',borderColor:'#2ECC71',borderWidth:1},
   ]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#8AAACE',font:{size:9},boxWidth:10}}},scales:{x:{stacked:true,grid:{color:'rgba(46,64,104,.4)'},ticks:{color:'#4E6A90',font:{size:9},callback:v=>fmtR(v)}},y:{stacked:true,grid:{color:'rgba(46,64,104,.4)'},ticks:{color:'#4E6A90',font:{size:9}}}}}});
 }
+
+// ═══ FEEDBACK WIDGET ═══
+function fbGetEmail(){
+  try{const jwt=getJWT();if(!jwt)return'';const p=JSON.parse(atob(jwt.split('.')[1]));return p.email||'';}catch{return'';}
+}
+let fbCat='';
+function fbOpen(){
+  document.getElementById('fbOverlay').classList.add('open');
+  document.getElementById('fbText').value='';
+  document.getElementById('fbOk').style.display='none';
+  document.getElementById('fbSend').disabled=false;
+  fbCat='';
+  document.querySelectorAll('.fb-cat').forEach(b=>b.classList.remove('sel'));
+  const rest=R?R.name:'—';
+  document.getElementById('fbMeta').textContent='Ресторан: '+rest+' · '+fbGetEmail();
+}
+function fbClose(){document.getElementById('fbOverlay').classList.remove('open');}
+function fbPickCat(el,cat){
+  fbCat=cat;
+  document.querySelectorAll('.fb-cat').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+}
+async function fbSend(){
+  const text=document.getElementById('fbText').value.trim();
+  if(!fbCat||!text){alert('Выберите категорию и напишите текст');return;}
+  const btn=document.getElementById('fbSend');
+  btn.disabled=true;btn.textContent='Отправка…';
+  try{
+    const jwt=getJWT();
+    const r=await fetch(API_BASE+'/api/feedback',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+jwt},
+      body:JSON.stringify({category:fbCat,text:text,restaurant:R?R.name:'—'})
+    });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    document.getElementById('fbOk').style.display='block';
+    document.getElementById('fbOk').textContent='✓ Спасибо! Обратная связь отправлена.';
+    setTimeout(fbClose,1800);
+  }catch(e){
+    alert('Ошибка отправки: '+e.message);
+    btn.disabled=false;btn.textContent='Отправить';
+  }
+}
+
 init();
 </script>
+
+<!-- Feedback widget -->
+<button class="fb-float" onclick="fbOpen()" title="Обратная связь">💬</button>
+<div class="fb-overlay" id="fbOverlay" onclick="if(event.target===this)fbClose()">
+  <div class="fb-modal">
+    <div class="fb-title">Обратная связь</div>
+    <div class="fb-cats">
+      <button class="fb-cat" onclick="fbPickCat(this,'Баг')">🐛 Баг</button>
+      <button class="fb-cat" onclick="fbPickCat(this,'Идея')">💡 Идея</button>
+      <button class="fb-cat" onclick="fbPickCat(this,'Данные неверны')">📊 Данные неверны</button>
+      <button class="fb-cat" onclick="fbPickCat(this,'Непонятно')">❓ Непонятно</button>
+    </div>
+    <textarea class="fb-text" id="fbText" placeholder="Опишите подробно…"></textarea>
+    <div class="fb-meta" id="fbMeta"></div>
+    <div class="fb-actions">
+      <button class="fb-cancel" onclick="fbClose()">Отмена</button>
+      <button class="fb-send" id="fbSend" onclick="fbSend()">Отправить</button>
+    </div>
+    <div class="fb-ok" id="fbOk"></div>
+  </div>
+</div>
 </body>
 </html>
 `;

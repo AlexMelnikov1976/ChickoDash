@@ -18,6 +18,7 @@ export interface Env {
   RESEND_API_KEY: string;
   USERS: KVNamespace;
   MAGIC_LINKS: KVNamespace;
+  FEEDBACK_WEBHOOK?: string; // n8n webhook URL for feedback → Notion + Telegram
 }
 
 const CORS_HEADERS = {
@@ -82,6 +83,10 @@ export default {
 
     if (url.pathname === '/api/query' && request.method === 'POST') {
       return handleQuery(request, env);
+    }
+
+    if (url.pathname === '/api/feedback' && request.method === 'POST') {
+      return handleFeedback(request, env, ctx);
     }
 
     console.log(`[404] No route for ${request.method} ${url.pathname}`);
@@ -275,6 +280,65 @@ async function handleQuery(request: Request, env: Env): Promise<Response> {
     const err = error as Error;
     console.error(`[query] error: ${err.message}`, err.stack);
     return jsonResponse({ error: 'Query execution failed', message: err.message }, 500);
+  }
+}
+
+/**
+ * POST /api/feedback
+ * Requires Bearer JWT.
+ * Body: { category: string, text: string, restaurant: string }
+ * Forwards feedback to n8n webhook → Notion + Telegram.
+ * Returns 200 immediately, webhook fires in background (waitUntil).
+ */
+async function handleFeedback(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  try {
+    const authHeader = request.headers.get('Authorization');
+    const token = extractBearerToken(authHeader);
+
+    if (!token) {
+      return jsonResponse({ error: 'Unauthorized' }, 401);
+    }
+
+    const payload = await validateToken(token, env.JWT_SECRET || 'temp-secret-key-change-in-production');
+    if (!payload) {
+      return jsonResponse({ error: 'Unauthorized' }, 401);
+    }
+
+    const body = await request.json() as { category: string; text: string; restaurant: string };
+
+    if (!body.category || !body.text?.trim()) {
+      return jsonResponse({ error: 'Category and text required' }, 400);
+    }
+
+    const feedbackPayload = {
+      category: body.category,
+      text: body.text.trim(),
+      restaurant: body.restaurant || '—',
+      email: payload.email,
+      user_id: payload.user_id,
+      timestamp: new Date().toISOString(),
+    };
+
+    console.log(`[feedback] from=${payload.email} cat=${body.category} rest=${body.restaurant}`);
+
+    // Fire-and-forget: forward to n8n webhook in background
+    if (env.FEEDBACK_WEBHOOK) {
+      ctx.waitUntil(
+        fetch(env.FEEDBACK_WEBHOOK, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(feedbackPayload),
+        }).catch(err => console.error(`[feedback] webhook error: ${err.message}`))
+      );
+    } else {
+      console.warn(`[feedback] FEEDBACK_WEBHOOK not set, feedback not forwarded`);
+    }
+
+    return jsonResponse({ success: true });
+  } catch (error) {
+    const err = error as Error;
+    console.error(`[feedback] error: ${err.message}`, err.stack);
+    return jsonResponse({ error: 'Feedback failed' }, 500);
   }
 }
 
