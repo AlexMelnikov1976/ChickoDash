@@ -2632,18 +2632,38 @@ function getDynTsRaw(){
   return getTsRange(R, S.dynStart, S.dynEnd);
 }
 
+function getNetGroupedTs(){
+  // Build real network ts grouped the same way as current view
+  // Normalized to per-restaurant average (for fair comparison with single restaurant)
+  if (NETWORK_MODE) return null; // уже смотрим сеть — линия сети не нужна
+  const netR = buildNetworkR();
+  const netRaw = getTsRange(netR, S.dynStart, S.dynEnd);
+  const grouped = groupTs(netRaw, S.dynGroup);
+  const nRest = RESTS.length || 1;
+  // Для суммируемых метрик делим на кол-во ресторанов, для % оставляем как есть
+  return grouped.map(t => ({
+    ...t,
+    revenue: t.revenue / nRest,
+    bar: t.bar / nRest,
+    kitchen: t.kitchen / nRest,
+    delivery: t.delivery / nRest,
+    checks: t.checks / nRest,
+    // avgCheck, foodcost, discount — уже средние, не делим
+  }));
+}
+
 function renderDynamics(){
-  const gMul = S.dynGroup==='day'?1: S.dynGroup==='week'?7: S.dynGroup==='month'?26: S.dynGroup==='quarter'?78: 312;
-  renderRevChart();
-  renderLineChart2('chkC','avgCheck','#4A9EF5','Средний чек',false,null,v=>fmtR(v));
-  renderLineChart2('cntC','checks','#9B59B6','Чеков',true,NET.checks*gMul,null);
-  renderLineChart2('fcC','foodcost','#F39C12','Фудкост %',true,NET.foodcost,null);
-  renderLineChart2('discC','discount','#E74C3C','Скидки %',true,NET.discount,null);
+  const netTs = getNetGroupedTs();
+  renderRevChart(netTs);
+  renderLineChart2('chkC','avgCheck','#4A9EF5','Средний чек',netTs,v=>fmtR(v));
+  renderLineChart2('cntC','checks','#9B59B6','Чеков',netTs,null);
+  renderLineChart2('fcC','foodcost','#F39C12','Фудкост %',netTs,null);
+  renderLineChart2('discC','discount','#E74C3C','Скидки %',netTs,null);
   renderDOW();
   renderDowFilter();
   renderDynStats();
 }
-function renderRevChart(){
+function renderRevChart(netTs){
   const groupLabels={day:'дням',week:'неделям',month:'месяцам',quarter:'кварталам',year:'годам'};
   const ttl=document.getElementById('revChartTitle');
   if(ttl) ttl.innerHTML='💰 Выручка по '+(groupLabels[S.dynGroup]||'дням');
@@ -2651,14 +2671,37 @@ function renderRevChart(){
   const mc={revenue:'#D4A84B',kitchen:'#4A9EF5',bar:'#9B59B6',delivery:'#2ECC71'};
   const ml={revenue:'Общая',kitchen:'Кухня',bar:'Бар',delivery:'Доставка'};
   const lbls = ts.map(t => t.label || t.date.slice(5));
-  const gMul = S.dynGroup==='day'?1: S.dynGroup==='week'?7: S.dynGroup==='month'?26: S.dynGroup==='quarter'?78: 312;
-  mkChart('revC',{type:'bar',data:{labels:lbls,datasets:[{label:ml[S.revMetric],data:ts.map(t=>t[S.revMetric]||0),backgroundColor:mc[S.revMetric]+'99',borderColor:mc[S.revMetric],borderWidth:1,borderRadius:4},{label:'Сеть',data:ts.map(()=>NET.revenue*gMul),type:'line',borderColor:'rgba(142,170,206,.4)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false}]},options:chartOpts(v=>fmtR(v))});
+  const metric = S.revMetric;
+  const datasets = [{label:ml[metric],data:ts.map(t=>t[metric]||0),backgroundColor:mc[metric]+'99',borderColor:mc[metric],borderWidth:1,borderRadius:4}];
+  // Линия сети — реальные данные за тот же период
+  if (netTs && netTs.length) {
+    const netMap = {};
+    netTs.forEach(t => { netMap[t.date] = t; });
+    datasets.push({label:'Сеть',data:ts.map(t=> { const n=netMap[t.date]; return n ? (n[metric]||0) : 0; }),type:'line',borderColor:'rgba(142,170,206,.5)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false});
+  }
+  const opts = chartOpts(v=>fmtR(v));
+  // Tooltip: доля от выручки для Кухня/Бар/Доставка
+  if (metric !== 'revenue') {
+    opts.plugins.tooltip = {callbacks:{label:function(ctx){
+      const val = ctx.raw || 0;
+      const idx = ctx.dataIndex;
+      const total = ts[idx] ? ts[idx].revenue : 0;
+      const pct = total > 0 ? (val/total*100).toFixed(1) : '0';
+      return ctx.dataset.label+': '+fmtR(val)+' ('+pct+'% выручки)';
+    }}};
+  }
+  mkChart('revC',{type:'bar',data:{labels:lbls,datasets},options:opts});
 }
-function renderLineChart2(id,key,color,label,showNet,netVal,yCb){
+function renderLineChart2(id,key,color,label,netTs,yCb){
   const ts=getDynTs().filter(t=>t[key]!==null&&t[key]!==undefined);
   const lbls = ts.map(t => t.label || t.date.slice(5));
   const ds=[{label,data:ts.map(t=>t[key]||0),borderColor:color,backgroundColor:color+'22',borderWidth:2,pointRadius:ts.length>50?0:3,pointBackgroundColor:color,fill:true,tension:.3}];
-  if(showNet&&netVal!==null) ds.push({label:'Сеть',data:ts.map(()=>netVal),borderColor:'rgba(142,170,206,.4)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false});
+  // Линия сети — реальные данные
+  if (netTs && netTs.length) {
+    const netMap = {};
+    netTs.forEach(t => { netMap[t.date] = t; });
+    ds.push({label:'Сеть',data:ts.map(t=> { const n=netMap[t.date]; return n ? (n[key]||0) : 0; }),borderColor:'rgba(142,170,206,.5)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false});
+  }
   mkChart(id,{type:'line',data:{labels:lbls,datasets:ds},options:chartOpts(yCb||null)});
 }
 
