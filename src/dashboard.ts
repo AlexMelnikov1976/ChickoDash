@@ -1625,9 +1625,9 @@ function renderAll() {
   renderMiniTrend();
   renderInsights();
   renderAlerts();
-  // renderScore, renderDonut, renderGauge, renderRankBars — отключены
-  // после разгрузки первого экрана. Функции сохранены в коде для
-  // возможного возврата на другие вкладки в будущем.
+  // Пересчитываем все вкладки при смене ресторана / «Вся сеть»
+  if (typeof renderDynamics === 'function') try { renderDynamics(); } catch(e) { console.warn('[renderAll] dynamics:', e.message); }
+  if (typeof renderCompare === 'function') try { renderCompare(); } catch(e) { console.warn('[renderAll] compare:', e.message); }
 }
 
 // ═══ UTILS ═══
