@@ -9,6 +9,7 @@ import {
   sendMagicLinkEmail,
 } from './magic_link';
 import { DASHBOARD_HTML } from './dashboard';
+import { handleDowProfiles } from './dow_profiles';
 
 export interface Env {
   CLICKHOUSE_HOST: string;
@@ -87,6 +88,10 @@ export default {
 
     if (url.pathname === '/api/feedback' && request.method === 'POST') {
       return handleFeedback(request, env, ctx);
+    }
+
+    if (url.pathname === '/api/dow-profiles' && request.method === 'GET') {
+      return handleDowProfiles(request, env);
     }
 
     console.log(`[404] No route for ${request.method} ${url.pathname}`);
