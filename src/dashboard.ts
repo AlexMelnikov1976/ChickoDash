@@ -1406,8 +1406,8 @@ function renderCal(key){
     html+=renderDayGrid(key);
     html+=\`<div class="cal-presets" style="margin-top:8px">
       <button class="cal-preset" onclick="calPreset('\${key}','last7',event)">7 дней</button>
-      <button class="cal-preset" onclick="calPreset('\${key}','weekdays',event)">Будни</button>
-      <button class="cal-preset" onclick="calPreset('\${key}','weekends',event)">Выходные</button>
+      <button class="cal-preset" onclick="calPreset('\${key}','last14',event)">14 дней</button>
+      <button class="cal-preset" onclick="calPreset('\${key}','last30',event)">30 дней</button>
       <button class="cal-preset" onclick="calPreset('\${key}','all',event)">Весь период</button>
     </div>\`;
   } else if(mode==='month'){
@@ -1514,13 +1514,13 @@ function calPickMonth(key,y,m,ev){
   const st=CAL_STATE[key];
   const first=\`\${y}-\${String(m+1).padStart(2,'0')}-01\`;
   const last=\`\${y}-\${String(m+1).padStart(2,'0')}-\${new Date(y,m+1,0).getDate()}\`;
-  if(st.picking===0){st.start=first;st.end=last;st.picking=1;}
+  if(st.picking===0){st.start=first;st.end=last;st.picking=1;renderCal(key);}
   else{
     if(first<st.start){st.end=st.end;st.start=first;}
     else{st.end=last;}
     st.picking=0;
+    calApply(key,ev); // auto-apply
   }
-  renderCal(key);
 }
 function calPickQuarter(key,y,q,ev){
   if(ev) ev.stopPropagation();
@@ -1528,13 +1528,13 @@ function calPickQuarter(key,y,q,ev){
   const first=\`\${y}-\${String(q*3+1).padStart(2,'0')}-01\`;
   const last=\`\${y}-\${String(q*3+3).padStart(2,'0')}-\${new Date(y,q*3+3,0).getDate()}\`;
   st.start=first; st.end=last; st.picking=0;
-  renderCal(key);
+  calApply(key,ev); // auto-apply
 }
 function calPickYear(key,y,ev){
   if(ev) ev.stopPropagation();
   const st=CAL_STATE[key];
   st.start=\`\${y}-01-01\`; st.end=\`\${y}-12-31\`; st.picking=0;
-  renderCal(key);
+  calApply(key,ev); // auto-apply
 }
 
 function calNav(key,dir,ev){
@@ -1559,22 +1559,27 @@ function calClick(key,ds,ev){
   if(ev) ev.stopPropagation();
   if(!ALL_DATES.includes(ds)) return;
   const st=CAL_STATE[key];
-  if(st.picking===0){st.start=ds;st.end=ds;st.picking=1;}
-  else{
+  if(st.picking===0){
+    // Dblclick on same day = single-day select + apply
+    if(st.start===ds && st.end===ds){calApply(key,ev);return;}
+    st.start=ds;st.end=ds;st.picking=1;
+    renderCal(key);
+  } else {
     if(ds<st.start){st.end=st.start;st.start=ds;}
     else st.end=ds;
     st.picking=0;
+    calApply(key,ev); // #69: auto-apply when range complete
   }
-  renderCal(key);
 }
 function calPreset(key,preset,ev){
   if(ev) ev.stopPropagation();
   const st=CAL_STATE[key];
   if(preset==='all'){st.start=MIN_DATE;st.end=MAX_DATE;}
   else if(preset==='last7'){st.start=ALL_DATES[Math.max(0,ALL_DATES.length-7)];st.end=MAX_DATE;}
-  else if(preset==='weekdays'||preset==='weekends'){st.start=MIN_DATE;st.end=MAX_DATE;}
+  else if(preset==='last14'){st.start=ALL_DATES[Math.max(0,ALL_DATES.length-14)];st.end=MAX_DATE;}
+  else if(preset==='last30'){st.start=ALL_DATES[Math.max(0,ALL_DATES.length-30)];st.end=MAX_DATE;}
   st.picking=0;
-  renderCal(key);
+  calApply(key,ev); // #72: presets auto-apply
 }
 function fillCalPresets(){}
 
