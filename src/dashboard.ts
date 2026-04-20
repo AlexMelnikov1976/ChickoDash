@@ -468,22 +468,20 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 <!-- ══ DYNAMICS ══ -->
 <div class="panel" id="p-dynamics">
   <div class="prow" style="flex-wrap:wrap;gap:10px;margin-bottom:8px">
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <select id="dynRestSel" onchange="setDynRest(this.value)"
-        style="background:var(--card);border:1px solid var(--border2);color:var(--text);padding:6px 10px;border-radius:8px;font-family:Inter,sans-serif;font-size:12px;cursor:pointer;outline:none;max-width:220px">
-      </select>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="font-size:11px;color:var(--text3)">Группировка:</span>
     </div>
-    <div class="pgroup">
-      <button class="pbtn active" onclick="setDynQ(7,this)">7д</button>
-      <button class="pbtn" onclick="setDynQ(14,this)">14д</button>
-      <button class="pbtn" onclick="setDynQ(30,this)">Мес</button>
-      <button class="pbtn" onclick="setDynQ(90,this)">Квар</button>
-      <button class="pbtn" onclick="setDynQ(365,this)">Год</button>
+    <div class="pgroup" id="dynGroupBtns">
+      <button class="pbtn active" onclick="setDynGroup('day',this)">День</button>
+      <button class="pbtn" onclick="setDynGroup('week',this)">7д</button>
+      <button class="pbtn" onclick="setDynGroup('month',this)">Мес</button>
+      <button class="pbtn" onclick="setDynGroup('quarter',this)">Квар</button>
+      <button class="pbtn" onclick="setDynGroup('year',this)">Год</button>
     </div>
   </div>
 
   <div class="card" style="margin-bottom:12px">
-    <div class="ctitle">💰 Выручка по дням</div>
+    <div class="ctitle" id="revChartTitle">💰 Выручка по дням</div>
     <div class="mrow" id="revMBtns">
       <button class="mtbtn active" onclick="setRevM('revenue',this)">Общая</button>
       <button class="mtbtn" onclick="setRevM('kitchen',this)">Кухня</button>
@@ -944,9 +942,9 @@ let RESTAURANT_RECS  = [];
 const S = {
   restIdx: 0,
   globalStart: '', globalEnd: '',
-  dynStart: '',    dynEnd: '', dynRestIdx: -1,
+  dynStart: '',    dynEnd: '',
   cmpStart: '',    cmpEnd: '',
-  dynPeriod: 7,
+  dynGroup: 'day',
   revMetric: 'revenue', dowMetric: 'revenue', dowFilter: 'all', compMetric: 'revenue',
   plChk: 0, plCnt: 0, plFc: 0, plDisc: 0,
 };
@@ -1070,7 +1068,6 @@ async function init() {
     buildCompSlots(); buildCalendars();
     hideLoader();
     selectRest(0);
-    buildDynRestSel();
     // Тихая фоновая загрузка истории с 2024 через 2 сек после старта
     setTimeout(()=>loadFullHistory(true), 2000);
   } catch(e) {
@@ -2567,38 +2564,79 @@ function renderInsights(){
 }
 
 // ═══ DYNAMICS ═══
-function setDynRest(idx){
-  S.dynRestIdx=+idx;
+// ═══ DYNAMICS (Фаза 1.5) ═══
+
+function setDynGroup(mode,btn){
+  S.dynGroup=mode;
+  document.querySelectorAll('#dynGroupBtns .pbtn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
   renderDynamics();
 }
-function getDynR(){
-  // Returns the restaurant for Dynamics tab (local, doesn't affect other tabs)
-  if(S.dynRestIdx>=0&&RESTS[S.dynRestIdx]) return RESTS[S.dynRestIdx];
-  return R||RESTS[0]||null;
-}
-function buildDynRestSel(){
-  const sel=document.getElementById('dynRestSel');
-  if(!sel||!RESTS.length) return;
-  sel.innerHTML=RESTS.map((r,i)=>\`<option value="\${i}">\${r.city}</option>\`).join('');
-  // Default to current global restaurant
-  const curIdx=R?RESTS.findIndex(r=>r.name===R.name):0;
-  sel.value=curIdx>=0?curIdx:0;
-  S.dynRestIdx=+sel.value;
-}
-function setDynQ(n,btn){S.dynPeriod=n;document.querySelectorAll('#p-dynamics .pgroup .pbtn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');const lbl=document.getElementById('dynRangeLbl');if(lbl)lbl.textContent=n===365?'год':n===90?'квартал':n===30?'месяц':n+'д';renderDynamics()}
 function setRevM(m,btn){S.revMetric=m;document.querySelectorAll('#revMBtns .mtbtn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderRevChart()}
 function setDOWMet(m,btn){S.dowMetric=m;document.querySelectorAll('#dowMetBtns .mtbtn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderDOW()}
 function setDowFilter(f,btn){S.dowFilter=f;document.querySelectorAll('#dowFilterBtns .pbtn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderDowFilter()}
 
+function groupTs(ts, mode) {
+  if (mode === 'day' || !mode) return ts;
+  const groups = {};
+  for (const t of ts) {
+    let key;
+    if (mode === 'week') {
+      const d = new Date(t.date);
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      const mon = new Date(d.getFullYear(), d.getMonth(), diff);
+      key = mon.toISOString().slice(0,10);
+    } else if (mode === 'month') {
+      key = t.date.slice(0,7);
+    } else if (mode === 'quarter') {
+      const m = parseInt(t.date.slice(5,7));
+      key = t.date.slice(0,4) + '-Q' + Math.ceil(m/3);
+    } else if (mode === 'year') {
+      key = t.date.slice(0,4);
+    }
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(t);
+  }
+  const MLBL = ['','Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  return Object.entries(groups).sort((a,b)=>a[0].localeCompare(b[0])).map(([key, items]) => {
+    const totalRev = items.reduce((s,t) => s + t.revenue, 0);
+    const totalChecks = items.reduce((s,t) => s + t.checks, 0);
+    let label = key;
+    if (mode === 'week') { const d=new Date(key); label=d.getDate()+' '+MLBL[d.getMonth()+1]; }
+    else if (mode === 'month') { const m=parseInt(key.slice(5,7)); label=MLBL[m]+' '+key.slice(2,4); }
+    else if (mode === 'quarter') { label=key.replace('-',' '); }
+    return {
+      date: key,
+      label,
+      revenue: totalRev,
+      bar: items.reduce((s,t) => s + (t.bar||0), 0),
+      kitchen: items.reduce((s,t) => s + (t.kitchen||0), 0),
+      delivery: items.reduce((s,t) => s + (t.delivery||0), 0),
+      avgCheck: totalChecks > 0 ? totalRev / totalChecks : 0,
+      checks: totalChecks,
+      foodcost: totalRev > 0 ? items.reduce((s,t) => s + (t.foodcost||0) * t.revenue, 0) / totalRev : 0,
+      discount: totalRev > 0 ? items.reduce((s,t) => s + (t.discount||0) * t.revenue, 0) / totalRev : 0,
+      deliveryPct: totalRev > 0 ? items.reduce((s,t) => s + (t.delivery||0), 0) / totalRev * 100 : 0,
+      itemsPerCheck: 0,
+      _days: items.length,
+    };
+  });
+}
+
 function getDynTs(){
-  const ts=getTsRange(getDynR(),S.dynStart,S.dynEnd);
-  return ts.slice(-S.dynPeriod);
+  const ts = getTsRange(R, S.dynStart, S.dynEnd);
+  return groupTs(ts, S.dynGroup);
+}
+function getDynTsRaw(){
+  return getTsRange(R, S.dynStart, S.dynEnd);
 }
 
 function renderDynamics(){
+  const gMul = S.dynGroup==='day'?1: S.dynGroup==='week'?7: S.dynGroup==='month'?26: S.dynGroup==='quarter'?78: 312;
   renderRevChart();
   renderLineChart2('chkC','avgCheck','#4A9EF5','Средний чек',false,null,v=>fmtR(v));
-  renderLineChart2('cntC','checks','#9B59B6','Чеков/день',true,NET.checks,null);
+  renderLineChart2('cntC','checks','#9B59B6','Чеков',true,NET.checks*gMul,null);
   renderLineChart2('fcC','foodcost','#F39C12','Фудкост %',true,NET.foodcost,null);
   renderLineChart2('discC','discount','#E74C3C','Скидки %',true,NET.discount,null);
   renderDOW();
@@ -2606,20 +2644,26 @@ function renderDynamics(){
   renderDynStats();
 }
 function renderRevChart(){
+  const groupLabels={day:'дням',week:'неделям',month:'месяцам',quarter:'кварталам',year:'годам'};
+  const ttl=document.getElementById('revChartTitle');
+  if(ttl) ttl.innerHTML='💰 Выручка по '+(groupLabels[S.dynGroup]||'дням');
   const ts=getDynTs();
   const mc={revenue:'#D4A84B',kitchen:'#4A9EF5',bar:'#9B59B6',delivery:'#2ECC71'};
   const ml={revenue:'Общая',kitchen:'Кухня',bar:'Бар',delivery:'Доставка'};
-  mkChart('revC',{type:'bar',data:{labels:ts.map(t=>t.date.slice(5)),datasets:[{label:ml[S.revMetric],data:ts.map(t=>t[S.revMetric]||0),backgroundColor:mc[S.revMetric]+'99',borderColor:mc[S.revMetric],borderWidth:1,borderRadius:4},{label:'Сеть',data:ts.map(()=>NET.revenue),type:'line',borderColor:'rgba(142,170,206,.4)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false}]},options:chartOpts(v=>fmtR(v))});
+  const lbls = ts.map(t => t.label || t.date.slice(5));
+  const gMul = S.dynGroup==='day'?1: S.dynGroup==='week'?7: S.dynGroup==='month'?26: S.dynGroup==='quarter'?78: 312;
+  mkChart('revC',{type:'bar',data:{labels:lbls,datasets:[{label:ml[S.revMetric],data:ts.map(t=>t[S.revMetric]||0),backgroundColor:mc[S.revMetric]+'99',borderColor:mc[S.revMetric],borderWidth:1,borderRadius:4},{label:'Сеть',data:ts.map(()=>NET.revenue*gMul),type:'line',borderColor:'rgba(142,170,206,.4)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false}]},options:chartOpts(v=>fmtR(v))});
 }
 function renderLineChart2(id,key,color,label,showNet,netVal,yCb){
   const ts=getDynTs().filter(t=>t[key]!==null&&t[key]!==undefined);
-  const ds=[{label,data:ts.map(t=>t[key]||0),borderColor:color,backgroundColor:color+'22',borderWidth:2,pointRadius:3,pointBackgroundColor:color,fill:true,tension:.3}];
+  const lbls = ts.map(t => t.label || t.date.slice(5));
+  const ds=[{label,data:ts.map(t=>t[key]||0),borderColor:color,backgroundColor:color+'22',borderWidth:2,pointRadius:ts.length>50?0:3,pointBackgroundColor:color,fill:true,tension:.3}];
   if(showNet&&netVal!==null) ds.push({label:'Сеть',data:ts.map(()=>netVal),borderColor:'rgba(142,170,206,.4)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false});
-  mkChart(id,{type:'line',data:{labels:ts.map(t=>t.date.slice(5)),datasets:ds},options:chartOpts(yCb||null)});
+  mkChart(id,{type:'line',data:{labels:lbls,datasets:ds},options:chartOpts(yCb||null)});
 }
 
 function renderDOW(){
-  const ts=getDynTs();
+  const ts=getDynTsRaw();
   const byDow={};
   ts.forEach(t=>{const d=getDOW(t.date);if(!byDow[d])byDow[d]=[];byDow[d].push({v:t[S.dowMetric]||0,date:t.date})});
   const order=[1,2,3,4,5,6,0]; // Mon..Sun
@@ -2645,7 +2689,7 @@ function renderDOW(){
 }
 
 function renderDowFilter(){
-  const ts=getDynTs();
+  const ts=getDynTsRaw();
   const f=S.dowFilter;
   const DOW_MAP={all:null,weekday:[1,2,3,4,5],weekend:[0,6],mon:[1],tue:[2],wed:[3],thu:[4],fri:[5],sat:[6],sun:[0]};
   const allowed=DOW_MAP[f];
