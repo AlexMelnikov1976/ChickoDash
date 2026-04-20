@@ -450,8 +450,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
       <div class="g3">
         <div class="kcard"><div class="klbl">Фудкост %</div><div class="kval" id="kv-fc">—</div><div class="kdelta" id="kd-fc"></div><div class="kbench" id="kb-fc"></div><div class="kbar" id="kr-fc" style="width:0"></div></div>
         <div class="kcard"><div class="klbl">Скидки %</div><div class="kval" id="kv-disc">—</div><div class="kdelta" id="kd-disc"></div><div class="kbench" id="kb-disc"></div><div class="kbar" id="kr-disc" style="width:0"></div></div>
-        <div class="kcard"><div class="klbl">Доставка %</div><div class="kval" id="kv-del">—</div><div class="kdelta" id="kd-del"></div><div class="kbench" id="kb-del"></div><div class="kbar bg" id="kr-del" style="width:0"></div></div>
+        <div class="kcard" id="kcard-del"><div class="klbl">Доставка %</div><div class="kval" id="kv-del">—</div><div class="kdelta" id="kd-del"></div><div class="kbench" id="kb-del"></div><div class="kbar bg" id="kr-del" style="width:0"></div></div>
       </div>
+      <div style="font-size:9px;color:var(--text3);margin-top:4px;text-align:right" title="Дни с техническими сбоями iiko (is_anomaly_day=1) автоматически исключаются из расчётов">ⓘ Дни с техсбоями исключены из расчётов</div>
       <div class="card" style="margin-bottom:0;margin-top:10px">
         <div class="ctitle">📉 Тренд за выбранный период</div>
         <div style="height:115px"><canvas id="miniC"></canvas></div>
@@ -1965,10 +1966,24 @@ function renderAlerts(){
   const cmpBase = bm.haveMy ? 'my' : (bm.haveNet ? 'net_p50' : null);
   const cmpLabel = bm.haveMy ? 'вашей нормы' : 'медианы сети';
 
-  // Trend analysis: показываем только если период ≥ 7 дней
+  // Trend analysis: DOW-normalized (like-for-like)
+  // Сравниваем не сырые Чт<Пт<Сб (бессмысленно), а отклонение от DOW-нормы
+  let declining3 = false, growing3 = false;
   const last3 = ts.slice(-3);
-  const declining3 = daysN>=7 && last3.length>=3 && last3[0].revenue>last3[1].revenue && last3[1].revenue>last3[2].revenue;
-  const growing3   = daysN>=7 && last3.length>=3 && last3[0].revenue<last3[1].revenue && last3[1].revenue<last3[2].revenue;
+  let devs = [null, null, null];
+  if (daysN >= 7 && last3.length >= 3 && cmpBase) {
+    devs = last3.map(t => {
+      const jsDow = new Date(t.date).getDay();
+      const chDow = jsDow === 0 ? 7 : jsDow;
+      const norm = (bm.haveMy && MY_DOW[chDow]) ? MY_DOW[chDow].rev_p50
+                 : (NET_DOW[chDow] ? NET_DOW[chDow].rev_p50 : null);
+      return norm && norm > 0 ? (t.revenue - norm) / norm : null;
+    });
+    if (devs.every(d => d !== null)) {
+      declining3 = devs[0] > devs[1] && devs[1] > devs[2] && devs[2] < -0.05;
+      growing3   = devs[0] < devs[1] && devs[1] < devs[2] && devs[2] > 0.05;
+    }
+  }
 
   const msgs = [];
 
@@ -1980,11 +1995,21 @@ function renderAlerts(){
     msgs.push({c:'a-amber', t:\`⚠️ <b>Фудкост \${fmtN(cur.foodcost)}% выше нормы</b> (норма до 22%), среднее \${periodTxt}. Снижение до 22% высвободит ~\${fmtR((cur.foodcost-22)/100*cur.revenue)}/день.\`});
   }
 
-  // Тренд
+  // Тренд (DOW-normalized)
   if (declining3) {
-    msgs.push({c:'a-red', t:\`📉 <b>Выручка снижается 3 последних дня.</b> \${last3.map(t=>fmtR(t.revenue)).join(' → ')}. Проверьте качество, сервис и операционные процессы.\`});
+    const dowNames = ['','Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+    const detail = last3.map((t,i) => {
+      const chDow = jsToChDow(new Date(t.date).getDay());
+      return dowNames[chDow]+': '+(devs[i]*100).toFixed(0)+'%';
+    }).join(', ');
+    msgs.push({c:'a-red', t:\`📉 <b>Выручка ниже DOW-нормы 3 дня подряд</b> (\${detail}). Это не сезонный спад — ресторан недорабатывает относительно своих же показателей.\`});
   } else if (growing3) {
-    msgs.push({c:'a-green', t:\`📈 <b>Выручка растёт 3 последних дня.</b> \${last3.map(t=>fmtR(t.revenue)).join(' → ')}. Хорошая динамика — зафиксируйте что сработало.\`});
+    const dowNames = ['','Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+    const detail = last3.map((t,i) => {
+      const chDow = jsToChDow(new Date(t.date).getDay());
+      return dowNames[chDow]+': +'+(devs[i]*100).toFixed(0)+'%';
+    }).join(', ');
+    msgs.push({c:'a-green', t:\`📈 <b>Выручка выше DOW-нормы 3 дня подряд</b> (\${detail}). Реальный рост — зафиксируйте что сработало.\`});
   }
 
   // Скидки — like-for-like
@@ -2162,6 +2187,13 @@ function renderKPIs(){
 
   renderCard('del', dp, fmtPct1, bm.my.del, bm.net_p50.del, bm.net_p75.del, false,
              (v) => Math.min(100, v/40*100));
+
+  // #43: скрыть доставку если у ресторана нет доставки
+  const delCard = document.getElementById('kcard-del');
+  if (delCard) {
+    const hasDelivery = ts.some(t => t.delivery > 0 || t.deliveryPct > 1);
+    delCard.style.display = hasDelivery ? '' : 'none';
+  }
 }
 function setKPI(id,raw,fmt,unit,prevRaw,netBench,lb,benchLbl,barPct,barCls){
   document.getElementById('kv-'+id).innerHTML=fmt+(unit?\`<span class="u">\${unit}</span>\`:'');
