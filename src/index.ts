@@ -11,6 +11,7 @@ import { DASHBOARD_HTML } from './dashboard';
 import { handleDowProfiles } from './dow_profiles';
 import { handleForecast } from './forecast';
 import { handleRestaurantsList, handleBenchmarks, handleRestaurantMeta } from './data_endpoints';
+import { handleCspReport } from './csp_report';
 import { requireJwtSecret, rateLimitOrResponse, RATE_LIMIT_FEEDBACK } from './security';
 
 export interface Env {
@@ -56,16 +57,59 @@ function jsonResponse(body: unknown, request: Request, status: number = 200): Re
   });
 }
 
-// HTML security headers — see HTML_SECURITY_HEADERS below.
+// --- HTML security headers ---
 
-// Safe HTML response headers (no CSP yet — needs Report-Only testing first
-// since dashboard.ts uses inline styles and onclick handlers extensively).
-// Phase 2.4b will introduce CSP after audit of inline patterns.
-const HTML_SECURITY_HEADERS: Record<string, string> = {
+// Базовые security headers — применяются ко всем HTML-ответам
+// (главный дашборд + страница ошибки из magic-link callback).
+const HTML_SECURITY_HEADERS_BASE: Record<string, string> = {
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-Content-Type-Options': 'nosniff',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
 };
+
+// CSP Report-Only (Phase 2.4c, 21.04.2026).
+//
+// Политика строгая, без unsafe-inline — цель собрать максимум
+// violations, чтобы увидеть что реально использует dashboard.ts.
+// Через ~7 дней:
+//   wrangler kv key list --binding MAGIC_LINKS --prefix "csp:"
+//   → смотрим топ нарушений по count в агрегированных записях
+//   → составляем enforce-политику (возможно с nonces для inline)
+//   → меняем Content-Security-Policy-Report-Only на Content-Security-Policy
+//
+// Примечания:
+// - 'report-sample' просит браузер включать короткий семпл кода
+//   (до 40 символов) в отчёт. Помогает идентифицировать какой
+//   именно inline style/script нарушает политику. PII-риск
+//   минимальный — dashboard.ts не содержит персональных данных
+//   в CSS/JS коде.
+// - 'data:' в img-src — нужно для base64-инлайн-иконок если
+//   они есть (SVG data URI). Если нет — увидим в отчётах и уберём.
+// - frame-ancestors 'none' — эквивалент X-Frame-Options: DENY,
+//   защита от clickjacking.
+const CSP_REPORT_ONLY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'report-sample'",
+  "style-src 'self' 'report-sample'",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "font-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "report-uri /api/csp-report",
+].join('; ');
+
+// HTML-headers для главного дашборда: базовые + CSP Report-Only.
+const HTML_SECURITY_HEADERS: Record<string, string> = {
+  ...HTML_SECURITY_HEADERS_BASE,
+  'Content-Security-Policy-Report-Only': CSP_REPORT_ONLY_POLICY,
+};
+
+// errorPage() не получает Content-Security-Policy-Report-Only:
+// сам error page содержит inline <style>, будет шуметь собственным
+// мусором в отчётах. Базовые security headers — да.
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -108,6 +152,12 @@ export default {
 
     if (url.pathname === '/api/auth/verify' && request.method === 'POST') {
       return handleVerify(request, env);
+    }
+
+    // CSP violation reports (Phase 2.4c). No auth — reports come from
+    // the browser directly and may include cases where user is not logged in.
+    if (url.pathname === '/api/csp-report' && request.method === 'POST') {
+      return handleCspReport(request, env);
     }
 
     // --- Protected API endpoints ---
@@ -214,7 +264,11 @@ async function handleAuthCallback(request: Request, env: Env): Promise<Response>
     if (!token) {
       return new Response(errorPage('Токен не передан в URL.'), {
         status: 400,
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          ...HTML_SECURITY_HEADERS_BASE,
+        },
       });
     }
 
@@ -234,7 +288,11 @@ async function handleAuthCallback(request: Request, env: Env): Promise<Response>
     console.error(`[callback] error: ${err.message}`, err.stack);
     return new Response(errorPage('Произошла ошибка при входе.'), {
       status: 500,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        ...HTML_SECURITY_HEADERS_BASE,
+      },
     });
   }
 }
@@ -275,7 +333,7 @@ async function handleVerify(request: Request, env: Env): Promise<Response> {
     return jsonResponse({
       success: true,
       token: jwt,
-      expires_in: 60 * 60 * 24 * 7, // 7 days in seconds (was 30 — reduced after audit)
+      expires_in: 60 * 60 * 24 * 7, // 7 days in seconds (aligned with auth.ts #11 fix)
       email,
     }, request);
   } catch (error) {
