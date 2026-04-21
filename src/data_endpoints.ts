@@ -21,22 +21,20 @@
 
 import { validateToken, extractBearerToken } from './auth';
 import { ClickHouseClient } from './clickhouse';
-import {
-  corsHeadersFor,
-  requireJwtSecret,
-  parsePositiveIntStrict,
-  parseIsoDate,
-  daysBetween,
-  MAX_DATE_RANGE_DAYS,
-} from './security';
 import type { Env } from './index';
 
-function jsonResponse(body: unknown, status = 200, request?: Request): Response {
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json',
-      ...(request ? corsHeadersFor(request) : {}),
+      ...CORS_HEADERS,
     },
   });
 }
@@ -44,13 +42,13 @@ function jsonResponse(body: unknown, status = 200, request?: Request): Response 
 async function auth(request: Request, env: Env): Promise<{ user_id: string; email: string } | Response> {
   const authHeader = request.headers.get('Authorization');
   const token = extractBearerToken(authHeader);
-  if (!token) return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, 401, request);
+  if (!token) return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, 401);
 
   const payload = await validateToken(
     token,
-    requireJwtSecret(env)
+    env.JWT_SECRET || 'temp-secret-key-change-in-production'
   );
-  if (!payload) return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, 401, request);
+  if (!payload) return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, 401);
 
   return payload as { user_id: string; email: string };
 }
@@ -63,9 +61,10 @@ function mkClickhouse(env: Env): ClickHouseClient {
   });
 }
 
-// Date validation moved to security.ts (parseIsoDate, daysBetween).
-// Old local isValidDate was a regex-only check; new helper does regex +
-// real-date validation + round-trip check.
+// Validate YYYY-MM-DD — first line of defense against SQL injection through dates.
+function isValidDate(s: string | null): boolean {
+  return !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
 
 /**
  * GET /api/restaurants?full_history=0|1
@@ -118,11 +117,11 @@ export async function handleRestaurantsList(request: Request, env: Env): Promise
     return jsonResponse({
       data: result.data,
       rows: result.rows,
-    }, request);
+    });
   } catch (error) {
     const err = error as Error;
     console.error(`[restaurants] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, 500, request);
+    return jsonResponse({ error: 'Request failed', message: err.message }, 500);
   }
 }
 
@@ -146,29 +145,14 @@ export async function handleBenchmarks(request: Request, env: Env): Promise<Resp
     if (a instanceof Response) return a;
 
     const url = new URL(request.url);
-    const startRaw = url.searchParams.get('start');
-    const endRaw = url.searchParams.get('end');
+    const start = url.searchParams.get('start');
+    const end = url.searchParams.get('end');
 
-    // Canonical date validation: regex + real-date check + round-trip via Date.
-    // Защищает от 2026-99-99 (regex пройдёт, но дата невалидна).
-    const start = parseIsoDate(startRaw);
-    const end = parseIsoDate(endRaw);
-    if (!start || !end) {
-      return jsonResponse({ error: 'Invalid start/end date (expected YYYY-MM-DD)' }, 400, request);
+    if (!isValidDate(start) || !isValidDate(end)) {
+      return jsonResponse({ error: 'Invalid start/end date (expected YYYY-MM-DD)' }, 400);
     }
 
-    // Защита от перевёрнутого диапазона.
-    if (start > end) {
-      return jsonResponse({ error: 'start must be <= end' }, 400, request);
-    }
-
-    // Защита от чрезмерно широких диапазонов, перегружающих ClickHouse.
-    const span = daysBetween(start, end);
-    if (span > MAX_DATE_RANGE_DAYS) {
-      return jsonResponse({ error: `Date range too wide (max ${MAX_DATE_RANGE_DAYS} days, got ${span})` }, 400, request);
-    }
-
-    console.log(`[benchmarks] user=${a.user_id} ${start}..${end} span=${span}d`);
+    console.log(`[benchmarks] user=${a.user_id} ${start}..${end}`);
 
     const sql = `
       SELECT
@@ -200,7 +184,7 @@ export async function handleBenchmarks(request: Request, env: Env): Promise<Resp
         top10: null,
         rest_count: 0,
         insufficient_data: true,
-      }, request);
+      });
     }
 
     const b = rows[0];
@@ -213,7 +197,7 @@ export async function handleBenchmarks(request: Request, env: Env): Promise<Resp
         top10: null,
         rest_count: restCount,
         insufficient_data: true,
-      }, request);
+      });
     }
 
     return jsonResponse({
@@ -235,11 +219,11 @@ export async function handleBenchmarks(request: Request, env: Env): Promise<Resp
       },
       rest_count: restCount,
       insufficient_data: false,
-    }, request);
+    });
   } catch (error) {
     const err = error as Error;
     console.error(`[benchmarks] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, 500, request);
+    return jsonResponse({ error: 'Request failed', message: err.message }, 500);
   }
 }
 
@@ -262,10 +246,10 @@ export async function handleRestaurantMeta(request: Request, env: Env): Promise<
 
     const url = new URL(request.url);
     const restIdStr = url.searchParams.get('restaurant_id');
-    const restId = restIdStr !== null ? parsePositiveIntStrict(restIdStr) : null;
+    const restId = restIdStr ? parseInt(restIdStr, 10) : null;
 
-    if (restId === null) {
-      return jsonResponse({ error: 'Invalid restaurant_id' }, 400, request);
+    if (restId === null || isNaN(restId) || restId <= 0) {
+      return jsonResponse({ error: 'Invalid restaurant_id' }, 400);
     }
 
     console.log(`[restaurant-meta] user=${a.user_id} restaurant_id=${restId}`);
@@ -310,10 +294,10 @@ export async function handleRestaurantMeta(request: Request, env: Env): Promise<
     return jsonResponse({
       score: scoreRows.length ? scoreRows[0] : null,
       recommendations: recsRows,
-    }, request);
+    });
   } catch (error) {
     const err = error as Error;
     console.error(`[restaurant-meta] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, 500, request);
+    return jsonResponse({ error: 'Request failed', message: err.message }, 500);
   }
 }
