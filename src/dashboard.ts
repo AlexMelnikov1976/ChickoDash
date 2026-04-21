@@ -604,7 +604,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
   <div class="card" style="margin-bottom:12px">
     <div class="ctitle">🧮 Калькулятор маржи «Что если»</div>
     <div style="background:rgba(142,170,206,.08);border-left:3px solid var(--blue);padding:10px 14px;margin-bottom:14px;border-radius:4px;font-size:11px;color:var(--text2);line-height:1.55">
-      ℹ️ <b style="color:var(--text)">Логика калькулятора:</b> ползунки инициализируются из 90-дневной истории ресторана (не зависит от фильтра сверху). Прогноз месяца = <b>фактическая маржа за прошедшие дни</b> (из iiko, не меняется) + <b>маржа за остаток месяца</b> (ваши ползунки × оставшиеся будн/вых). Эффект сценария применяется только к оставшимся дням — что прошло, то прошло. Полный P&amp;L с ФОТ, арендой и прибылью — в отдельной вкладке <b>(после 1С)</b>.
+      ℹ️ <b style="color:var(--text)">Логика калькулятора:</b> ползунки из 90-дневной истории ресторана (не от фильтра сверху). Средний чек — <b>netto</b> (как в iiko, уже после скидок). Прогноз месяца = фактическая маржа за прошедшие дни (из iiko) + маржа за остаток (ваши ползунки × оставшиеся будн/вых). Сценарий влияет только на оставшиеся дни. <b>Ползунок «Скидки»:</b> уменьшение скидок → netto-чек растёт пропорционально (предполагаем, что гросс-чек и поведение клиентов не меняются). Полный P&amp;L с ФОТ/арендой — в отдельной вкладке <b>(после 1С)</b>.
     </div>
     <div class="g2" style="gap:16px">
       <!-- Weekday scenario -->
@@ -2807,19 +2807,18 @@ function computePlContext() {
     if (isWeekend(dateStr)) remWe++; else remWd++;
   }
 
-  // Прошедшие дни текущего месяца: считаем фактическую маржу и выручку из R.ts
+  // Прошедшие дни текущего месяца: считаем фактическую маржу и выручку из R.ts.
+  // t.revenue — это NETTO-выручка из iiko (уже за вычетом скидок), поэтому
+  // вычитаем только фудкост. Повторно вычитать disc — двойной счёт (см. plCalc).
   const monthPrefix = \`\${year}-\${String(month1).padStart(2,'0')}-\`;
   let pastActualMargin = 0;
   let pastActualRev = 0;
   let pastWd = 0, pastWe = 0;
   for (const t of R.ts) {
     if (t.date && t.date.indexOf(monthPrefix) === 0 && t.revenue > 0) {
-      const disc = +t.discount || 0;
       const fc = +t.foodcost || 0;
-      const discAmt = t.revenue * disc / 100;
-      const net = t.revenue - discAmt;
-      const fcAmt = net * fc / 100;
-      pastActualMargin += net - fcAmt;
+      const fcAmt = t.revenue * fc / 100; // фудкост применяется к netto-выручке
+      pastActualMargin += t.revenue - fcAmt;
       pastActualRev += t.revenue;
       if (isWeekend(t.date)) pastWe++; else pastWd++;
     }
@@ -2937,19 +2936,29 @@ function renderWDB(){
   document.getElementById('wdbInsights').innerHTML=ins.map(i=>\`<div class="ins-card \${i.t}" style="margin:0"><div class="ins-b" style="font-size:11px">\${i.txt}</div></div>\`).join('');
 }
 
-// #76: упрощение P&L калькулятора (21.04.2026).
-// ФОТ 25% и Аренда 15% были захардкожены и одинаковы для всех ресторанов —
-// это модельные допущения без реальных данных. Блок назывался «ФАКТ», но
-// по факту был моделью. Полный P&L с реальными ФОТ/арендой/прочим будет
-// в отдельной вкладке после подключения 1С (Волна 6). Здесь — честная
-// маржа до прочих расходов, на основе только реальных данных из iiko.
-function plCalc(chk,cnt,fc,disc) {
-  const rev = chk*cnt;
-  const discAmt = rev*disc/100;
-  const net = rev - discAmt;
-  const fcAmt = net*fc/100;
-  const margin = net - fcAmt; // Маржа до прочих расходов (ФОТ, аренда, коммуналка и т.д.)
-  return { rev, discAmt, net, fcAmt, margin };
+// #76 B v3 (21.04.2026): chk из iiko — это NETTO-чек (уже за вычетом скидок).
+// Прежний plCalc вычитал скидки повторно — это был двойной счёт и занижал
+// маржу на ~5-7% (фактически на величину скидок × фудкост).
+//
+// Вариант C: если пользователь двигает ползунок скидок, предполагаем что
+// клиентское поведение и гросс-чек (до скидки) остаются теми же, значит
+// netto-чек пересчитывается:
+//   effective_netto = baseline_netto × (1 − new_disc/100) / (1 − baseline_disc/100)
+// Когда disc == baseline_disc (не трогали) — netFactor = 1, нейтрально.
+// Когда disc < baseline (меньше скидок) — netto-чек растёт, маржа растёт.
+function plCalc(chk, cnt, fc, disc, baselineDisc) {
+  const baseDisc = (baselineDisc !== undefined) ? baselineDisc : disc;
+  // Защита от >99% скидки (не делим на около-ноль)
+  const safeBase = Math.max(0, Math.min(99, baseDisc));
+  const safeDisc = Math.max(0, Math.min(99, disc));
+  const netFactor = (1 - safeDisc/100) / (1 - safeBase/100);
+  const effectiveChk = chk * netFactor;
+  const rev = effectiveChk * cnt;                    // это netto (как в iiko)
+  const grossRev = rev / Math.max(0.01, 1 - safeDisc/100);
+  const discAmt = grossRev - rev;                    // для структуры нетто-выручки (бар-чарт)
+  const fcAmt = rev * fc/100;
+  const margin = rev - fcAmt;                        // Маржа до прочих расходов
+  return { rev, discAmt, grossRev, fcAmt, margin, effectiveChk };
 }
 function plHtml_DEPRECATED_REMOVED_v76b(){ /* удалено в #76 B */ }
 
@@ -2983,11 +2992,13 @@ function calcPL(){
   document.getElementById('sl-we-fc-v').textContent  = fmtN(weFc,1);
   document.getElementById('sl-we-disc-v').textContent= fmtN(weDisc,1);
 
-  // Посчитать маржу в день для каждого сценария (и его факта)
-  const wdScen = plCalc(wdChk, wdCnt, wdFc, wdDisc);
-  const weScen = plCalc(weChk, weCnt, weFc, weDisc);
-  const wdFact = plCalc(S.plWdChk, S.plWdCnt, S.plWdFc, S.plWdDisc);
-  const weFact = plCalc(S.plWeChk, S.plWeCnt, S.plWeFc, S.plWeDisc);
+  // Посчитать маржу в день для каждого сценария (и его факта).
+  // Передаём baseline discount как 5-й аргумент — для корректного масштабирования
+  // netto-чека при изменении скидок (вариант C, см. plCalc).
+  const wdScen = plCalc(wdChk, wdCnt, wdFc, wdDisc, S.plWdDisc);
+  const weScen = plCalc(weChk, weCnt, weFc, weDisc, S.plWeDisc);
+  const wdFact = plCalc(S.plWdChk, S.plWdCnt, S.plWdFc, S.plWdDisc, S.plWdDisc);
+  const weFact = plCalc(S.plWeChk, S.plWeCnt, S.plWeFc, S.plWeDisc, S.plWeDisc);
 
   // Обновить компактные «Маржа/будний день» и «Маржа/выходной день»
   document.getElementById('pl-wd-margin').textContent = fmtR(wdScen.margin);
@@ -3031,30 +3042,30 @@ function calcPL(){
     <div class="pl-r" title="Фактическая маржа за прошедшие дни текущего месяца (из iiko)"><span class="pl-lbl">📆 Прошло: \${ctx.pastWd} будн + \${ctx.pastWe} вых</span><span class="pl-amt">\${fmtR(ctx.pastActualMargin)}</span></div>
     <div class="pl-r"><span class="pl-lbl">📅 Остаток будней: \${ctx.remWd} × \${fmtR(wdFact.margin)}</span><span class="pl-amt" style="color:var(--blue)">\${fmtR(wdFact.margin * ctx.remWd)}</span></div>
     <div class="pl-r"><span class="pl-lbl">🎉 Остаток вых: \${ctx.remWe} × \${fmtR(weFact.margin)}</span><span class="pl-amt" style="color:var(--gold)">\${fmtR(weFact.margin * ctx.remWe)}</span></div>
-    <div class="pl-tot"><span class="pl-tot-lbl">Прогноз маржи/мес</span><span class="pl-tot-amt" style="color:var(--blue)">\${fmtR(factMonth)}</span></div>
-    <div class="pl-r" style="border-top:1px dashed rgba(46,64,104,.4);margin-top:6px;padding-top:8px"><span class="pl-lbl">💰 Прогноз выручки/мес</span><span class="pl-amt">\${fmtR(factMonthRev)}</span></div>
-    <div style="font-size:10px;color:var(--text3);text-align:right;margin-top:4px">Год (при повторе): \${fmtR(factMonth*12)}</div>\`;
+    <div class="pl-tot" title="Маржа — ваш фактический доход до вычета ФОТ, аренды, коммуналки. Главный KPI для собственника."><span class="pl-tot-lbl">Прогноз маржи/мес</span><span class="pl-tot-amt" style="color:var(--blue)">\${fmtR(factMonth)}</span></div>
+    <div class="pl-r" style="border-top:1px dashed rgba(46,64,104,.4);margin-top:6px;padding-top:8px;opacity:.7" title="Валовая выручка до вычета скидок и фудкоста. Справочно — реальная прибавка меньше (строка выше)."><span class="pl-lbl" style="font-size:10px;color:var(--text2)">💰 Выручка/мес <span style="color:var(--text3);font-size:9px">(до вычетов, справка)</span></span><span class="pl-amt" style="font-size:13px;color:var(--text2)">\${fmtR(factMonthRev)}</span></div>
+    <div style="font-size:10px;color:var(--text3);text-align:right;margin-top:4px">Год по марже (при повторе): \${fmtR(factMonth*12)}</div>\`;
 
   // Рендер блока «Сценарий» (правая колонка — с дельтами на каждой строке остатка и итога)
   document.getElementById('plMonthScenario').innerHTML = \`
     <div class="pl-r"><span class="pl-lbl">📆 Прошло: \${ctx.pastWd} будн + \${ctx.pastWe} вых <span style="color:var(--text3);font-size:9px">(не изменится)</span></span><span class="pl-amt">\${fmtR(ctx.pastActualMargin)}</span></div>
     <div class="pl-r"><span class="pl-lbl">📅 Остаток будней: \${ctx.remWd} × \${fmtR(wdScen.margin)}</span><span class="pl-amt" style="color:var(--blue)">\${fmtR(wdScen.margin * ctx.remWd)}\${fmtDelta(wdDeltaLine)}</span></div>
     <div class="pl-r"><span class="pl-lbl">🎉 Остаток вых: \${ctx.remWe} × \${fmtR(weScen.margin)}</span><span class="pl-amt" style="color:var(--gold)">\${fmtR(weScen.margin * ctx.remWe)}\${fmtDelta(weDeltaLine)}</span></div>
-    <div class="pl-tot"><span class="pl-tot-lbl">Прогноз маржи/мес</span><span class="pl-tot-amt" style="color:var(--gold)">\${fmtR(scenMonth)}\${fmtDelta(deltaMonth)}</span></div>
-    <div class="pl-r" style="border-top:1px dashed rgba(46,64,104,.4);margin-top:6px;padding-top:8px"><span class="pl-lbl">💰 Прогноз выручки/мес</span><span class="pl-amt">\${fmtR(scenMonthRev)}\${fmtDelta(deltaRev)}</span></div>
-    <div style="font-size:10px;color:var(--text3);text-align:right;margin-top:4px">Год (при повторе): \${fmtR(scenMonth*12)}</div>\`;
+    <div class="pl-tot" title="Главное число — прирост маржи. Это то, что реально добавится к доходу за остаток месяца."><span class="pl-tot-lbl">Прогноз маржи/мес</span><span class="pl-tot-amt" style="color:var(--gold)">\${fmtR(scenMonth)}\${fmtDelta(deltaMonth)}</span></div>
+    <div class="pl-r" style="border-top:1px dashed rgba(46,64,104,.4);margin-top:6px;padding-top:8px;opacity:.7" title="Прирост выручки (брутто) больше прироста маржи — часть забирают скидки и фудкост. В карман идёт строка выше."><span class="pl-lbl" style="font-size:10px;color:var(--text2)">💰 Выручка/мес <span style="color:var(--text3);font-size:9px">(до вычетов, справка)</span></span><span class="pl-amt" style="font-size:13px;color:var(--text2)">\${fmtR(scenMonthRev)}\${fmtDelta(deltaRev)}</span></div>
+    <div style="font-size:10px;color:var(--text3);text-align:right;margin-top:4px">Год по марже (при повторе): \${fmtR(scenMonth*12)}</div>\`;
 
   // Эффект: дельта только за остаток месяца
   const deltaColor = deltaMonth >= 0 ? 'var(--green)' : 'var(--red)';
   const deltaSign = deltaMonth >= 0 ? '+' : '';
   document.getElementById('plMonthEffect').innerHTML = \`
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
-      <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center" title="Эффект только на оставшиеся \${ctx.remWd}+\${ctx.remWe} дней месяца. Прошлое не изменится.">
-        <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Эффект на остаток месяца (\${ctx.remWd+ctx.remWe} дн)</div>
+      <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center" title="Прирост маржи (ваш доход) за оставшиеся \${ctx.remWd}+\${ctx.remWe} дней месяца. Прошлое не изменится.">
+        <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Прирост маржи на остаток месяца (\${ctx.remWd+ctx.remWe} дн)</div>
         <div style="font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;color:\${deltaColor}">\${deltaSign}\${fmtR(deltaMonth)}</div>
       </div>
-      <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center" title="Если сценарий стабильно применять каждый месяц — эффект за 12 месяцев">
-        <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Эффект за год (при повторе)</div>
+      <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center" title="Прирост маржи за 12 месяцев, если сценарий применять стабильно. Выручка вырастет больше, но часть съедят скидки и фудкост.">
+        <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Прирост маржи за год (при повторе)</div>
         <div style="font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;color:\${deltaColor}">\${deltaSign}\${fmtR(deltaYear)}</div>
       </div>
     </div>\`;
@@ -3086,23 +3097,23 @@ function calcPL(){
   };
   document.getElementById('scenBox').innerHTML = [
     mkScen(
-      () => plCalc(wdChk, wdCnt*1.1, wdFc, wdDisc),
-      () => plCalc(weChk, weCnt*1.1, weFc, weDisc),
+      () => plCalc(wdChk, wdCnt*1.1, wdFc, wdDisc, S.plWdDisc),
+      () => plCalc(weChk, weCnt*1.1, weFc, weDisc, S.plWeDisc),
       '+10% чеков (будни+выходные)'
     ),
     mkScen(
-      () => plCalc(wdChk, wdCnt, Math.max(0, wdFc-1), wdDisc),
-      () => plCalc(weChk, weCnt, Math.max(0, weFc-1), weDisc),
+      () => plCalc(wdChk, wdCnt, Math.max(0, wdFc-1), wdDisc, S.plWdDisc),
+      () => plCalc(weChk, weCnt, Math.max(0, weFc-1), weDisc, S.plWeDisc),
       '−1% фудкост'
     ),
     mkScen(
-      () => plCalc(wdChk, wdCnt, wdFc, Math.max(0, wdDisc-1)),
-      () => plCalc(weChk, weCnt, weFc, Math.max(0, weDisc-1)),
+      () => plCalc(wdChk, wdCnt, wdFc, Math.max(0, wdDisc-1), S.plWdDisc),
+      () => plCalc(weChk, weCnt, weFc, Math.max(0, weDisc-1), S.plWeDisc),
       '−1% скидок'
     ),
     mkScen(
-      () => plCalc(wdChk+100, wdCnt, wdFc, wdDisc),
-      () => plCalc(weChk+100, weCnt, weFc, weDisc),
+      () => plCalc(wdChk+100, wdCnt, wdFc, wdDisc, S.plWdDisc),
+      () => plCalc(weChk+100, weCnt, weFc, weDisc, S.plWeDisc),
       '+100₽ к среднему чеку'
     ),
     { l: 'Будни подтянуть до уровня выходных', delta: (weScen.margin - wdScen.margin) * ctx.remWd },
