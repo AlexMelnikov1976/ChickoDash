@@ -2,8 +2,8 @@
 
 > **Живой документ.** Обновляется после каждой значимой сессии работы.
 
-**Последнее обновление:** 20.04.2026, ~23:30 MSK — добавлен план анализа меню (Волна 6)
-**Версия паспорта:** 3.25
+**Последнее обновление:** 21.04.2026, ~09:10 MSK — Phase 2.4a (security audit hardening) задеплоена
+**Версия паспорта:** 3.26
 
 ---
 
@@ -23,10 +23,11 @@
 |---|---|
 | **Production URL** | https://chicko-api-proxy.chicko-api.workers.dev 🟢 |
 | **GitHub** | github.com/AlexMelnikov1976/chicko-api-proxy |
-| **Общий прогресс** | ~97% MVP; **Фаза 2 защиты IP завершена** — 3/3 этапа |
+| **Общий прогресс** | ~97% MVP; **Фаза 2 защиты IP + Phase 2.4a security hardening завершены** |
 | **Закрыто P0-пунктов** | **19/22** (86%) |
-| **Последний коммит** | `4e02b90` refactor(security): remove /api/query, whitelisted endpoints only |
-| **Следующий фокус** | Восстановленные Phase 1.5 правки → #76 P&L → UX-проход → товарный знак |
+| **Последний коммит** | `<hotfix>` fix(security): jsonResponse signature unified (body, request, status) |
+| **Безопасность** | 8 из 14 пунктов независимого аудита закрыто. Остаток в Phase 2.4b (CSP) и перед пилотом (HttpOnly cookies, RLS) |
+| **Следующий фокус** | CSP в Report-Only режиме → #76 P&L → UX-проход → товарный знак |
 
 ---
 
@@ -157,6 +158,7 @@ Yandex Managed ClickHouse (БД: chicko, user: dashboard_ro)
 │   ├── dow_profiles.ts       # ⭐ GET /api/dow-profiles (Phase 2.1)
 │   ├── forecast.ts           # ⭐ GET /api/forecast — Алгоритм Г (Phase 2.2)
 │   ├── data_endpoints.ts     # ⭐ GET /api/{restaurants,benchmarks,restaurant-meta} (Phase 2.3)
+│   ├── security.ts           # ⭐ Helpers: requireJwtSecret, parsePositiveIntStrict, parseIsoDate, corsHeadersFor (Phase 2.4a)
 │   └── dashboard.ts          # HTML dashboard (self-contained, без SQL)
 ├── docs/
 │   ├── PASSPORT.md           # Этот файл
@@ -196,11 +198,20 @@ Yandex Managed ClickHouse (БД: chicko, user: dashboard_ro)
 | **2.1** | ✅ deployed 20.04 (коммит `57ab88d`) | DOW-профили → `/api/dow-profiles`. SQL-агрегация с quantile перенесена на сервер |
 | **2.2** | ✅ deployed 20.04 | computeForecast (Алгоритм Г) → `/api/forecast`. YoY-коэффициент и каскад fallback'ов на сервере |
 | **2.3** | ✅ deployed 20.04 (коммит `4e02b90`) | Закрыт `/api/query`. Клиент использует только whitelisted: `/api/{restaurants,benchmarks,restaurant-meta,dow-profiles,forecast}` |
+| **2.4a** | ✅ deployed 21.04 | Hardening по результатам внешнего security-аудита: 8 из 14 пунктов закрыто (см. раздел 13) |
+| **2.4b** | ⏳ отложена | CSP — нужно сначала Report-Only тестирование (dashboard.ts использует много inline styles/onclick) |
 
-**Проверено в проде:**
+**Проверено в проде (Phase 2.3):**
 - `/api/query` возвращает 404 (универсальный SQL-прокси удалён)
 - В `view-source` дашборда: 0 упоминаний `quantile`, `mart_restaurant_daily_base`, `fetchCK`
 - Network tab при переключении ресторана показывает только specific endpoints
+
+**Проверено в проде (Phase 2.4a):**
+- Невалидная дата `start=2026-99-99` → `400 + {error: "Invalid start/end date..."}` ✅
+- Широкий диапазон `start=2020 end=2026` → `400 + {error: "Date range too wide (max 400 days, got 2302)"}` ✅
+- Permissive ввод `restaurant_id=5abc` → `400 + {error: "Invalid restaurant_id"}` ✅
+- `/api/query` всё ещё `404` ✅
+- Нормальные запросы возвращают данные как раньше ✅
 
 **Параллельно (не-технические шаги, на ближайшие недели):**
 - ⏳ Товарный знак System360 в Роспатенте (10-15К через агентство, 6-12 мес)
@@ -322,6 +333,72 @@ chicko.mart_menu_daily (агрегат по дням и блюдам — для 
 ---
 
 ## 10. Changelog
+
+### 21.04.2026, утро (~4 часа работы) — Phase 2.4a security hardening + 4 отката
+
+**Контекст:** Получены результаты внешнего security-аудита (см. раздел 13). Цель — закрыть критичные и высокие приоритеты, не ломая прод.
+
+#### Запланировано: 8 правок безопасности
+
+1. Hard-fail при отсутствии JWT_SECRET (вместо fallback на статичный)
+2. CORS `*` → whitelist через `corsHeadersFor(request)`
+3. `parseInt` → `parsePositiveIntStrict` для restaurant_id
+4. Канonical date validation + проверки start≤end и диапазон ≤400 дней
+5. Маскировка `err.message` в 500 ответах (детали только в `console.error`)
+6. JWT TTL: 30 → 7 дней
+7. Лимиты длины полей в `/api/feedback`
+8. Headers: Referrer-Policy, X-Content-Type-Options, Permissions-Policy + `Cache-Control: no-store`
+
+CSP отложен в Phase 2.4b: dashboard.ts использует много inline styles/onclick, нужно сначала Report-Only тестирование.
+
+#### Создано: `src/security.ts` (89 строк)
+
+Общий модуль с экспортами:
+- `requireJwtSecret(env)` — throws если секрет отсутствует или короче 16 символов
+- `parsePositiveIntStrict(s)` — regex `^[1-9]\d*$`
+- `parseIsoDate(s)` — regex + new Date round-trip + сравнение со входом
+- `daysBetween(start, end)` — для проверки диапазона
+- `MAX_DATE_RANGE_DAYS = 400`
+- `ALLOWED_ORIGINS` (set) и `corsHeadersFor(request)` — динамический CORS
+
+#### Инцидент: 4 отката из-за ловушки в TypeScript-сигнатуре
+
+Сделал сигнатуру `jsonResponse(body, status?, request?)` с обоими опциональными аргументами. Применил Python-скрипт автозамены ко всем вызовам в 4 файлах. Скрипт работал корректно по своей логике, но из-за неправильного дизайна сигнатуры:
+
+```ts
+jsonResponse({ ok: true }, request)   // хотел: body + request
+// JS трактует:
+jsonResponse({ ok: true }, status=request)  // request попал в status!
+// → new Response(..., { status: <Request объект> })
+// → "Responses may only be constructed with status codes in the range 200-599"
+```
+
+Хронология:
+1. **3977c9c** — Phase 2.4 первая попытка с CSP. Прод сломан → revert.
+2. **f98b634** — Phase 2.4a без CSP. Прод снова сломан (тот же баг скрипта). Подумал что виновата CSP, но даже без неё — failure → revert.
+3. **41b089d** — случайно сделал revert revert (нечётность revert'ов нарушена), вернул сломанную версию → revert.
+4. **aa42e32** — повторил revert revert → revert.
+5. **Финальный hotfix** — изменил сигнатуру на `jsonResponse(body, request, status?)` (request обязателен), переделал все вызовы. Деплой успешный.
+
+**Маскировка ошибок (требование аудита) скрыла причину собственного бага** — клиент получал «Request failed» вместо traceback'а. Решение нашлось через `npx wrangler tail` во втором терминале.
+
+#### Проверено в проде
+
+5 тестов в Console + DevTools:
+1. `start=2026-99-99` → `400 + {error: "Invalid start/end date..."}` ✅
+2. `start=2020 end=2026` → `400 + {error: "Date range too wide (max 400 days, got 2302)"}` ✅
+3. `/api/query` POST → `404 Not Found` ✅
+4. `restaurant_id=5abc` → `400 + {error: "Invalid restaurant_id"}` ✅
+5. Нормальный запрос → `{net: {...}, top10: {...}, rest_count: 42}` ✅
+
+Дашборд работает: KPI 116К₽/день, 1 578₽ ср.чек, прогноз 3.16М₽, графики на месте.
+
+#### Уроки на будущее (зафиксированы в разделе 13)
+
+1. Никогда не делать TS-сигнатуру с двумя опциональными аргументами одного контекста
+2. После автозамены через скрипт — визуально проверять 5-10 случайных вызовов
+3. При маскировке ошибок — оставлять полный traceback в `console.error`
+4. При первом подозрительном симптоме — `wrangler tail` во втором терминале
 
 ### 20.04.2026, ночь (~3 часа работы) — Фаза 2 ЗАВЕРШЕНА
 
@@ -512,6 +589,88 @@ chicko.mart_menu_daily (агрегат по дням и блюдам — для 
 
 ---
 
+## 13. Независимый security-аудит (20-21.04.2026)
+
+После завершения Phase 2.3 проведён внешний security-аудит силами другого ИИ (GPT/Gemini). На вход — 5 серверных файлов (`index.ts`, `auth.ts`, `dow_profiles.ts`, `forecast.ts`, `data_endpoints.ts`).
+
+### Найдено 14 проблем
+
+| # | Категория | Проблема | Приоритет |
+|---|---|---|---|
+| 1 | Auth | Fallback на статический JWT secret `'temp-secret-key-...'` в 4 файлах | 🔴 Критично |
+| 2 | Auth | Magic-link token передаётся через URL query → утечка в logs/Referer/history | 🔴 Критично |
+| 3 | Auth | JWT в localStorage → любой XSS = захват аккаунта на 30 дней | 🔴 Критично |
+| 4 | Access | Нет server-side RLS — любой валидный пользователь может запросить любой restaurant_id | 🔴 Критично |
+| 5 | SQL | Даты валидируются только regex'ом → невалидные даты + неограниченный диапазон | 🟠 Высокий |
+| 6 | DoS | Rate limiting только на `/auth/request-link`. Verify, feedback, data endpoints открыты для abuse | 🟠 Высокий |
+| 7 | CORS | `Access-Control-Allow-Origin: *` на всех endpoints | 🟠 Высокий |
+| 8 | Privacy | Клиент получает полный набор данных по всей сети + архитектурные комментарии | 🟠 Высокий |
+| 9 | Input | `parseInt('5abc')` → 5. Permissive parsing для `restaurant_id` | 🟢 Средний |
+| 10 | Auth | JWT не имеет `jti`, `iss`, `aud`, scope claims | 🟡 Средний |
+| 11 | Auth | JWT TTL 30 дней — слишком долго при компрометации | 🟡 Средний |
+| 12 | Logs | `err.message` возвращается клиенту в 500 ответах — утечка деталей ClickHouse | 🟡 Средний |
+| 13 | Cache | HTML кешируется 5 минут — устаревшие fixes | 🟢 Низкий |
+| 14 | Headers | Нет CSP, X-Content-Type-Options, Referrer-Policy | 🟢 Низкий |
+
+### Что закрыто в Phase 2.4a (8 пунктов)
+
+- ✅ #1 Hard-fail при отсутствии секрета через `requireJwtSecret()` (не запустится если не задан или короче 16 символов)
+- ✅ #5 `parseIsoDate()` с round-trip через `Date` + проверка `start ≤ end` + лимит ≤400 дней
+- ✅ #7 CORS whitelist (только `chicko-api-proxy.chicko-api.workers.dev`) через `corsHeadersFor(request)`
+- ✅ #9 `parsePositiveIntStrict()` через regex `^[1-9]\d*$`
+- ✅ #11 JWT TTL: 30 дней → 7 дней
+- ✅ #12 Все 500 ответы возвращают `{error: 'Request failed'}` без деталей. Полный stack только в `console.error`
+- ✅ #13 `Cache-Control: no-store` для HTML
+- ✅ #14 Headers: `Referrer-Policy: strict-origin-when-cross-origin`, `X-Content-Type-Options: nosniff`, `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()`. Также добавлены лимиты длины полей в `/api/feedback` (text 4000, category 50, restaurant 200)
+
+### Что отложено осознанно
+
+- ⏳ **#14 CSP (Phase 2.4b)** — Content-Security-Policy ломает рендер дашборда из-за множества inline styles и onclick handlers в `dashboard.ts`. Нужно сначала прогнать в режиме `Content-Security-Policy-Report-Only`, изучить какие inline-вещи использует дашборд, подобрать правильную политику.
+- ⏳ **#3 HttpOnly cookies** вместо JWT в localStorage — требует переработки auth flow на клиенте + backend. Делаем перед запуском пилота с реальными пользователями (~3-4 часа).
+- ⏳ **#6 Rate limiting на data endpoints** — требует отдельной KV-логики или Cloudflare Rate Limiting binding. Не критично пока 4 пользователя, но нужно перед публичным запуском.
+- ⏳ **#2 Magic-link через cookie** вместо URL — переделка флоу авторизации. Текущий риск умеренный: токен живёт 15 минут, одноразовый.
+- ⏳ **#4 RLS** — у нас по бизнесу все 42 ресторана видны всем 4 пользователям (см. решение 5.35). Реализуем когда добавим роли (owner / regional_manager / restaurant_manager).
+- ⏳ **#8 BFF view-models** — клиент сейчас получает данные по всей сети. Обоснованно (по бизнесу), но в перспективе можно урезать.
+- ⏳ **#10 Расширенные JWT claims** — добавим вместе с RLS.
+
+### Урок Phase 2.4a — четыре отката из-за плохой сигнатуры
+
+Сигнатура `jsonResponse(body, status?, request?)` с двумя опциональными аргументами оказалась ловушкой:
+
+```ts
+// Я писал в коде:
+jsonResponse({ ok: true }, request)  // ← хотел: body + request
+// JavaScript интерпретировал:
+jsonResponse({ ok: true }, status=request)  // ← request попал в status!
+// Результат: new Response(..., { status: <Request object> })
+// → "Responses may only be constructed with status codes in the range 200-599"
+```
+
+Усугубилось:
+1. Я применил Python-скрипт автозамены ко всем jsonResponse вызовам в 4 файлах
+2. Скрипт работал, но инвертировал порядок: `(body, status, request)` ↔ `(body, request, status)` в разных проходах
+3. Маскировка ошибок (по тому же аудиту) скрыла причину собственного бага — клиент получал генерический «Request failed» вместо traceback'а
+
+**Итог:** 4 деплоя с откатом, потерян час. Прод восстановлен через `git revert` каждый раз.
+
+**Решение, принятое в Phase 2.4a:** сигнатура `jsonResponse(body, request, status?)` — `request` обязателен (CORS должен работать всегда), `status` опционален (default 200). Type system теперь не позволит забыть.
+
+**Уроки на будущее (зафиксированы):**
+1. **Никогда** не делать TS-функцию с двумя опциональными аргументами одного семантического контекста
+2. После автозамены через скрипт **всегда** визуально проверять 5-10 случайных вызовов перед `git push`
+3. При маскировке ошибок (требование security) **всегда** оставлять полный traceback в `console.error` для `wrangler tail`
+4. При первом подозрительном symptom — **сразу** запускать `wrangler tail` во втором терминале, не угадывать причину
+
+### Полная инструкция по аудиту
+
+Когда возникнет необходимость провести следующий аудит:
+- **Промпт:** «провести независимый security audit, найти минимум 5 проблем» (не «подтвердить что защита работает» — иначе польстит)
+- **Файлы:** все серверные `.ts` (5-7 штук). НЕ кидать секреты, NDA-protected данные, dashboard.ts (избыточно для бэкенд-аудита)
+- **Параллельно:** Gemini 2.5 Pro + ChatGPT o1/GPT-5 + DeepSeek V3 — если есть бюджет на платную подписку. Бесплатно — Gemini.
+- Категории для проверки: SQL injection, JWT/auth, RLS, rate limiting, info leakage, CORS/CSRF, credentials handling
+
+---
+
 ## 14. Полный бэклог (1–77)
 
 ### Снято / не актуально (X)
@@ -597,14 +756,24 @@ chicko.mart_menu_daily (агрегат по дням и блюдам — для 
 
 ### Следующие сессии
 
-**После завершения Фазы 2 — все задачи продуктового развития:**
+**Фаза 2.4b (security, ~2-3ч):**
+- CSP в Report-Only режиме: задеплоить с заголовком `Content-Security-Policy-Report-Only` (только репортит, не блокирует), собрать violations за неделю, подобрать корректную политику
+- После того как Report-Only тихий — сменить на блокирующий `Content-Security-Policy`
 
-**Фаза 1.4 остаток (~2-3ч):** #76 упрощение P&L калькулятора
-**Фаза 1.5 остаток (~2ч):** #75 доработка Сравнения (like-for-like DOW в нижней таблице «vs Сеть / ТОП-10»)
-**UX-проход (~2ч):** #23 шрифты, #25 цветовая слепота, #26 1366px, #43 доставка 0%, #48 формат денег, #51 tooltip anomaly_day
-**Мелочь замеченная в проде:** дубликат названия в заголовке прогноза «Чико (Калининград-1) (Калининград-1)»
+**Перед запуском пилота (security must-have):**
+- HttpOnly cookie auth вместо JWT в localStorage (~3-4ч)
+- Rate limiting на data endpoints через KV или Cloudflare Rate Limiting (~2ч)
 
-**Параллельно:**
+**Продуктовое развитие:**
+- **Фаза 1.4 остаток (~2-3ч):** #76 упрощение P&L калькулятора
+- **Фаза 1.5 остаток (~2ч):** #75 доработка Сравнения (like-for-like DOW в нижней таблице «vs Сеть / ТОП-10»)
+- **UX-проход (~2ч):** #23 шрифты, #25 цветовая слепота, #26 1366px, #43 доставка 0%, #48 формат денег, #51 tooltip anomaly_day
+- **Мелочь замеченная в проде:** дубликат названия в заголовке прогноза «Чико (Калининград-1) (Калининград-1)»
+
+**Волна 6 (см. раздел 12):**
+- Модуль анализа продаж по блюдам (15-20ч)
+
+**Параллельно (не-технические):**
 - Запустить регистрацию товарного знака System360 через агентство
 - Подписать приказ о коммерческой тайне
 - Запланировать пилот с 3-5 франчайзи (Волна 5)
@@ -612,4 +781,4 @@ chicko.mart_menu_daily (агрегат по дням и блюдам — для 
 ---
 
 **Авторы:** Aleksey Melnikov + Claude
-**Версии:** v3.3 → ... → v3.24 → **v3.25** (menu analysis module planned, 20.04.2026)
+**Версии:** v3.3 → ... → v3.25 → **v3.26** (security audit hardening Phase 2.4a deployed, 21.04.2026)
