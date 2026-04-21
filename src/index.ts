@@ -126,7 +126,7 @@ const CSP_REPORT_ONLY_POLICY = [
 // HTML-headers для главного дашборда: базовые + CSP Report-Only.
 const HTML_SECURITY_HEADERS: Record<string, string> = {
   ...HTML_SECURITY_HEADERS_BASE,
-  'Content-Security-Policy-Report-Only': CSP_REPORT_ONLY_POLICY,
+  // 'Content-Security-Policy-Report-Only': CSP_REPORT_ONLY_POLICY, // TEMP OFF 21.04.2026: KV flood, вернём 28.04 с unsafe-inline
 };
 
 // errorPage() не получает Content-Security-Policy-Report-Only:
