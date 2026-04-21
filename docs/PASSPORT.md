@@ -2,8 +2,8 @@
 
 > **Живой документ.** Обновляется после каждой значимой сессии работы.
 
-**Последнее обновление:** 21.04.2026, ~16:30 MSK — полностью переработан лист Анализ (#76 v4). P&L калькулятор «что если» превращён в калькулятор выручки с логикой остатка месяца, двухсценарной схемой (будни/выходные) и waterfall-разбором вклада каждого ползунка. Фудкост и маржа вынесены в бэклог Волны 6 (отдельная вкладка P&L после 1С-интеграции).
-**Версия паспорта:** 3.29
+**Последнее обновление:** 21.04.2026, ~17:00 MSK — фикс регрессии #11 JWT TTL (был заявлен закрытым в v3.28, но в `auth.ts` остался 30d) + Phase 2.4c CSP Report-Only задеплоена: новый `src/csp_report.ts`, endpoint `/api/csp-report` с KV-агрегацией (префикс `csp:`, TTL 7 дней), строгая политика без `unsafe-inline`. За первые минуты использования в проде собрано 41 уникальное нарушение. Enforce-политика будет составлена 28.04 на основе накопленных данных.
+**Версия паспорта:** 3.30
 
 ---
 
@@ -23,11 +23,11 @@
 |---|---|
 | **Production URL** | https://chicko-api-proxy.chicko-api.workers.dev 🟢 |
 | **GitHub** | github.com/AlexMelnikov1976/chicko-api-proxy |
-| **Общий прогресс** | ~97% MVP; **Фаза 2 защиты IP + Phase 2.4a/b security hardening завершены** |
+| **Общий прогресс** | ~97% MVP; **Фаза 2 защиты IP + Phase 2.4a/b/c security hardening завершены** |
 | **Закрыто P0-пунктов** | **19/22** (86%) |
-| **Последний коммит** | Phase 2.4b: rate limiting on data (60/min) + feedback (10/min) |
-| **Безопасность** | 9 из 14 пунктов независимого аудита закрыто. Остаток в Phase 2.4c (CSP) и перед пилотом (HttpOnly cookies, RLS) |
-| **Следующий фокус** | CSP в Report-Only → Phase 2.4c → пилот с 3-5 франчайзи → товарный знак |
+| **Последний коммит** | Phase 2.4c: CSP Report-Only + `/api/csp-report` с KV-агрегацией + фикс регрессии #11 (JWT TTL 30→7 в `auth.ts`) |
+| **Безопасность** | 10 из 14 пунктов независимого аудита закрыто + CSP в Report-Only режиме (enforce после 28.04). Остаток перед пилотом: HttpOnly cookies, RLS |
+| **Следующий фокус** | 28.04 — анализ CSP violations → enforce-политика → HttpOnly cookies → пилот с 3-5 франчайзи → товарный знак |
 
 ---
 
@@ -212,6 +212,7 @@ Yandex Managed ClickHouse (БД: chicko, user: dashboard_ro)
 │   ├── forecast.ts           # ⭐ GET /api/forecast — Алгоритм Г (Phase 2.2)
 │   ├── data_endpoints.ts     # ⭐ GET /api/{restaurants,benchmarks,restaurant-meta} (Phase 2.3)
 │   ├── security.ts           # ⭐ Helpers: requireJwtSecret, parsePositiveIntStrict, parseIsoDate, corsHeadersFor (Phase 2.4a)
+│   ├── csp_report.ts         # ⭐ POST /api/csp-report — приём CSP violations + KV-агрегация (Phase 2.4c)
 │   └── dashboard.ts          # HTML dashboard (self-contained, без SQL)
 ├── docs/
 │   ├── PASSPORT.md           # Этот файл
@@ -244,7 +245,7 @@ Yandex Managed ClickHouse (БД: chicko, user: dashboard_ro)
 | **1.4** | ✅ deployed 21.04 | **#71 блок прогноза** ✅ deployed, **#76 Анализ v4** ✅ deployed (waterfall, остаток месяца, variant C) |
 | **1.5** | 🟡 частично 21.04 | #75 Сравнение частично (группировка, лидеры, layout, синхр. селектора), UX даты, стрелки Динамики; #73/#74 ждут скрин |
 
-### ✅ Волна 4.5 (M5.5): Защита IP — **ЗАВЕРШЕНА 20.04.2026**
+### ✅ Волна 4.5 (M5.5): Защита IP — **ЗАВЕРШЕНА 21.04.2026**
 
 | Фаза | Статус | Результат |
 |---|---|---|
@@ -252,7 +253,8 @@ Yandex Managed ClickHouse (БД: chicko, user: dashboard_ro)
 | **2.2** | ✅ deployed 20.04 | computeForecast (Алгоритм Г) → `/api/forecast`. YoY-коэффициент и каскад fallback'ов на сервере |
 | **2.3** | ✅ deployed 20.04 (коммит `4e02b90`) | Закрыт `/api/query`. Клиент использует только whitelisted: `/api/{restaurants,benchmarks,restaurant-meta,dow-profiles,forecast}` |
 | **2.4a** | ✅ deployed 21.04 | Hardening по результатам внешнего security-аудита: 8 из 14 пунктов закрыто (см. раздел 13) |
-| **2.4b** | ⏳ отложена | CSP — нужно сначала Report-Only тестирование (dashboard.ts использует много inline styles/onclick) |
+| **2.4b** | ✅ deployed 21.04 | Rate limiting: 60/мин на data endpoints, 10/мин на `/api/feedback`. Fixed-window counters в KV |
+| **2.4c** | ✅ deployed 21.04 | CSP Report-Only + `/api/csp-report` + KV-агрегация. Фикс регрессии #11 (JWT TTL 30→7 в `auth.ts`). Допил #13/#14 на errorPage. Enforce-политика — после 28.04 |
 
 **Проверено в проде (Phase 2.3):**
 - `/api/query` возвращает 404 (универсальный SQL-прокси удалён)
@@ -396,6 +398,103 @@ chicko.mart_menu_daily (агрегат по дням и блюдам — для 
 ---
 
 ## 10. Changelog
+
+### 21.04.2026, день-4 (~1.5 часа работы) — фикс регрессии #11 + Phase 2.4c CSP Report-Only
+
+**Контекст:** При чтении исходников для планирования новой сессии обнаружено расхождение между паспортом и реальным состоянием кода: audit item #11 (JWT TTL 30→7 дней) помечен закрытым в Phase 2.4a, но в `src/auth.ts` функция `generateToken` всё ещё подписывала токены с `exp = now + 30d`. Клиент в `index.ts` получал `expires_in: 7d` в JSON-ответе `/api/auth/verify` — но это поле фронт даже не читает, оно было декоративным. Токен жил месяц вопреки аудиту.
+
+#### Фикс регрессии #11
+
+**`src/auth.ts`** (коммит `fix(#11): JWT TTL actually set to 7 days in auth.ts`):
+- `Math.floor(Date.now() / 1000) + (60 * 60 * 24 * 30)` → `... * 7`
+- Комментарий с ссылкой на Phase 2.4a и симптом регрессии — чтобы следующая сессия не повторила путаницу
+- Существующие токены (подписанные до деплоя) продолжают жить свои 30 дней — форсированного разлогина не было, чтобы не дёргать пилотных пользователей
+
+**`src/clickhouse.ts`** (коммит `fix(types): explicit cast for ClickHouse response body`):
+- `response.json()` начал возвращать `Promise<unknown>` в новых `@cloudflare/workers-types` — `tsc --noEmit` не чист
+- Добавлен интерфейс `ClickHouseJsonBody` (superset от `QueryResult` + опциональный `exception`) и явный каст
+- Не связано с #11, но блокировало typecheck — починили заодно
+
+**Проверено:**
+- В инкогнито-окне получен свежий JWT, в DevTools: `exp in days: 7.00` ✅
+- Поведение на существующих токенах — не тронуто
+
+#### Фаза 2.4c — CSP Report-Only
+
+**Новый файл `src/csp_report.ts` (~190 строк):**
+- `POST /api/csp-report` — принимает CSP violation reports от браузера (без auth: репорты могут идти с неаутентифицированных страниц)
+- Поддерживает оба формата: `application/csp-report` (legacy) и `application/reports+json` (Reporting API v1)
+- Дедуплицирует по паре `(directive, blocked-uri)` через 8-байтовый SHA-1 хэш
+- Агрегирует в KV namespace `MAGIC_LINKS` с префиксом `csp:` и TTL 7 дней
+- Поля записи: `count`, `first_seen`, `last_seen`, `directive`, `blocked_uri`, `sample_source`, `sample_line`, `sample_script` (первые 200 символов)
+- Защита от abuse: лимит размера body 10 КБ + проверка Content-Type
+- `console.log` для live-мониторинга через `wrangler tail` параллельно с KV-записью
+
+**`src/index.ts`:**
+- Добавлен `Content-Security-Policy-Report-Only` в `HTML_SECURITY_HEADERS` главного дашборда
+- Политика строгая, без `unsafe-inline` — цель собрать максимум violations:
+  ```
+  default-src 'self'; script-src 'self' 'report-sample'; style-src 'self' 'report-sample';
+  img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none';
+  base-uri 'self'; form-action 'self'; frame-ancestors 'none'; report-uri /api/csp-report
+  ```
+- `HTML_SECURITY_HEADERS` разделены на `_BASE` (для errorPage) и с CSP (для дашборда). Причина: `errorPage` содержит inline `<style>` и шумел бы собственным мусором в отчётах
+- Новый роут `POST /api/csp-report` → `handleCspReport`
+- **Допил #13/#14 аудита:** `errorPage` теперь возвращает `HTML_SECURITY_HEADERS_BASE` + `Cache-Control: no-store` в обеих ветках (до фикса — только `Content-Type`). При проверке «закрытых» пунктов аудита обнаружено что `HTML_SECURITY_HEADERS` применялся только к главному дашборду, но не к fallback error page.
+
+**Проверено в проде (после `wrangler deploy`):**
+
+1. `curl -s -D - https://chicko-api-proxy.chicko-api.workers.dev/` → хедер `content-security-policy-report-only: default-src 'self'; ...` на месте ✅
+2. `curl -X POST .../api/csp-report -H "Content-Type: application/csp-report" -d '{"csp-report":{...}}'` → `204` + в `wrangler tail` строка `[csp-report] style-src blocked=inline src=test:1` ✅
+3. Инкогнито-сессия в браузере (чтобы не терять основной 30d-токен до его естественного истечения): tail сыпет десятки `[csp-report]` с `style-src-attr`, `script-src-attr`, `font-src` ✅
+4. `wrangler kv key list --binding MAGIC_LINKS --prefix csp: --remote` → 41 уникальная запись за первые ~5 минут использования ✅
+5. Пример агрегированной записи: `{"count":2,"directive":"font-src","blocked_uri":"https://fonts.gstatic.com/s/jetbrainsmono/v24/..."}`
+
+**Что уже видно для будущей enforce-политики** (предварительные наблюдения, полная картина 28.04):
+- `style-src-attr` — массовые нарушения на inline `style="..."` в dashboard.ts
+- `script-src-attr` — десятки нарушений на inline `onclick`
+- `font-src` — `https://fonts.gstatic.com` (JetBrains Mono, Cormorant Garamond, Inter)
+- `style-src-elem` (видно в DevTools Issues, но не всё долетает до endpoint из-за legacy дедупликации браузера) — `https://fonts.googleapis.com` для CSS
+
+Дилемма для enforce-политики: `'unsafe-inline'` vs nonces.
+- **Прагматично** = `'unsafe-inline'` в `style-src` и `script-src`. Быстро, но ослабляет защиту от XSS.
+- **Правильно** = рефакторинг `onclick` → `addEventListener`, nonces на inline `<style>` блоки, генерация хэшей на билде. Часов 4-6 работы, крепкая защита.
+
+Решение принимаем 28.04 на основе полных данных.
+
+**Замечание про legacy `report-uri`:** Chrome дедуплицирует violations на уровне документа и шлёт не все (в DevTools Issues видно 979, но на endpoint прилетает подмножество). Для недельного observe-режима достаточно. При переходе на enforce при желании полноты — мигрируем на Reporting API v1 (`Report-To` header + `report-to` директива в CSP).
+
+**Замечание про wrangler 4:** в wrangler 4.x команды `kv key list/get` без флага `--remote` работают с локальным Miniflare state, а не с production KV. Первый запуск дал `[]` и кратковременный страх что endpoint не пишет в KV. Флаг `--remote` обязателен для чтения prod KV.
+
+#### Процесс на 28.04 (плановый запуск Phase 2.4c enforce)
+
+1. `wrangler kv key list --binding MAGIC_LINKS --prefix csp: --remote` — полный список накопленных нарушений
+2. Цикл `kv key get` + `jq -s 'sort_by(-.count)'` — ранжирование по частоте
+3. На основе топа составить enforce-политику (прагматичный или строгий вариант)
+4. Заменить `Content-Security-Policy-Report-Only` на `Content-Security-Policy` в `HTML_SECURITY_HEADERS`
+5. Мониторинг 1-2 суток через DevTools Console проверенных браузеров — ничего не блокируется без причины
+6. После стабилизации — решить: оставить `/api/csp-report` как мониторинг или удалить
+
+#### Урок — регрессия #11
+
+Паттерн разрыва между паспортом (источник правды в v3.28) и кодом (источник правды в `src/`). Для следующих сессий: **при обнаружении закрытого audit item не верить changelog'у на слово — читать diff конкретной строки исходника.** Минимум: перед заявкой «#N закрыт» проверять через `git show <commit> -- src/<file>`.
+
+Сегодня тот же паттерн прогнали по всем 9 «закрытым» пунктам аудита. Два — #13 (Cache-Control) и #14 (security headers) — оказались «частично закрытыми»: применялись к главному HTML, но не к `errorPage`. В этой сессии дополнительно закрыли и это.
+
+#### Файлы
+
+- `src/auth.ts` — 1 строка (30→7) + комментарий
+- `src/clickhouse.ts` — +интерфейс `ClickHouseJsonBody` + cast
+- `src/csp_report.ts` — новый файл, ~190 строк
+- `src/index.ts` — +импорт + разделение `HTML_SECURITY_HEADERS` → `_BASE` + новый роут + фикс `errorPage` headers в 2 ветках
+
+3 последовательных коммита, TypeScript `--noEmit` чист после каждого. Деплой успешный с первого раза — в отличие от Phase 2.4a с 4 откатами.
+
+#### Не-техническое на неделю (без изменений)
+
+- Запустить регистрацию товарного знака System360 через агентство (10-15 тыс ₽, 6-8 мес)
+- Подписать приказ о коммерческой тайне + NDA-приложение в договоры
+- Подготовить пилот с 3-5 франчайзи: список кандидатов, pitch, гипотезы для калибровки раздела 15
 
 ### 21.04.2026, день-3 (~4 часа работы) — переделка листа Анализ (#76 v4)
 
@@ -817,24 +916,29 @@ jsonResponse({ ok: true }, status=request)  // request попал в status!
 | 13 | Cache | HTML кешируется 5 минут — устаревшие fixes | 🟢 Низкий |
 | 14 | Headers | Нет CSP, X-Content-Type-Options, Referrer-Policy | 🟢 Низкий |
 
-### Что закрыто — 9 пунктов (Phase 2.4a + 2.4b)
+### Что закрыто — 10 пунктов (Phase 2.4a + 2.4b + 2.4c)
 
 **Phase 2.4a (8 пунктов, 21.04 утро):**
 - ✅ #1 Hard-fail при отсутствии секрета через `requireJwtSecret()` (не запустится если не задан или короче 16 символов)
 - ✅ #5 `parseIsoDate()` с round-trip через `Date` + проверка `start ≤ end` + лимит ≤400 дней
 - ✅ #7 CORS whitelist (только `chicko-api-proxy.chicko-api.workers.dev`) через `corsHeadersFor(request)`
 - ✅ #9 `parsePositiveIntStrict()` через regex `^[1-9]\d*$`
-- ✅ #11 JWT TTL: 30 дней → 7 дней
+- ⚠️ #11 JWT TTL: **заявлено** 30→7 дней, но в `auth.ts` оставалось 30 дней. **Реально закрыто в Phase 2.4c** (21.04 день-4) — см. changelog «фикс регрессии #11».
 - ✅ #12 Все 500 ответы возвращают `{error: 'Request failed'}` без деталей. Полный stack только в `console.error`
-- ✅ #13 `Cache-Control: no-store` для HTML
-- ✅ #14 Headers: `Referrer-Policy: strict-origin-when-cross-origin`, `X-Content-Type-Options: nosniff`, `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()`. Также добавлены лимиты длины полей в `/api/feedback` (text 4000, category 50, restaurant 200)
+- ✅ #13 `Cache-Control: no-store` для HTML — закрыто для главного дашборда в 2.4a, **для errorPage добавлено в Phase 2.4c** (21.04 день-4)
+- ✅ #14 Headers: `Referrer-Policy`, `X-Content-Type-Options`, `Permissions-Policy` — закрыто для главного дашборда в 2.4a, **для errorPage добавлено в Phase 2.4c**. Также добавлены лимиты длины полей в `/api/feedback` (text 4000, category 50, restaurant 200)
 
 **Phase 2.4b (1 пункт, 21.04 день):**
-- ✅ #6 Rate limiting на data endpoints — 60/мин/user на /api/{restaurants,benchmarks,restaurant-meta,dow-profiles,forecast}, 10/мин/user на /api/feedback. Fixed-window counters в KV `MAGIC_LINKS` с префиксом `rl:`, fail-open при ошибках KV
+- ✅ #6 Rate limiting на data endpoints — 60/мин/user на `/api/{restaurants,benchmarks,restaurant-meta,dow-profiles,forecast}`, 10/мин/user на `/api/feedback`. Fixed-window counters в KV `MAGIC_LINKS` с префиксом `rl:`, fail-open при ошибках KV
 
-### Что отложено осознанно (5 пунктов)
+**Phase 2.4c (1 пункт + регрессия-фиксы, 21.04 день-4):**
+- ✅ #14 CSP — `Content-Security-Policy-Report-Only` с строгой политикой (без `unsafe-inline`), endpoint `/api/csp-report` + KV-агрегация с префиксом `csp:` и TTL 7 дней. Enforce-политика — после анализа накопленных violations 28.04.
+- ✅ **Регрессия-фикс #11** — JWT TTL теперь реально 7 дней в `auth.ts` (проверено на свежем токене: `exp in days: 7.00`)
+- ✅ **Допил #13 и #14** — `HTML_SECURITY_HEADERS_BASE` + `Cache-Control: no-store` добавлены в обе ветки `errorPage`
 
-- ⏳ **#14 CSP (Phase 2.4c)** — Content-Security-Policy ломает рендер дашборда из-за множества inline styles и onclick handlers в `dashboard.ts`. Нужно сначала прогнать в режиме `Content-Security-Policy-Report-Only`, изучить какие inline-вещи использует дашборд, подобрать правильную политику.
+### Что отложено осознанно (4 пункта)
+
+- ⏳ **#14 CSP enforce** — `Content-Security-Policy-Report-Only` задеплоен 21.04 в Phase 2.4c. Через неделю (28.04) на основе накопленных violations в KV составим enforce-политику и сменим заголовок на `Content-Security-Policy`.
 - ⏳ **#3 HttpOnly cookies** вместо JWT в localStorage — требует переработки auth flow на клиенте + backend. Делаем перед запуском пилота с реальными пользователями (~3-4 часа).
 - ⏳ **#2 Magic-link через cookie** вместо URL — переделка флоу авторизации. Текущий риск умеренный: токен живёт 15 минут, одноразовый.
 - ⏳ **#4 RLS** — у нас по бизнесу все 42 ресторана видны всем 4 пользователям (см. решение 5.35). Реализуем когда добавим роли (owner / regional_manager / restaurant_manager).
@@ -964,13 +1068,15 @@ jsonResponse({ ok: true }, status=request)  // ← request попал в status!
 
 ### Следующие сессии
 
-**Фаза 2.4c (security, ~2-3ч):**
-- CSP в Report-Only режиме: задеплоить с заголовком `Content-Security-Policy-Report-Only` (только репортит, не блокирует), собрать violations за неделю, подобрать корректную политику
-- После того как Report-Only тихий — сменить на блокирующий `Content-Security-Policy`
+**Фаза 2.4c (security):**
+- ✅ deployed 21.04 — `Content-Security-Policy-Report-Only`, `/api/csp-report` с KV-агрегацией (префикс `csp:`, TTL 7 дней)
+- ⏳ **28.04 — анализ накопленных violations:** `wrangler kv key list --binding MAGIC_LINKS --prefix csp: --remote` → цикл `kv key get` + `jq -s 'sort_by(-.count)'` → составление enforce-политики
+- ⏳ после 28.04 — замена заголовка на блокирующий `Content-Security-Policy`, мониторинг 1-2 суток через DevTools Console
 
 **Перед запуском пилота (security must-have):**
-- HttpOnly cookie auth вместо JWT в localStorage (~3-4ч)
+- **HttpOnly cookie auth** вместо JWT в localStorage (~3-4ч) — закроет #3 аудита, существенно снизит риск XSS-захвата сессии
 - ~~Rate limiting на data endpoints~~ — ✅ закрыто в Phase 2.4b (21.04)
+- ~~CSP Report-Only~~ — ✅ закрыто в Phase 2.4c (21.04), enforce 28.04
 
 **Продуктовое развитие:**
 - ~~**Фаза 1.4 остаток (~2-3ч):** #76 упрощение P&L калькулятора~~ — ✅ закрыто 21.04 (7 итераций, финал v4: калькулятор выручки вместо P&L)
@@ -1130,4 +1236,4 @@ Chicko Analytics — **vertical intelligence platform для multi-unit restaura
 ---
 
 **Авторы:** Aleksey Melnikov + Claude
-**Версии:** v3.3 → ... → v3.27 → v3.28 → **v3.29** (переделка листа Анализ #76 v4 — revenue-focused калькулятор с waterfall, логикой остатка месяца, variant C для скидок, 21.04.2026)
+**Версии:** v3.3 → ... → v3.28 → v3.29 → **v3.30** (Phase 2.4c CSP Report-Only + `/api/csp-report` с KV-агрегацией + фикс регрессии #11 JWT TTL 30→7 в `auth.ts` + допил #13/#14 на errorPage + фикс типов `clickhouse.ts`, 21.04.2026)
