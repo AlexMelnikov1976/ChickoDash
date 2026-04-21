@@ -10,7 +10,10 @@ export async function generateToken(
   payload: Omit<JWTPayload, 'exp'>,
   secret: string
 ): Promise<string> {
-  const exp = Math.floor(Date.now() / 1000) + (60 * 60 * 24 * 30); // 30 days
+  // TTL 7 дней (Phase 2.4a, audit #11). До 21.04.2026 было 30 дней —
+  // клиент в index.ts получал expires_in=7d, но внутри JWT exp оставался 30d.
+  // Симптом: токен формально жил месяц вопреки аудиту.
+  const exp = Math.floor(Date.now() / 1000) + (60 * 60 * 24 * 7); // 7 days
   return await sign({ ...payload, exp }, secret);
 }
 
