@@ -2968,12 +2968,13 @@ function calcPL(){
   const weFc  = +document.getElementById('sl-we-fc').value;
   const weDisc= +document.getElementById('sl-we-disc').value;
 
-  // Подписи около ползунков
-  document.getElementById('sl-wd-chk-v').textContent = fmtR(wdChk);
+  // Подписи около ползунков. Средний чек — ДО РУБЛЯ (полный формат).
+  // Остальные значения — как есть.
+  document.getElementById('sl-wd-chk-v').textContent = fmtR(wdChk, true);
   document.getElementById('sl-wd-cnt-v').textContent = wdCnt;
   document.getElementById('sl-wd-fc-v').textContent  = fmtN(wdFc,1);
   document.getElementById('sl-wd-disc-v').textContent= fmtN(wdDisc,1);
-  document.getElementById('sl-we-chk-v').textContent = fmtR(weChk);
+  document.getElementById('sl-we-chk-v').textContent = fmtR(weChk, true);
   document.getElementById('sl-we-cnt-v').textContent = weCnt;
   document.getElementById('sl-we-fc-v').textContent  = fmtN(weFc,1);
   document.getElementById('sl-we-disc-v').textContent= fmtN(weDisc,1);
