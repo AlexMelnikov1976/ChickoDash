@@ -2,8 +2,8 @@
 
 > **Живой документ.** Обновляется после каждой значимой сессии работы.
 
-**Последнее обновление:** 21.04.2026, ~09:10 MSK — Phase 2.4a (security audit hardening) задеплоена
-**Версия паспорта:** 3.26
+**Последнее обновление:** 21.04.2026, ~10:40 MSK — Phase 2.4b (rate limiting) задеплоена. Архитектурное решение 5.39 (AI-инсайты через Claude Routines) зафиксировано на будущее.
+**Версия паспорта:** 3.27
 
 ---
 
@@ -23,10 +23,10 @@
 |---|---|
 | **Production URL** | https://chicko-api-proxy.chicko-api.workers.dev 🟢 |
 | **GitHub** | github.com/AlexMelnikov1976/chicko-api-proxy |
-| **Общий прогресс** | ~97% MVP; **Фаза 2 защиты IP + Phase 2.4a security hardening завершены** |
+| **Общий прогресс** | ~97% MVP; **Фаза 2 защиты IP + Phase 2.4a/b security hardening завершены** |
 | **Закрыто P0-пунктов** | **19/22** (86%) |
-| **Последний коммит** | `<hotfix>` fix(security): jsonResponse signature unified (body, request, status) |
-| **Безопасность** | 8 из 14 пунктов независимого аудита закрыто. Остаток в Phase 2.4b (CSP) и перед пилотом (HttpOnly cookies, RLS) |
+| **Последний коммит** | Phase 2.4b: rate limiting on data (60/min) + feedback (10/min) |
+| **Безопасность** | 9 из 14 пунктов независимого аудита закрыто. Остаток в Phase 2.4c (CSP) и перед пилотом (HttpOnly cookies, RLS) |
 | **Следующий фокус** | CSP в Report-Only режиме → #76 P&L → UX-проход → товарный знак |
 
 ---
@@ -140,6 +140,59 @@ Yandex Managed ClickHouse (БД: chicko, user: dashboard_ro)
 - Шаблон договора с отчуждением прав для подрядчиков
 - Главный моут — накопленные данные в ClickHouse за месяцы работы (невозможно скопировать из исходников)
 
+### 5.39 AI-инсайты через Claude Code Routines + Notion-кеш (направление, не реализовано)
+
+**Решение (архитектурное направление):** На следующем этапе после пилота — добавить в дашборд блок «🤖 AI-инсайт дня». Инсайты генерируются раз в сутки (в 08:00) через Claude Code Routine, пишутся в Notion, дашборд читает последнюю запись. Это **отложенное** архитектурное решение, фиксируется в паспорт чтобы не забыть путь.
+
+**Причина:** Пилотные пользователи хотят не «таблицу цифр», а «объяснение что произошло и что делать». On-demand AI в момент открытия дашборда (клиент → Claude API → 15-30с ответа) имеет три проблемы: (1) каждый клиент = платный запрос, стоимость линейна по трафику; (2) плохой UX из-за задержки; (3) недетерминированные ответы — два пользователя на одни и те же цифры получат разные тексты. Batch-генерация раз в сутки решает все три: константная стоимость, мгновенный UX, один каноничный ответ.
+
+**Архитектура:**
+
+```
+08:00 ежедневно
+  → Claude Code Routine (на инфре Anthropic, компьютер не нужен)
+    → POST n8n webhook
+      → n8n: агрегаты из ClickHouse (вчера vs неделя назад)
+      → возвращает JSON с метриками
+    ← Routine интерпретирует, пишет 3-5 инсайтов в Notion
+      (база «AI Insights», поля: дата, ресторан, текст, приоритет)
+
+В любой момент
+  Дашборд → GET /api/ai-insights?restaurant_id=N → Worker
+    → Notion API (читает последнюю запись для данного ресторана)
+    → возвращает render-ready JSON
+  Клиент → отображает в блоке «Инсайт дня»
+```
+
+**Почему именно Claude Code Routines, а не n8n + Claude API напрямую:**
+- Routines — нативная инфра Anthropic, research preview с апреля 2026. Не нужно содержать cron в n8n, не нужно управлять секретами Claude API в n8n.
+- Запуск на Max-плане — 15 Routine/день включены в подписку (нам нужно 1-2 для Чико + Puls + запас).
+- Уже есть MCP-коннекторы: Notion, n8n, Gmail, Google Drive. Routine подключается к ним напрямую.
+
+**Почему Notion как кеш, а не своя таблица в ClickHouse:**
+- Notion уже интегрирован (через виджет обратной связи, решение 5.36).
+- Редактируемо людьми — если Routine сгенерирует кривой инсайт, владелец может поправить текст вручную до того как клиент увидит.
+- Даёт бесплатную админку без разработки.
+
+**Переиспользование:** Паттерн (Routine → n8n → CH → Notion → дашборд) переносится 1-к-1 на Puls (кинотеатры) и любую следующую вертикаль. Это ядро будущего SaaS-шаблона System360.
+
+**Ограничения и риски, которые нужно держать в голове:**
+- **Research preview** — Anthropic может менять/ломать API. Для пилота допустимо, для production через 3+ месяца — нужен plan Б (fallback на обычный cron в n8n + Claude API). Архитектура должна быть такой, чтобы смена триггера не ломала остальное — именно поэтому n8n стоит посредником, а не вызывается Routine'ом напрямую.
+- **Stateless запуски** — Routine не помнит прошлых выполнений. Вся история — в Notion. Design-требование: каждый промпт должен тянуть контекст из Notion сам.
+- **Лимиты триггеров** — только hourly/nightly/weekly, нет произвольных cron. Для утренних инсайтов — достаточно. Если позже понадобится «пересчитать после обновления данных» — триггерим через HTTP endpoint Routine из n8n после успешной загрузки в CH.
+- **Качество инсайтов** — главный риск. Первая неделя после запуска — ручная ревизия каждого утреннего вывода, итерация промпта. До тех пор блок «Инсайт дня» в дашборде скрыт для пользователей.
+- **Зависимость от ClickHouse MCP** — нативного коннектора нет, идём через n8n. Это плюс (n8n можно менять независимо) и минус (ещё одна точка отказа между Routine и данными).
+
+**Оценка трудозатрат:** ~15-20 часов суммарно (не за одну неделю — реалистично 2-3 недели календарно с тестированием):
+- Настройка Claude Code + первой Routine: 1-2ч
+- n8n workflow для агрегатов CH → JSON: 3-4ч
+- Промпт-инжиниринг (итерации до приемлемого качества): 4-6ч
+- `/api/ai-insights` endpoint в Worker + Notion API интеграция: 2-3ч
+- Блок «Инсайт дня» в `dashboard.ts`: 2-3ч
+- Первая неделя ручной ревизии и калибровки: 3-5ч по часу в день
+
+**Приоритет:** после модуля анализа блюд (Волна 6, раздел 12). Причина: без детализации до блюд AI-инсайты сведутся к общим выводам о выручке/среднем чеке и быстро выдохнутся. С блюдами можно давать конкретику: «блюдо X упало на -30% за 2 недели, у конкурентов в районе оно в среднем на 15% дешевле — проверьте цену».
+
 ---
 
 ## 6. Credentials — без изменений (см. v3.14)
@@ -226,6 +279,16 @@ Yandex Managed ClickHouse (БД: chicko, user: dashboard_ro)
 - Labor cost — интеграция с системой учёта смен
 - Сегментация ресторанов по городу/формату/размеру
 - **⭐ Анализ продаж по блюдам** (см. раздел 12)
+
+### ⚪ Волна 7: AI-инсайты через Claude Routines (после Волны 6)
+
+**Цель:** превратить дашборд из «витрины цифр» в «утреннего аналитика». Блок «Инсайт дня» читается из Notion, пишется туда раз в сутки Claude Code Routine.
+
+**Почему после Волны 6:** без детализации до блюд инсайты сведутся к общим выводам и быстро выдохнутся. См. архитектурное решение 5.39.
+
+**Объём:** ~15-20ч работы (2-3 недели календарно с итерацией промпта и ручной ревизией первых выводов).
+
+**Переиспользование:** этот же паттерн (Routine → n8n → данные → Notion → дашборд) — ядро будущего SaaS-шаблона. После Чико разворачиваем на Puls (кинотеатры) со сменой только промпта и источника данных.
 
 ---
 
@@ -334,6 +397,55 @@ chicko.mart_menu_daily (агрегат по дням и блюдам — для 
 
 ## 10. Changelog
 
+### 21.04.2026, день (~2 часа работы) — Phase 2.4b rate limiting
+
+**Контекст:** Закрытие следующего пункта из security-аудита (#6 — rate limiting на data endpoints). После 4-х откатов Phase 2.4a — работали предельно осторожно, с typecheck до коммита и `wrangler tail` во втором терминале.
+
+#### Реализация
+
+**`src/security.ts` (+96 строк):**
+- `RateLimitConfig` — interface `{ limit, windowSec }`
+- `RATE_LIMIT_DATA` = 60 запросов/мин/user для аналитических endpoints
+- `RATE_LIMIT_FEEDBACK` = 10 запросов/мин/user для `/api/feedback`
+- `rateLimitOrResponse(kv, key, config, request)` — возвращает Response(429) или null
+- Fixed-window counters в KV (переиспользуем `MAGIC_LINKS` namespace с префиксом `rl:`)
+- FAIL-OPEN при ошибках KV — легитимные пользователи не должны ловить 429 из-за инфраструктурного сбоя
+- Сигнатура с учётом урока 2.4a: все 4 аргумента разных типов, ни одного опционального
+
+**Применено в 6 endpoint'ах:**
+- `/api/restaurants`, `/api/benchmarks`, `/api/restaurant-meta` (в `data_endpoints.ts`)
+- `/api/dow-profiles` (в `dow_profiles.ts`)
+- `/api/forecast` (в `forecast.ts`)
+- `/api/feedback` (в `index.ts`, с `RATE_LIMIT_FEEDBACK`)
+
+**Паттерн 2-step в каждом handler'е:**
+```ts
+const payload = await validateToken(...);
+if (!payload) return ...401;
+
+const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${payload.user_id}`, RATE_LIMIT_DATA, request);
+if (rl) return rl;
+```
+
+JWT проверка (дешёвая) идёт первой, rate limit — второй. Неавторизованные запросы отсекаются до KV-операций. Это правильно для защиты легитимных пользователей, но означает что защиты от DoS на неавторизованные endpoint'ы нет — добавим при необходимости отдельным слоем.
+
+#### Проверено в проде
+
+Smoke test через DevTools Console:
+```js
+const jwt = localStorage.getItem('chicko_jwt');
+for (let i = 1; i <= 65; i++) {
+  const r = await fetch('/api/benchmarks?start=2026-01-01&end=2026-01-31', ...);
+  if (r.status === 429) { console.log(`429 at #${i}`); break; }
+}
+```
+
+Результат: **429 сработал ровно на 61-м запросе**, `retry_after_sec=4`, `Retry-After: 4` хедер на месте. KV-лимит держит чётко, никаких eventual-consistency проблем на нашем масштабе. Дашборд во время теста работал штатно (rate limit на 60/мин не мешает нормальному UX).
+
+#### Урок
+
+Первый прогон smoke-теста дал 65 × 401 Unauthorized — я в инструкции указал неверный ключ localStorage (`jwt` вместо `chicko_jwt`). Хорошо что это всплыло в тесте, а не через месяц в проде. Для следующих сессий: перед smoke-тестами **проверять реальное имя ключа через grep в dashboard.ts**.
+
 ### 21.04.2026, утро (~4 часа работы) — Phase 2.4a security hardening + 4 отката
 
 **Контекст:** Получены результаты внешнего security-аудита (см. раздел 13). Цель — закрыть критичные и высокие приоритеты, не ломая прод.
@@ -349,7 +461,7 @@ chicko.mart_menu_daily (агрегат по дням и блюдам — для 
 7. Лимиты длины полей в `/api/feedback`
 8. Headers: Referrer-Policy, X-Content-Type-Options, Permissions-Policy + `Cache-Control: no-store`
 
-CSP отложен в Phase 2.4b: dashboard.ts использует много inline styles/onclick, нужно сначала Report-Only тестирование.
+CSP отложен на Phase 2.4c: dashboard.ts использует много inline styles/onclick, нужно сначала Report-Only тестирование. (Впоследствии 2.4b использовался для rate limiting, CSP стал 2.4c — см. следующие записи.)
 
 #### Создано: `src/security.ts` (89 строк)
 
@@ -612,8 +724,9 @@ jsonResponse({ ok: true }, status=request)  // request попал в status!
 | 13 | Cache | HTML кешируется 5 минут — устаревшие fixes | 🟢 Низкий |
 | 14 | Headers | Нет CSP, X-Content-Type-Options, Referrer-Policy | 🟢 Низкий |
 
-### Что закрыто в Phase 2.4a (8 пунктов)
+### Что закрыто — 9 пунктов (Phase 2.4a + 2.4b)
 
+**Phase 2.4a (8 пунктов, 21.04 утро):**
 - ✅ #1 Hard-fail при отсутствии секрета через `requireJwtSecret()` (не запустится если не задан или короче 16 символов)
 - ✅ #5 `parseIsoDate()` с round-trip через `Date` + проверка `start ≤ end` + лимит ≤400 дней
 - ✅ #7 CORS whitelist (только `chicko-api-proxy.chicko-api.workers.dev`) через `corsHeadersFor(request)`
@@ -623,11 +736,13 @@ jsonResponse({ ok: true }, status=request)  // request попал в status!
 - ✅ #13 `Cache-Control: no-store` для HTML
 - ✅ #14 Headers: `Referrer-Policy: strict-origin-when-cross-origin`, `X-Content-Type-Options: nosniff`, `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()`. Также добавлены лимиты длины полей в `/api/feedback` (text 4000, category 50, restaurant 200)
 
-### Что отложено осознанно
+**Phase 2.4b (1 пункт, 21.04 день):**
+- ✅ #6 Rate limiting на data endpoints — 60/мин/user на /api/{restaurants,benchmarks,restaurant-meta,dow-profiles,forecast}, 10/мин/user на /api/feedback. Fixed-window counters в KV `MAGIC_LINKS` с префиксом `rl:`, fail-open при ошибках KV
 
-- ⏳ **#14 CSP (Phase 2.4b)** — Content-Security-Policy ломает рендер дашборда из-за множества inline styles и onclick handlers в `dashboard.ts`. Нужно сначала прогнать в режиме `Content-Security-Policy-Report-Only`, изучить какие inline-вещи использует дашборд, подобрать правильную политику.
+### Что отложено осознанно (5 пунктов)
+
+- ⏳ **#14 CSP (Phase 2.4c)** — Content-Security-Policy ломает рендер дашборда из-за множества inline styles и onclick handlers в `dashboard.ts`. Нужно сначала прогнать в режиме `Content-Security-Policy-Report-Only`, изучить какие inline-вещи использует дашборд, подобрать правильную политику.
 - ⏳ **#3 HttpOnly cookies** вместо JWT в localStorage — требует переработки auth flow на клиенте + backend. Делаем перед запуском пилота с реальными пользователями (~3-4 часа).
-- ⏳ **#6 Rate limiting на data endpoints** — требует отдельной KV-логики или Cloudflare Rate Limiting binding. Не критично пока 4 пользователя, но нужно перед публичным запуском.
 - ⏳ **#2 Magic-link через cookie** вместо URL — переделка флоу авторизации. Текущий риск умеренный: токен живёт 15 минут, одноразовый.
 - ⏳ **#4 RLS** — у нас по бизнесу все 42 ресторана видны всем 4 пользователям (см. решение 5.35). Реализуем когда добавим роли (owner / regional_manager / restaurant_manager).
 - ⏳ **#8 BFF view-models** — клиент сейчас получает данные по всей сети. Обоснованно (по бизнесу), но в перспективе можно урезать.
@@ -756,13 +871,13 @@ jsonResponse({ ok: true }, status=request)  // ← request попал в status!
 
 ### Следующие сессии
 
-**Фаза 2.4b (security, ~2-3ч):**
+**Фаза 2.4c (security, ~2-3ч):**
 - CSP в Report-Only режиме: задеплоить с заголовком `Content-Security-Policy-Report-Only` (только репортит, не блокирует), собрать violations за неделю, подобрать корректную политику
 - После того как Report-Only тихий — сменить на блокирующий `Content-Security-Policy`
 
 **Перед запуском пилота (security must-have):**
 - HttpOnly cookie auth вместо JWT в localStorage (~3-4ч)
-- Rate limiting на data endpoints через KV или Cloudflare Rate Limiting (~2ч)
+- ~~Rate limiting на data endpoints~~ — ✅ закрыто в Phase 2.4b (21.04)
 
 **Продуктовое развитие:**
 - **Фаза 1.4 остаток (~2-3ч):** #76 упрощение P&L калькулятора
@@ -772,6 +887,12 @@ jsonResponse({ ok: true }, status=request)  // ← request попал в status!
 
 **Волна 6 (см. раздел 12):**
 - Модуль анализа продаж по блюдам (15-20ч)
+
+**Волна 7 (см. раздел 5.39, архитектурное решение зафиксировано):**
+- AI-инсайты через Claude Code Routines + Notion-кеш (~15-20ч, стартуем после Волны 6)
+- Предусловие: у пользователя активирована Claude Code on the web (Max-план, 15 Routines/день)
+- Первый MVP — одна Routine на всю сеть Чико в 08:00, пишет 3-5 инсайтов в Notion
+- После калибровки — разворачиваем тот же паттерн на Puls
 
 **Параллельно (не-технические):**
 - Запустить регистрацию товарного знака System360 через агентство
