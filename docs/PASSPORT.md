@@ -1,9 +1,9 @@
- # Паспорт проекта: Chicko Analytics
+# Паспорт проекта: Chicko Analytics
 
 > **Живой документ.** Обновляется после каждой значимой сессии работы.
 
-**Последнее обновление:** 21.04.2026, ~17:00 MSK — фикс регрессии #11 JWT TTL (был заявлен закрытым в v3.28, но в `auth.ts` остался 30d) + Phase 2.4c CSP Report-Only задеплоена: новый `src/csp_report.ts`, endpoint `/api/csp-report` с KV-агрегацией (префикс `csp:`, TTL 7 дней), строгая политика без `unsafe-inline`. За первые минуты использования в проде собрано 41 уникальное нарушение. Enforce-политика будет составлена 28.04 на основе накопленных данных.
-**Версия паспорта:** 3.30
+**Последнее обновление:** 21.04.2026, ~17:50 MSK — Phase 2.4d HttpOnly cookie auth задеплоена в прод (audit #3 закрыт). 6 файлов: `auth.ts` (cookie helpers + `SESSION_TTL_SEC` константа), `security.ts` (`authFromCookie`, `checkOrigin`, CORS Allow-Credentials), `index.ts` (новые `/api/auth/me` и `/api/auth/logout`, verify ставит Set-Cookie), три endpoint-файла на `authFromCookie`, `dashboard.ts` (JWT/localStorage удалены, fetch на credentials:'include'). Hotfix в той же сессии: CSP Report-Only временно отключён из-за KV write flood (40+ violations на загрузку), вернём 28.04 с unsafe-inline. Smoke-test end-to-end в проде: cookie HttpOnly ✓ Secure ✓ SameSite=Lax ✓, `document.cookie` пустой, `localStorage.chicko_jwt` = null, дашборд работает поверх cookie-auth.
+**Версия паспорта:** 3.31
 
 ---
 
@@ -23,11 +23,11 @@
 |---|---|
 | **Production URL** | https://chicko-api-proxy.chicko-api.workers.dev 🟢 |
 | **GitHub** | github.com/AlexMelnikov1976/chicko-api-proxy |
-| **Общий прогресс** | ~97% MVP; **Фаза 2 защиты IP + Phase 2.4a/b/c security hardening завершены** |
+| **Общий прогресс** | ~97% MVP; **Фаза 2 защиты IP + Phase 2.4a/b/c/d security hardening завершены** |
 | **Закрыто P0-пунктов** | **19/22** (86%) |
-| **Последний коммит** | Phase 2.4c: CSP Report-Only + `/api/csp-report` с KV-агрегацией + фикс регрессии #11 (JWT TTL 30→7 в `auth.ts`) |
-| **Безопасность** | 10 из 14 пунктов независимого аудита закрыто + CSP в Report-Only режиме (enforce после 28.04). Остаток перед пилотом: HttpOnly cookies, RLS |
-| **Следующий фокус** | 28.04 — анализ CSP violations → enforce-политика → HttpOnly cookies → пилот с 3-5 франчайзи → товарный знак |
+| **Последний коммит** | Phase 2.4d hotfix: CSP Report-Only временно off (KV flood). Перед ним — Phase 2.4d HttpOnly cookie auth (audit #3 закрыт), 6 файлов, миграция с `Authorization: Bearer` + localStorage на `chicko_session` cookie |
+| **Безопасность** | 11 из 14 пунктов независимого аудита закрыто. CSP Report-Only временно off (вернём 28.04). Остаток перед пилотом: RLS (#4) — отложен по бизнесу, magic-link через cookie (#2) — низкоприоритетно |
+| **Следующий фокус** | 28.04 — анализ CSP violations (накоплено за ~7 часов до hotfix) → enforce-политика с unsafe-inline или nonces → пилот с 3-5 франчайзи → товарный знак. Технические хвосты: #77 login form click broken (обходится консольным submit), UI logout button (сейчас только `window.logout()` из консоли) |
 
 ---
 
@@ -211,7 +211,7 @@ Yandex Managed ClickHouse (БД: chicko, user: dashboard_ro)
 │   ├── dow_profiles.ts       # ⭐ GET /api/dow-profiles (Phase 2.1)
 │   ├── forecast.ts           # ⭐ GET /api/forecast — Алгоритм Г (Phase 2.2)
 │   ├── data_endpoints.ts     # ⭐ GET /api/{restaurants,benchmarks,restaurant-meta} (Phase 2.3)
-│   ├── security.ts           # ⭐ Helpers: requireJwtSecret, parsePositiveIntStrict, parseIsoDate, corsHeadersFor (Phase 2.4a)
+│   ├── security.ts           # ⭐ Helpers: requireJwtSecret, parsePositiveIntStrict, parseIsoDate, corsHeadersFor, rateLimitOrResponse, authFromCookie, checkOrigin (Phase 2.4a/b/d)
 │   ├── csp_report.ts         # ⭐ POST /api/csp-report — приём CSP violations + KV-агрегация (Phase 2.4c)
 │   └── dashboard.ts          # HTML dashboard (self-contained, без SQL)
 ├── docs/
@@ -489,6 +489,60 @@ chicko.mart_menu_daily (агрегат по дням и блюдам — для 
 - `src/index.ts` — +импорт + разделение `HTML_SECURITY_HEADERS` → `_BASE` + новый роут + фикс `errorPage` headers в 2 ветках
 
 3 последовательных коммита, TypeScript `--noEmit` чист после каждого. Деплой успешный с первого раза — в отличие от Phase 2.4a с 4 откатами.
+
+#### Не-техническое на неделю (без изменений)
+
+- Запустить регистрацию товарного знака System360 через агентство (10-15 тыс ₽, 6-8 мес)
+- Подписать приказ о коммерческой тайне + NDA-приложение в договоры
+- Подготовить пилот с 3-5 франчайзи: список кандидатов, pitch, гипотезы для калибровки раздела 15
+
+### 21.04.2026, день-5 (~3 часа работы) — Phase 2.4d HttpOnly cookie auth + hotfix
+
+**Контекст.** Последний крупный security-блок перед пилотом — закрыть аудит #3 (JWT в localStorage, XSS-краадь токена → захват аккаунта на 7 дней). Перевод на HttpOnly Secure SameSite=Lax cookie: JavaScript физически не видит токен, XSS не может его вынести «наружу». Атакующий, поймавший XSS, всё ещё может ездить на активной сессии в открытой вкладке, но не может скопировать токен и использовать его с другого ноутбука/IP/завтра.
+
+#### Архитектурные решения
+
+- **SameSite=Lax**, не Strict. Strict ломает сценарий «франчайзи прислал ссылку себе в мессенджер» — cookie не уйдёт, увидит login. Lax — индустриальный дефолт для session cookie.
+- **JWT убран из JSON-ответа `/api/auth/verify`**. Возвращается только `{success, email}`. Клиент никогда не видит токен ни в каком виде.
+- **Новый `GET /api/auth/me`**. HttpOnly cookie невидим для JS, поэтому клиент не может из браузера понять «залогинен ли я». Endpoint отвечает 200 с email или 401 — клиент дёргает на старте `bootAuth`.
+- **Новый `POST /api/auth/logout`**. Возвращает Set-Cookie с Max-Age=0. Не требует валидного cookie (даже протухшая сессия должна уметь сама себя «забыть»). Защищён `checkOrigin`, чтобы атакующий не мог форсировать logout.
+- **CSRF-защита.** SameSite=Lax — основная (cross-site POST не прикладывает cookie). Дополнительно `checkOrigin` на state-changing POST (`/api/feedback`, `/api/auth/logout`) — Origin header против whitelist. Без double-submit-token: для пилота избыточно.
+- **CORS.** `Access-Control-Allow-Credentials: true` + убран `Authorization` из `Allow-Headers`. На клиенте все 8 fetch получили `credentials: 'include'`.
+- **Миграция existing users.** Нет dual-support. Все залогиненные через старую схему (по факту — только Alex) отвалятся, получат новую magic-link, войдут заново → cookie ставится. Одноразовая `localStorage.removeItem('chicko_jwt')` на старте каждой загрузки чистит legacy-ключ.
+
+#### Файлы
+
+- **`src/auth.ts`** — константы `SESSION_TTL_SEC` (7d, единый источник истины — устранил повторение урока #11) и `SESSION_COOKIE_NAME = 'chicko_session'`. Helpers `extractTokenFromCookie`, `buildSessionCookie`, `buildClearCookie`. `extractBearerToken` помечен legacy.
+- **`src/security.ts`** — shared `authFromCookie(request, env)` (заменил три копии локальных `auth()` в endpoint-файлах + inline-блок в `handleFeedback`). `checkOrigin(request)`. `corsHeadersFor` обновлён.
+- **`src/index.ts`** — `handleVerify` теперь ставит Set-Cookie. Новые `handleAuthMe` и `handleLogout`. `handleFeedback` мигрирован.
+- **`src/data_endpoints.ts`** — локальный `auth()` helper удалён, три handler'а на `authFromCookie`.
+- **`src/dow_profiles.ts`** — inline auth-блок (10 строк) → `authFromCookie` (2 строки).
+- **`src/forecast.ts`** — то же.
+- **`src/dashboard.ts`** — `JWT_KEY/getJWT/setJWT/clearJWT` удалены; глобальная `USER_EMAIL` (заполняется из verify/me, заменяет JWT-decode в `fbGetEmail`); `bootAuth` через `/api/auth/me`; 8 fetch на `credentials: 'include'`; `window.logout` для консоли (UI-кнопки нет — отдельная задача); guard `!getJWT()` в `init()` удалён (bootAuth уже обработал).
+
+#### Грабли в проде
+
+1. **Первый коммит Phase 2.4d не включил `dashboard.ts`.** `git add -A` после серверных правок — клиентский файл не был замувлен с `~/Downloads/`. Прод оказался в сломанном состоянии (~5 минут): сервер требовал cookie, старый клиент слал `Authorization: Bearer`, который CORS теперь не пропускает. Diagnosed по `git diff --stat`: в списке файлов `dashboard.ts` отсутствовал. Fix вторым коммитом, ничего не теряем.
+
+2. **CSP Report-Only генерил KV write flood.** Строгая политика без `unsafe-inline` ловила ~40 violations на каждую загрузку dashboard'а (там много `style="..."` в HTML). Каждая violation = `KV.get` + `KV.put` в `MAGIC_LINKS`. За день суммарно выжгло дневной лимит 1000 writes — `[rate-limit] KV put() limit exceeded for the day`. Параллельно `storeToken` для magic-link мог падать → письма не приходили (на старте smoke-теста именно это и наблюдалось). **Hotfix:** закомментировал включение `Content-Security-Policy-Report-Only` в `HTML_SECURITY_HEADERS` через `sed`. Tail мгновенно разгрузился, magic-link заработал. Якорная дата 28.04 остаётся, но **вернём политику уже с `'unsafe-inline'` в `style-src`** или с nonces — иначе flood повторится. Это и есть тот выбор, который мы заложили на 28.04 в day-4: теперь у нас есть прямое эмпирическое подтверждение, что строгая политика без unsafe-inline нежизнеспособна на текущем dashboard.ts.
+
+3. **Login form click не сабмитит** (баг #77, обнаружен в smoke-тесте). При ручном вводе email и клике по жёлтой кнопке — fetch не уходит. При submit через консоль (`document.getElementById('loginForm').dispatchEvent(new Event('submit'))`) — работает. Скорее всего, `addEventListener('submit')` в `DOMContentLoaded` отвалился из-за чего-то в новом `bootAuth`/`window.logout`. Не блокирует пилот (для smoke-теста обошли консолью), починим до захода первых пилотных юзеров.
+
+#### Smoke-test в проде
+
+Прошёл end-to-end из incognito:
+
+1. `/api/auth/me` без cookie → 401 ✓
+2. `POST /api/auth/request-link` → 200, в tail `[request-link] email sent to ...` ✓
+3. Клик по magic-link → `/auth/callback` → `/?login_token=...` → `POST /api/auth/verify` → `[verify] login success for ..., user_id=user_001` ✓
+4. **Set-Cookie с правильными флагами:** `chicko_session=<jwt>; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800` ✓
+5. `GET /api/auth/me` → 200 с email ✓
+6. Все защищённые endpoints прошли через cookie: `/api/restaurants`, `/api/benchmarks`, `/api/restaurant-meta`, `/api/forecast`, `/api/dow-profiles` — реальные данные на экране ✓
+7. **DevTools Application → Cookies:** HttpOnly ✓ Secure ✓ SameSite Lax ✓
+8. `document.cookie` → `""` (cookie невидим для JS) ✓
+9. `localStorage.getItem('chicko_jwt')` → `null` (legacy-ключ выкорчеван одноразовой уборкой) ✓
+
+**Audit #3 закрыт.** Защита: атакующий, получивший XSS на странице, физически не может вынести `chicko_session`. Может только ездить на активной сессии в открытой вкладке (защищается CSP enforce и общим качеством кода). Сдвиг с «токен украден на 7 дней» к «атакующий ездит на сессии до закрытия вкладки» — на порядок ниже риск.
 
 #### Не-техническое на неделю (без изменений)
 
@@ -903,7 +957,7 @@ jsonResponse({ ok: true }, status=request)  // request попал в status!
 |---|---|---|---|
 | 1 | Auth | Fallback на статический JWT secret `'temp-secret-key-...'` в 4 файлах | 🔴 Критично |
 | 2 | Auth | Magic-link token передаётся через URL query → утечка в logs/Referer/history | 🔴 Критично |
-| 3 | Auth | JWT в localStorage → любой XSS = захват аккаунта на 30 дней | 🔴 Критично |
+| 3 | Auth | JWT в localStorage → любой XSS = захват аккаунта на 30 дней | ✅ закрыто Phase 2.4d (HttpOnly cookie) |
 | 4 | Access | Нет server-side RLS — любой валидный пользователь может запросить любой restaurant_id | 🔴 Критично |
 | 5 | SQL | Даты валидируются только regex'ом → невалидные даты + неограниченный диапазон | 🟠 Высокий |
 | 6 | DoS | Rate limiting только на `/auth/request-link`. Verify, feedback, data endpoints открыты для abuse | 🟠 Высокий |
@@ -916,7 +970,7 @@ jsonResponse({ ok: true }, status=request)  // request попал в status!
 | 13 | Cache | HTML кешируется 5 минут — устаревшие fixes | 🟢 Низкий |
 | 14 | Headers | Нет CSP, X-Content-Type-Options, Referrer-Policy | 🟢 Низкий |
 
-### Что закрыто — 10 пунктов (Phase 2.4a + 2.4b + 2.4c)
+### Что закрыто — 11 пунктов (Phase 2.4a + 2.4b + 2.4c + 2.4d)
 
 **Phase 2.4a (8 пунктов, 21.04 утро):**
 - ✅ #1 Hard-fail при отсутствии секрета через `requireJwtSecret()` (не запустится если не задан или короче 16 символов)
@@ -932,14 +986,16 @@ jsonResponse({ ok: true }, status=request)  // request попал в status!
 - ✅ #6 Rate limiting на data endpoints — 60/мин/user на `/api/{restaurants,benchmarks,restaurant-meta,dow-profiles,forecast}`, 10/мин/user на `/api/feedback`. Fixed-window counters в KV `MAGIC_LINKS` с префиксом `rl:`, fail-open при ошибках KV
 
 **Phase 2.4c (1 пункт + регрессия-фиксы, 21.04 день-4):**
-- ✅ #14 CSP — `Content-Security-Policy-Report-Only` с строгой политикой (без `unsafe-inline`), endpoint `/api/csp-report` + KV-агрегация с префиксом `csp:` и TTL 7 дней. Enforce-политика — после анализа накопленных violations 28.04.
+- ✅ #14 CSP — `Content-Security-Policy-Report-Only` с строгой политикой (без `unsafe-inline`), endpoint `/api/csp-report` + KV-агрегация с префиксом `csp:` и TTL 7 дней. Enforce-политика — после анализа накопленных violations 28.04. **Hotfix Phase 2.4d:** Report-Only временно отключён из-за KV write flood (40+ violations на загрузку выжгли дневной лимит KV). Вернём 28.04 уже с `unsafe-inline` или nonces.
 - ✅ **Регрессия-фикс #11** — JWT TTL теперь реально 7 дней в `auth.ts` (проверено на свежем токене: `exp in days: 7.00`)
 - ✅ **Допил #13 и #14** — `HTML_SECURITY_HEADERS_BASE` + `Cache-Control: no-store` добавлены в обе ветки `errorPage`
 
-### Что отложено осознанно (4 пункта)
+**Phase 2.4d (1 пункт, 21.04 день-5):**
+- ✅ **#3 HttpOnly cookie auth.** JWT перенесён из `localStorage['chicko_jwt']` в `Set-Cookie: chicko_session=...; HttpOnly; Secure; SameSite=Lax`. JavaScript физически не видит токен. Закрывает основной XSS-вектор (кражу токена «наружу»). Полный smoke-test в проде: `document.cookie` пустой, `localStorage.chicko_jwt` = null, дашборд работает поверх cookie-auth. См. подробный changelog «день-5».
 
-- ⏳ **#14 CSP enforce** — `Content-Security-Policy-Report-Only` задеплоен 21.04 в Phase 2.4c. Через неделю (28.04) на основе накопленных violations в KV составим enforce-политику и сменим заголовок на `Content-Security-Policy`.
-- ⏳ **#3 HttpOnly cookies** вместо JWT в localStorage — требует переработки auth flow на клиенте + backend. Делаем перед запуском пилота с реальными пользователями (~3-4 часа).
+### Что отложено осознанно (3 пункта)
+
+- ⏳ **#14 CSP enforce** — `Content-Security-Policy-Report-Only` задеплоен 21.04 в Phase 2.4c, **временно выключен в Phase 2.4d hotfix** из-за KV flood. 28.04 вернём уже с правильной политикой (с `unsafe-inline` или nonces) и сменим на блокирующий `Content-Security-Policy`.
 - ⏳ **#2 Magic-link через cookie** вместо URL — переделка флоу авторизации. Текущий риск умеренный: токен живёт 15 минут, одноразовый.
 - ⏳ **#4 RLS** — у нас по бизнесу все 42 ресторана видны всем 4 пользователям (см. решение 5.35). Реализуем когда добавим роли (owner / regional_manager / restaurant_manager).
 - ⏳ **#8 BFF view-models** — клиент сейчас получает данные по всей сети. Обоснованно (по бизнесу), но в перспективе можно урезать.
@@ -1070,13 +1126,19 @@ jsonResponse({ ok: true }, status=request)  // ← request попал в status!
 
 **Фаза 2.4c (security):**
 - ✅ deployed 21.04 — `Content-Security-Policy-Report-Only`, `/api/csp-report` с KV-агрегацией (префикс `csp:`, TTL 7 дней)
-- ⏳ **28.04 — анализ накопленных violations:** `wrangler kv key list --binding MAGIC_LINKS --prefix csp: --remote` → цикл `kv key get` + `jq -s 'sort_by(-.count)'` → составление enforce-политики
+- ⚠️ **hotfix 21.04** — Report-Only временно отключён из-за KV write flood (40+ violations на загрузку, выжгло дневной лимит KV)
+- ⏳ **28.04 — анализ накопленных violations** (за ~7 часов до hotfix успели накопиться): `wrangler kv key list --binding MAGIC_LINKS --prefix csp: --remote` → цикл `kv key get` + `jq -s 'sort_by(-.count)'` → составление enforce-политики **уже с `'unsafe-inline'` в `style-src`** или с nonces (без них на текущем dashboard.ts flood неизбежен)
 - ⏳ после 28.04 — замена заголовка на блокирующий `Content-Security-Policy`, мониторинг 1-2 суток через DevTools Console
 
+**Фаза 2.4d (security):**
+- ✅ deployed 21.04 — HttpOnly Secure SameSite=Lax cookie, новые `/api/auth/me` и `/api/auth/logout`, audit #3 закрыт
+- ⏳ **#77 login form click broken** — кнопка «Получить ссылку» не сабмитит форму при ручном клике; submit через консоль работает. Чинить до захода первых пилотных юзеров (~30 мин)
+- ⏳ **UI logout button** — сейчас только `window.logout()` из консоли. Нужно увидеть финальный header дашборда и встроить кнопку рядом с email (~30 мин)
+
 **Перед запуском пилота (security must-have):**
-- **HttpOnly cookie auth** вместо JWT в localStorage (~3-4ч) — закроет #3 аудита, существенно снизит риск XSS-захвата сессии
+- ~~HttpOnly cookie auth~~ — ✅ закрыто в Phase 2.4d (21.04)
 - ~~Rate limiting на data endpoints~~ — ✅ закрыто в Phase 2.4b (21.04)
-- ~~CSP Report-Only~~ — ✅ закрыто в Phase 2.4c (21.04), enforce 28.04
+- ~~CSP Report-Only~~ — ✅ закрыто в Phase 2.4c (21.04), hotfix-off, enforce 28.04
 
 **Продуктовое развитие:**
 - ~~**Фаза 1.4 остаток (~2-3ч):** #76 упрощение P&L калькулятора~~ — ✅ закрыто 21.04 (7 итераций, финал v4: калькулятор выручки вместо P&L)
@@ -1236,4 +1298,4 @@ Chicko Analytics — **vertical intelligence platform для multi-unit restaura
 ---
 
 **Авторы:** Aleksey Melnikov + Claude
-**Версии:** v3.3 → ... → v3.28 → v3.29 → **v3.30** (Phase 2.4c CSP Report-Only + `/api/csp-report` с KV-агрегацией + фикс регрессии #11 JWT TTL 30→7 в `auth.ts` + допил #13/#14 на errorPage + фикс типов `clickhouse.ts`, 21.04.2026)
+**Версии:** v3.3 → ... → v3.28 → v3.29 → v3.30 → **v3.31** (Phase 2.4d HttpOnly cookie auth — audit #3 закрыт; миграция с `Authorization: Bearer` + localStorage на `chicko_session` HttpOnly Secure SameSite=Lax cookie; новые `/api/auth/me` и `/api/auth/logout`; shared `authFromCookie` + `checkOrigin`; client `bootAuth` через `/me`, `USER_EMAIL` global, `window.logout`. Hotfix: CSP Report-Only временно off из-за KV write flood, вернём 28.04 уже с unsafe-inline. 21.04.2026, день-5)
