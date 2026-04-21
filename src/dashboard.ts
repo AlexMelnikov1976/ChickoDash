@@ -612,7 +612,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
         <div style="font-size:11px;color:var(--blue);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:10px">📅 Будни (Пн–Пт) · <span id="pl-wd-days" style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text2)">—</span></div>
         <div class="sl-row">
           <div class="sl-hdr"><span class="sl-name">Средний чек (₽)</span><span class="sl-val" id="sl-wd-chk-v">—</span></div>
-          <input type="range" id="sl-wd-chk" min="300" max="3500" step="10" oninput="calcPL()">
+          <input type="range" id="sl-wd-chk" min="300" max="3500" step="1" oninput="calcPL()">
         </div>
         <div class="sl-row">
           <div class="sl-hdr"><span class="sl-name">Чеков в день</span><span class="sl-val" id="sl-wd-cnt-v">—</span></div>
@@ -636,7 +636,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
         <div style="font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:10px">🎉 Выходные (Сб–Вс) · <span id="pl-we-days" style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text2)">—</span></div>
         <div class="sl-row">
           <div class="sl-hdr"><span class="sl-name">Средний чек (₽)</span><span class="sl-val" id="sl-we-chk-v">—</span></div>
-          <input type="range" id="sl-we-chk" min="300" max="3500" step="10" oninput="calcPL()">
+          <input type="range" id="sl-we-chk" min="300" max="3500" step="1" oninput="calcPL()">
         </div>
         <div class="sl-row">
           <div class="sl-hdr"><span class="sl-name">Чеков в день</span><span class="sl-val" id="sl-we-cnt-v">—</span></div>
@@ -2803,9 +2803,10 @@ function computePlContext() {
     if (isWeekend(dateStr)) remWe++; else remWd++;
   }
 
-  // Прошедшие дни текущего месяца: считаем фактическую маржу из R.ts
+  // Прошедшие дни текущего месяца: считаем фактическую маржу и выручку из R.ts
   const monthPrefix = \`\${year}-\${String(month1).padStart(2,'0')}-\`;
   let pastActualMargin = 0;
+  let pastActualRev = 0;
   let pastWd = 0, pastWe = 0;
   for (const t of R.ts) {
     if (t.date && t.date.indexOf(monthPrefix) === 0 && t.revenue > 0) {
@@ -2815,6 +2816,7 @@ function computePlContext() {
       const net = t.revenue - discAmt;
       const fcAmt = net * fc / 100;
       pastActualMargin += net - fcAmt;
+      pastActualRev += t.revenue;
       if (isWeekend(t.date)) pastWe++; else pastWd++;
     }
   }
@@ -2844,7 +2846,7 @@ function computePlContext() {
   return {
     wdBase, weBase,
     remWd, remWe,
-    pastWd, pastWe, pastActualMargin,
+    pastWd, pastWe, pastActualMargin, pastActualRev,
     todayStr: maxStr, daysInMonth, base90Days: base90.length,
   };
 }
@@ -2996,24 +2998,45 @@ function calcPL(){
   const factMonth = ctx.pastActualMargin + factRem;
   const scenMonth = ctx.pastActualMargin + scenRem;
 
+  // Выручка: аналогично — прошедшая факт + остаток × (факт или сценарий)
+  const factRemRev = wdFact.rev * ctx.remWd + weFact.rev * ctx.remWe;
+  const scenRemRev = wdScen.rev * ctx.remWd + weScen.rev * ctx.remWe;
+  const factMonthRev = ctx.pastActualRev + factRemRev;
+  const scenMonthRev = ctx.pastActualRev + scenRemRev;
+
   // Эффект считается ТОЛЬКО по оставшейся части. Прошлое не трогаем.
   const deltaMonth = scenRem - factRem;
   const deltaYear  = deltaMonth * 12;
+  const deltaRev   = scenRemRev - factRemRev;
 
-  // Рендер блока «Факт» (левая колонка итога месяца)
+  // Дельты по строкам (для сценарной колонки)
+  const wdDeltaLine = (wdScen.margin - wdFact.margin) * ctx.remWd;
+  const weDeltaLine = (weScen.margin - weFact.margin) * ctx.remWe;
+
+  // Helper: форматирование дельты с цветом и знаком. Скрываем если совсем мелочь.
+  const fmtDelta = (v) => {
+    if (Math.abs(v) < 1) return '';
+    const color = v >= 0 ? 'var(--green)' : 'var(--red)';
+    const sign = v >= 0 ? '+' : '';
+    return \` <span style="color:\${color};font-weight:600;font-size:11px;margin-left:6px">\${sign}\${fmtR(v)}</span>\`;
+  };
+
+  // Рендер блока «Факт» (левая колонка — без дельт, это baseline)
   document.getElementById('plMonthFactual').innerHTML = \`
     <div class="pl-r" title="Фактическая маржа за прошедшие дни текущего месяца (из iiko)"><span class="pl-lbl">📆 Прошло: \${ctx.pastWd} будн + \${ctx.pastWe} вых</span><span class="pl-amt">\${fmtR(ctx.pastActualMargin)}</span></div>
     <div class="pl-r"><span class="pl-lbl">📅 Остаток будней: \${ctx.remWd} × \${fmtR(wdFact.margin)}</span><span class="pl-amt" style="color:var(--blue)">\${fmtR(wdFact.margin * ctx.remWd)}</span></div>
     <div class="pl-r"><span class="pl-lbl">🎉 Остаток вых: \${ctx.remWe} × \${fmtR(weFact.margin)}</span><span class="pl-amt" style="color:var(--gold)">\${fmtR(weFact.margin * ctx.remWe)}</span></div>
     <div class="pl-tot"><span class="pl-tot-lbl">Прогноз маржи/мес</span><span class="pl-tot-amt" style="color:var(--blue)">\${fmtR(factMonth)}</span></div>
+    <div class="pl-r" style="border-top:1px dashed rgba(46,64,104,.4);margin-top:6px;padding-top:8px"><span class="pl-lbl">💰 Прогноз выручки/мес</span><span class="pl-amt">\${fmtR(factMonthRev)}</span></div>
     <div style="font-size:10px;color:var(--text3);text-align:right;margin-top:4px">Год (при повторе): \${fmtR(factMonth*12)}</div>\`;
 
-  // Рендер блока «Сценарий» (правая колонка)
+  // Рендер блока «Сценарий» (правая колонка — с дельтами на каждой строке остатка и итога)
   document.getElementById('plMonthScenario').innerHTML = \`
     <div class="pl-r"><span class="pl-lbl">📆 Прошло: \${ctx.pastWd} будн + \${ctx.pastWe} вых <span style="color:var(--text3);font-size:9px">(не изменится)</span></span><span class="pl-amt">\${fmtR(ctx.pastActualMargin)}</span></div>
-    <div class="pl-r"><span class="pl-lbl">📅 Остаток будней: \${ctx.remWd} × \${fmtR(wdScen.margin)}</span><span class="pl-amt" style="color:var(--blue)">\${fmtR(wdScen.margin * ctx.remWd)}</span></div>
-    <div class="pl-r"><span class="pl-lbl">🎉 Остаток вых: \${ctx.remWe} × \${fmtR(weScen.margin)}</span><span class="pl-amt" style="color:var(--gold)">\${fmtR(weScen.margin * ctx.remWe)}</span></div>
-    <div class="pl-tot"><span class="pl-tot-lbl">Прогноз маржи/мес</span><span class="pl-tot-amt" style="color:var(--gold)">\${fmtR(scenMonth)}</span></div>
+    <div class="pl-r"><span class="pl-lbl">📅 Остаток будней: \${ctx.remWd} × \${fmtR(wdScen.margin)}</span><span class="pl-amt" style="color:var(--blue)">\${fmtR(wdScen.margin * ctx.remWd)}\${fmtDelta(wdDeltaLine)}</span></div>
+    <div class="pl-r"><span class="pl-lbl">🎉 Остаток вых: \${ctx.remWe} × \${fmtR(weScen.margin)}</span><span class="pl-amt" style="color:var(--gold)">\${fmtR(weScen.margin * ctx.remWe)}\${fmtDelta(weDeltaLine)}</span></div>
+    <div class="pl-tot"><span class="pl-tot-lbl">Прогноз маржи/мес</span><span class="pl-tot-amt" style="color:var(--gold)">\${fmtR(scenMonth)}\${fmtDelta(deltaMonth)}</span></div>
+    <div class="pl-r" style="border-top:1px dashed rgba(46,64,104,.4);margin-top:6px;padding-top:8px"><span class="pl-lbl">💰 Прогноз выручки/мес</span><span class="pl-amt">\${fmtR(scenMonthRev)}\${fmtDelta(deltaRev)}</span></div>
     <div style="font-size:10px;color:var(--text3);text-align:right;margin-top:4px">Год (при повторе): \${fmtR(scenMonth*12)}</div>\`;
 
   // Эффект: дельта только за остаток месяца
