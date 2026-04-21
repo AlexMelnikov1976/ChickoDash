@@ -14,20 +14,15 @@
 
 import { validateToken, extractBearerToken } from './auth';
 import { ClickHouseClient } from './clickhouse';
+import { corsHeadersFor, requireJwtSecret, parsePositiveIntStrict } from './security';
 import type { Env } from './index';
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, request: Request, status: number = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json',
-      ...CORS_HEADERS,
+      ...corsHeadersFor(request),
     },
   });
 }
@@ -199,15 +194,15 @@ export async function handleForecast(request: Request, env: Env): Promise<Respon
     const authHeader = request.headers.get('Authorization');
     const token = extractBearerToken(authHeader);
     if (!token) {
-      return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, 401);
+      return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, 401, request);
     }
 
     const payload = await validateToken(
       token,
-      env.JWT_SECRET || 'temp-secret-key-change-in-production'
+      requireJwtSecret(env)
     );
     if (!payload) {
-      return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, 401);
+      return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, 401, request);
     }
 
     // --- Input ---
@@ -215,10 +210,10 @@ export async function handleForecast(request: Request, env: Env): Promise<Respon
     const restIdStr = url.searchParams.get('restaurant_id');
     const networkStr = url.searchParams.get('network');
     const isNetwork = networkStr === '1' || networkStr === 'true';
-    const restId = restIdStr ? parseInt(restIdStr, 10) : null;
+    const restId = restIdStr !== null ? parsePositiveIntStrict(restIdStr) : null;
 
-    if (!isNetwork && (restId === null || isNaN(restId) || restId <= 0)) {
-      return jsonResponse({ error: 'Either restaurant_id or network=1 required' }, 400);
+    if (!isNetwork && restId === null) {
+      return jsonResponse({ error: 'Either restaurant_id or network=1 required' }, 400, request);
     }
 
     console.log(`[forecast] user=${payload.user_id} ${isNetwork ? 'network' : 'restaurant_id=' + restId}`);
@@ -264,11 +259,11 @@ export async function handleForecast(request: Request, env: Env): Promise<Respon
     } catch (e) {
       const err = e as Error;
       console.error(`[forecast] ts query failed: ${err.message}`);
-      return jsonResponse({ error: 'Data fetch failed', message: err.message }, 500);
+      return jsonResponse({ error: 'Data fetch failed' }, 500, request);
     }
 
     if (!ts.length) {
-      return jsonResponse({ error: 'No data available' }, 404);
+      return jsonResponse({ error: 'No data available' }, 404, request);
     }
 
     // Determine MAX_DATE from the data itself
@@ -318,10 +313,10 @@ export async function handleForecast(request: Request, env: Env): Promise<Respon
     // --- Compute forecast ---
     const forecast = computeForecastCore(ts, maxDateStr, dowFallback);
 
-    return jsonResponse(forecast);
+    return jsonResponse(forecast, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[forecast] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed', message: err.message }, 500);
+    return jsonResponse({ error: 'Request failed' }, 500, request);
   }
 }

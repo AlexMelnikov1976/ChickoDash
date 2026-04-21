@@ -11,6 +11,7 @@ import { DASHBOARD_HTML } from './dashboard';
 import { handleDowProfiles } from './dow_profiles';
 import { handleForecast } from './forecast';
 import { handleRestaurantsList, handleBenchmarks, handleRestaurantMeta } from './data_endpoints';
+import { requireJwtSecret } from './security';
 
 export interface Env {
   CLICKHOUSE_HOST: string;
@@ -23,26 +24,53 @@ export interface Env {
   FEEDBACK_WEBHOOK?: string; // n8n webhook URL for feedback → Notion + Telegram
 }
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
+// Allowed origins for CORS. Add custom domains here when ready.
+// Wildcard '*' was removed in Phase 2.4 (security audit remediation).
+const ALLOWED_ORIGINS = new Set([
+  'https://chicko-api-proxy.chicko-api.workers.dev',
+]);
 
-function jsonResponse(body: unknown, status = 200): Response {
+// Build CORS headers based on the request's Origin. If origin matches the
+// whitelist, echo it back; otherwise no Access-Control-Allow-Origin is set
+// (cross-origin browser requests will fail at the SOP layer).
+function corsHeadersFor(request: Request): Record<string, string> {
+  const origin = request.headers.get('Origin');
+  const headers: Record<string, string> = {
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Vary': 'Origin',
+  };
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+  return headers;
+}
+
+function jsonResponse(body: unknown, request: Request, status: number = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json',
-      ...CORS_HEADERS,
+      ...corsHeadersFor(request),
     },
   });
 }
 
+// HTML security headers — see HTML_SECURITY_HEADERS below.
+
+// Safe HTML response headers (no CSP yet — needs Report-Only testing first
+// since dashboard.ts uses inline styles and onclick handlers extensively).
+// Phase 2.4b will introduce CSP after audit of inline patterns.
+const HTML_SECURITY_HEADERS: Record<string, string> = {
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'X-Content-Type-Options': 'nosniff',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+};
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: CORS_HEADERS });
+      return new Response(null, { headers: corsHeadersFor(request) });
     }
 
     const url = new URL(request.url);
@@ -55,7 +83,8 @@ export default {
         status: 200,
         headers: {
           'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'public, max-age=300',
+          'Cache-Control': 'no-store',
+          ...HTML_SECURITY_HEADERS,
         },
       });
     }
@@ -66,7 +95,7 @@ export default {
       return jsonResponse({
         status: 'ok',
         timestamp: new Date().toISOString(),
-      });
+      }, request);
     }
 
     if (url.pathname === '/api/auth/request-link' && request.method === 'POST') {
@@ -129,7 +158,7 @@ async function handleRequestLink(request: Request, env: Env): Promise<Response> 
 
     if (!email || !email.includes('@')) {
       console.log(`[request-link] invalid email format`);
-      return jsonResponse({ error: 'Invalid email' }, 400);
+      return jsonResponse({ error: 'Invalid email' }, 400, request);
     }
 
     console.log(`[request-link] attempt for email=${email}`);
@@ -138,7 +167,7 @@ async function handleRequestLink(request: Request, env: Env): Promise<Response> 
     const allowed = await checkRateLimit(env.MAGIC_LINKS, email);
     if (!allowed) {
       console.log(`[request-link] rate-limited for email=${email}`);
-      return jsonResponse({ error: 'Too many requests. Try again in 60 seconds.' }, 429);
+      return jsonResponse({ error: 'Too many requests. Try again in 60 seconds.' }, 429, request);
     }
 
     // Check whitelist. If user not allowed — still return 200 (no user enumeration),
@@ -146,7 +175,7 @@ async function handleRequestLink(request: Request, env: Env): Promise<Response> 
     const userId = await isAllowedUser(env.USERS, email);
     if (!userId) {
       console.log(`[request-link] email not in whitelist: ${email}`);
-      return jsonResponse({ success: true, message: 'If this email is registered, a link has been sent.' });
+      return jsonResponse({ success: true, message: 'If this email is registered, a link has been sent.' }, request);
     }
 
     // Generate token, store in KV (TTL 15 min), send email.
@@ -158,15 +187,15 @@ async function handleRequestLink(request: Request, env: Env): Promise<Response> 
 
     if (!emailResult.success) {
       console.error(`[request-link] email send failed: ${emailResult.error}`);
-      return jsonResponse({ error: 'Failed to send email. Please try again.' }, 500);
+      return jsonResponse({ error: 'Failed to send email. Please try again.' }, 500, request);
     }
 
     console.log(`[request-link] email sent to ${email}, user_id=${userId}`);
-    return jsonResponse({ success: true, message: 'Link sent. Check your email.' });
+    return jsonResponse({ success: true, message: 'Link sent. Check your email.' }, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[request-link] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed', message: err.message }, 500);
+    return jsonResponse({ error: 'Request failed' }, 500, request);
   }
 }
 
@@ -222,37 +251,37 @@ async function handleVerify(request: Request, env: Env): Promise<Response> {
     const token = body.token;
 
     if (!token) {
-      return jsonResponse({ error: 'Token required' }, 400);
+      return jsonResponse({ error: 'Token required' }, 400, request);
     }
 
     const email = await consumeToken(env.MAGIC_LINKS, token);
     if (!email) {
       console.log(`[verify] invalid or expired token`);
-      return jsonResponse({ error: 'Invalid or expired token' }, 401);
+      return jsonResponse({ error: 'Invalid or expired token' }, 401, request);
     }
 
     const userId = await isAllowedUser(env.USERS, email);
     if (!userId) {
       console.log(`[verify] email no longer in whitelist: ${email}`);
-      return jsonResponse({ error: 'Access denied' }, 403);
+      return jsonResponse({ error: 'Access denied' }, 403, request);
     }
 
     const jwt = await generateJWT(
       { user_id: userId, email },
-      env.JWT_SECRET || 'temp-secret-key-change-in-production'
+      requireJwtSecret(env)
     );
 
     console.log(`[verify] login success for ${email}, user_id=${userId}`);
     return jsonResponse({
       success: true,
       token: jwt,
-      expires_in: 60 * 60 * 24 * 30, // 30 days in seconds
+      expires_in: 60 * 60 * 24 * 7, // 7 days in seconds (was 30 — reduced after audit)
       email,
-    });
+    }, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[verify] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Verification failed', message: err.message }, 500);
+    return jsonResponse({ error: 'Verification failed' }, 500, request);
   }
 }
 
@@ -269,30 +298,35 @@ async function handleFeedback(request: Request, env: Env, ctx: ExecutionContext)
     const token = extractBearerToken(authHeader);
 
     if (!token) {
-      return jsonResponse({ error: 'Unauthorized' }, 401);
+      return jsonResponse({ error: 'Unauthorized' }, 401, request);
     }
 
-    const payload = await validateToken(token, env.JWT_SECRET || 'temp-secret-key-change-in-production');
+    const payload = await validateToken(token, requireJwtSecret(env));
     if (!payload) {
-      return jsonResponse({ error: 'Unauthorized' }, 401);
+      return jsonResponse({ error: 'Unauthorized' }, 401, request);
     }
 
     const body = await request.json() as { category: string; text: string; restaurant: string };
 
     if (!body.category || !body.text?.trim()) {
-      return jsonResponse({ error: 'Category and text required' }, 400);
+      return jsonResponse({ error: 'Category and text required' }, 400, request);
     }
 
+    // Защита от abuse: ограничиваем длину полей.
+    const text = body.text.trim().slice(0, 4000);
+    const category = String(body.category).slice(0, 50);
+    const restaurant = String(body.restaurant || '—').slice(0, 200);
+
     const feedbackPayload = {
-      category: body.category,
-      text: body.text.trim(),
-      restaurant: body.restaurant || '—',
+      category,
+      text,
+      restaurant,
       email: payload.email,
       user_id: payload.user_id,
       timestamp: new Date().toISOString(),
     };
 
-    console.log(`[feedback] from=${payload.email} cat=${body.category} rest=${body.restaurant}`);
+    console.log(`[feedback] from=${payload.email} cat=${category} rest=${restaurant}`);
 
     // Fire-and-forget: forward to n8n webhook in background
     if (env.FEEDBACK_WEBHOOK) {
@@ -307,11 +341,11 @@ async function handleFeedback(request: Request, env: Env, ctx: ExecutionContext)
       console.warn(`[feedback] FEEDBACK_WEBHOOK not set, feedback not forwarded`);
     }
 
-    return jsonResponse({ success: true });
+    return jsonResponse({ success: true }, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[feedback] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Feedback failed' }, 500);
+    return jsonResponse({ error: 'Feedback failed' }, 500, request);
   }
 }
 

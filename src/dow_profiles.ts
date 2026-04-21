@@ -9,20 +9,15 @@
 
 import { validateToken, extractBearerToken } from './auth';
 import { ClickHouseClient } from './clickhouse';
+import { corsHeadersFor, requireJwtSecret, parsePositiveIntStrict } from './security';
 import type { Env } from './index';
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, request: Request, status: number = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json',
-      ...CORS_HEADERS,
+      ...corsHeadersFor(request),
     },
   });
 }
@@ -48,24 +43,24 @@ export async function handleDowProfiles(request: Request, env: Env): Promise<Res
     const authHeader = request.headers.get('Authorization');
     const token = extractBearerToken(authHeader);
     if (!token) {
-      return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, 401);
+      return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, 401, request);
     }
 
     const payload = await validateToken(
       token,
-      env.JWT_SECRET || 'temp-secret-key-change-in-production'
+      requireJwtSecret(env)
     );
     if (!payload) {
-      return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, 401);
+      return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, 401, request);
     }
 
     // --- Input ---
     const url = new URL(request.url);
     const restIdStr = url.searchParams.get('restaurant_id');
-    const restId = restIdStr ? parseInt(restIdStr, 10) : null;
+    const restId = restIdStr !== null ? parsePositiveIntStrict(restIdStr) : null;
 
-    if (restIdStr !== null && (restId === null || isNaN(restId) || restId <= 0)) {
-      return jsonResponse({ error: 'Invalid restaurant_id' }, 400);
+    if (restIdStr !== null && restId === null) {
+      return jsonResponse({ error: 'Invalid restaurant_id' }, 400, request);
     }
 
     console.log(`[dow-profiles] user=${payload.user_id} restaurant_id=${restId ?? 'none'}`);
@@ -179,10 +174,10 @@ export async function handleDowProfiles(request: Request, env: Env): Promise<Res
       net,
       my,
       my_days: myDays,
-    });
+    }, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[dow-profiles] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed', message: err.message }, 500);
+    return jsonResponse({ error: 'Request failed' }, 500, request);
   }
 }
