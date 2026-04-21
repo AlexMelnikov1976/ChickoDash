@@ -14,6 +14,20 @@ export interface QueryResult {
   };
 }
 
+// Shape of the JSON body returned by ClickHouse when the query uses
+// `FORMAT JSON`. Superset of QueryResult because `exception` is only
+// present on error responses.
+interface ClickHouseJsonBody {
+  data?: any[];
+  rows?: number;
+  statistics?: {
+    elapsed: number;
+    rows_read: number;
+    bytes_read: number;
+  };
+  exception?: string;
+}
+
 export class ClickHouseClient {
   private config: ClickHouseConfig;
 
@@ -34,7 +48,10 @@ export class ClickHouseClient {
         throw new Error(`ClickHouse error: ${response.status} - ${errorText}`);
       }
 
-      const result = await response.json();
+      // В новых @cloudflare/workers-types / lib.dom response.json()
+      // возвращает Promise<unknown>. Явный каст к известной форме ответа
+      // CH — прагматично и не плодит runtime-проверок для внутреннего API.
+      const result = (await response.json()) as ClickHouseJsonBody;
 
       if (result.exception) {
         throw new Error(result.exception);
