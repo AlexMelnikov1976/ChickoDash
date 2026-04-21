@@ -443,14 +443,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
   <div>
     <div>
       <div class="g3" style="margin-bottom:10px">
-        <div class="kcard"><div class="klbl">Выручка / день</div><div class="kval" id="kv-rev">—</div><div class="kdelta" id="kd-rev"></div><div class="kbench" id="kb-rev"></div><div class="kbar bgo" id="kr-rev" style="width:0"></div></div>
-        <div class="kcard"><div class="klbl">Средний чек</div><div class="kval" id="kv-chk">—</div><div class="kdelta" id="kd-chk"></div><div class="kbench" id="kb-chk"></div><div class="kbar bb" id="kr-chk" style="width:0"></div></div>
-        <div class="kcard"><div class="klbl">Чеков / день</div><div class="kval" id="kv-cnt">—</div><div class="kdelta" id="kd-cnt"></div><div class="kbench" id="kb-cnt"></div><div class="kbar bb" id="kr-cnt" style="width:0"></div></div>
+        <div class="kcard" title="Средняя дневная выручка за выбранный период. Сравнивается с медианой за те же дни недели за 90 дней (ваша норма)."><div class="klbl">Выручка / день</div><div class="kval" id="kv-rev">—</div><div class="kdelta" id="kd-rev"></div><div class="kbench" id="kb-rev"></div><div class="kbar bgo" id="kr-rev" style="width:0"></div></div>
+        <div class="kcard" title="Средняя сумма одного чека. Зависит от меню и скидок — сам по себе высокий чек не всегда лучше."><div class="klbl">Средний чек</div><div class="kval" id="kv-chk">—</div><div class="kdelta" id="kd-chk"></div><div class="kbench" id="kb-chk"></div><div class="kbar bb" id="kr-chk" style="width:0"></div></div>
+        <div class="kcard" title="Среднее количество чеков в день. Рост при стабильном среднем чеке = больше гостей."><div class="klbl">Чеков / день</div><div class="kval" id="kv-cnt">—</div><div class="kdelta" id="kd-cnt"></div><div class="kbench" id="kb-cnt"></div><div class="kbar bb" id="kr-cnt" style="width:0"></div></div>
       </div>
       <div class="g3">
-        <div class="kcard"><div class="klbl">Фудкост %</div><div class="kval" id="kv-fc">—</div><div class="kdelta" id="kd-fc"></div><div class="kbench" id="kb-fc"></div><div class="kbar" id="kr-fc" style="width:0"></div></div>
-        <div class="kcard"><div class="klbl">Скидки %</div><div class="kval" id="kv-disc">—</div><div class="kdelta" id="kd-disc"></div><div class="kbench" id="kb-disc"></div><div class="kbar" id="kr-disc" style="width:0"></div></div>
-        <div class="kcard" id="kcard-del"><div class="klbl">Доставка %</div><div class="kval" id="kv-del">—</div><div class="kdelta" id="kd-del"></div><div class="kbench" id="kb-del"></div><div class="kbar bg" id="kr-del" style="width:0"></div></div>
+        <div class="kcard" title="Себестоимость продуктов как % выручки (iiko). Целевой диапазон: 20-23%. Ниже = лучше маржа."><div class="klbl">Фудкост %</div><div class="kval" id="kv-fc">—</div><div class="kdelta" id="kd-fc"></div><div class="kbench" id="kb-fc"></div><div class="kbar" id="kr-fc" style="width:0"></div></div>
+        <div class="kcard" title="Доля скидок и списаний в выручке. Высокие скидки снижают маржу — контролируй причины."><div class="klbl">Скидки %</div><div class="kval" id="kv-disc">—</div><div class="kdelta" id="kd-disc"></div><div class="kbench" id="kb-disc"></div><div class="kbar" id="kr-disc" style="width:0"></div></div>
+        <div class="kcard" id="kcard-del" title="Доля выручки от доставки. Высокая доля = зависимость от агрегаторов (Яндекс.Еда и др.)."><div class="klbl">Доставка %</div><div class="kval" id="kv-del">—</div><div class="kdelta" id="kd-del"></div><div class="kbench" id="kb-del"></div><div class="kbar bg" id="kr-del" style="width:0"></div></div>
       </div>
       <div style="font-size:9px;color:var(--text3);margin-top:4px;text-align:right" title="Дни с техническими сбоями iiko (is_anomaly_day=1) автоматически исключаются из расчётов">ⓘ Дни с техсбоями исключены из расчётов</div>
       <div class="card" style="margin-bottom:0;margin-top:10px">
@@ -1433,6 +1433,31 @@ async function renderForecast() {
   const prevMonthIdx = (fcMaxDate.getMonth() - 1 + 12) % 12;
   const prevMonthName = MNAMES_FULL[prevMonthIdx] || '';
 
+  // --- Precomputed for chart tooltips + x-axis labels (Обзор-polish 21.04) ---
+  const fcYear = fcMaxDate.getFullYear();
+  const fcMonthIdx = fcMaxDate.getMonth();
+  const mon = fc.monthLabel.toLowerCase().slice(0,3);
+  // Tooltip на каждый столбик: "15 апр (Пн) · 86 532 ₽ · факт"
+  const barTip = (b) => {
+    const dt = new Date(fcYear, fcMonthIdx, b.day);
+    const dowLbl = DOW_NAMES[dt.getDay()];
+    const typeLbl = b.type === 'actual' ? 'факт' : 'прогноз';
+    return \`\${b.day} \${mon} (\${dowLbl}) · \${fmtR(b.rev, true)} · \${typeLbl}\`;
+  };
+  // Метки оси X: 1, 5, 10, 15, 20, 25, последний день. Для коротких месяцев
+  // автоматически дедуплицируется (в феврале 28 не совпадает с 25, норм).
+  const xLabels = [1, 5, 10, 15, 20, 25, fc.daysInMonth]
+    .filter((d, i, arr) => d <= fc.daysInMonth && arr.indexOf(d) === i);
+  // Tooltip на большое число «Итого»
+  const bigTip = \`Итого за \${fc.monthLabel.toLowerCase()}: факт \${fmtR(fc.actual, true)} + прогноз \${fmtR(fc.remaining, true)}\`;
+  // Tooltip на плашку «Выполнение»
+  const donePctDays = Math.round(fc.daysElapsed / fc.daysInMonth * 100);
+  const doneTip = \`Прошло \${fc.daysElapsed} из \${fc.daysInMonth} дней (\${donePctDays}% месяца). Выручка: \${pct}% от прогноза.\`;
+  // Tooltip на плашку vs предыдущий месяц
+  const vsTip = vsPrev !== null
+    ? \`\${prevMonthName} завершён суммой \${fmtR(fc.prevMonthTotal, true)}. \${vsPrev >= 0 ? 'Текущий месяц идёт впереди' : 'Текущий месяц отстаёт'} на \${Math.abs(vsPrev).toFixed(1)}%.\`
+    : 'Данных за прошлый месяц нет';
+
   box.innerHTML = \`<div class="fc-block">
     <div class="fc-hdr">
       <div class="fc-hdr-left">
@@ -1442,25 +1467,25 @@ async function renderForecast() {
     </div>
     <div class="fc-row">
       <div>
-        <div class="fc-big">\${fmtR(fc.total, true)}</div>
+        <div class="fc-big" title="\${bigTip}">\${fmtR(fc.total, true)}</div>
         <div class="fc-pair">
-          <div class="fc-pair-item">
-            <div class="fc-pair-lbl">Факт (1–\${fc.daysElapsed} \${fc.monthLabel.toLowerCase().slice(0,3)})</div>
+          <div class="fc-pair-item" title="Фактическая выручка с 1 по \${fc.daysElapsed} \${mon}, без прогноза">
+            <div class="fc-pair-lbl">Факт (1–\${fc.daysElapsed} \${mon})</div>
             <div class="fc-pair-val" style="color:var(--text)">\${fmtR(fc.actual)}</div>
           </div>
-          <div class="fc-pair-item">
-            <div class="fc-pair-lbl">Прогноз (\${fc.daysElapsed+1}–\${fc.daysInMonth} \${fc.monthLabel.toLowerCase().slice(0,3)})</div>
+          <div class="fc-pair-item" title="Прогнозная выручка с \${fc.daysElapsed+1} по \${fc.daysInMonth} \${mon} — метод: \${fc.method}">
+            <div class="fc-pair-lbl">Прогноз (\${fc.daysElapsed+1}–\${fc.daysInMonth} \${mon})</div>
             <div class="fc-pair-val" style="color:var(--text2)">\${fmtR(fc.remaining)}</div>
           </div>
         </div>
       </div>
       <div class="fc-side">
-        <div class="fc-side-card">
+        <div class="fc-side-card" title="\${doneTip}">
           <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1px">Выполнение</div>
           <div style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:\${pct >= 50 ? 'var(--green)' : 'var(--amber)'}">\${pct}%</div>
           <div class="fc-pbar"><div class="fc-pbar-fill" style="width:\${Math.min(pct,100)}%;background:\${pct >= 50 ? 'var(--green)' : 'var(--amber)'}"></div></div>
         </div>
-        <div class="fc-side-card">
+        <div class="fc-side-card" title="\${vsTip}">
           <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1px">vs \${prevMonthName}</div>
           \${vsPrev !== null
             ? \`<div style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:\${vsPrev >= 0 ? 'var(--green)' : 'var(--red)'}">\${vsPrev >= 0 ? '+' : ''}\${vsPrev.toFixed(1)}%</div>
@@ -1471,9 +1496,12 @@ async function renderForecast() {
       </div>
     </div>
     <div class="fc-chart">\${fc.dailyBars.map(b =>
-      \`<div class="fc-chart-bar" style="height:\${Math.max(b.rev / maxBar * 100, 2)}%;background:\${b.type === 'actual' ? 'var(--blue)' : 'rgba(212,168,75,.35)'};border:\${b.type === 'forecast' ? '1px dashed var(--gold)' : 'none'}"></div>\`
+      \`<div class="fc-chart-bar" title="\${barTip(b)}" style="height:\${Math.max(b.rev / maxBar * 100, 2)}%;background:\${b.type === 'actual' ? 'var(--blue)' : 'rgba(212,168,75,.35)'};border:\${b.type === 'forecast' ? '1px dashed var(--gold)' : 'none'}"></div>\`
     ).join('')}</div>
-    <div class="fc-chart-lbl"><span>1 \${fc.monthLabel.toLowerCase().slice(0,3)}</span><span style="color:var(--text2)">← факт | прогноз →</span><span>\${fc.daysInMonth} \${fc.monthLabel.toLowerCase().slice(0,3)}</span></div>
+    <div style="position:relative;height:14px;margin-top:2px">\${xLabels.map(d =>
+      \`<span style="position:absolute;left:\${((d - 0.5) / fc.daysInMonth * 100).toFixed(2)}%;transform:translateX(-50%);font-size:10px;color:var(--text3);white-space:nowrap">\${d} \${mon}</span>\`
+    ).join('')}</div>
+    <div style="text-align:center;font-size:10px;color:var(--text2);margin-top:2px">← факт · прогноз →</div>
     <div class="fc-method">Метод: \${fc.method}</div>
   </div>\`;
 }
@@ -2159,7 +2187,7 @@ function renderScore(){
 function renderMiniTrend(){
   // For "day" period show last 7 days for context, else use selected period
   const ts = S.analysisPeriod==='day' ? getGlobalTs().slice(-7) : getGlobalTs();
-  mkChart('miniC',{type:'line',data:{labels:ts.map(t=>fmtD(t.date)),datasets:[{data:ts.map(t=>t.revenue),borderColor:'#D4A84B',backgroundColor:'rgba(212,168,75,.07)',borderWidth:2,pointRadius:2,fill:true,tension:.3},{data:ts.map(()=>NET.revenue),borderColor:'rgba(142,170,206,.3)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false,label:'Сеть'}]},options:{...chartOpts(v=>fmtR(v)),plugins:{legend:{display:false}}}});
+  mkChart('miniC',{type:'line',data:{labels:ts.map(t=>fmtD(t.date)),datasets:[{label:'Ваша выручка',data:ts.map(t=>t.revenue),borderColor:'#D4A84B',backgroundColor:'rgba(212,168,75,.07)',borderWidth:2,pointRadius:2,fill:true,tension:.3},{data:ts.map(()=>NET.revenue),borderColor:'rgba(142,170,206,.3)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false,label:'Медиана сети'}]},options:{...chartOpts(v=>fmtR(v)),plugins:{legend:{display:true,position:'top',align:'end',labels:{boxWidth:10,boxHeight:2,font:{size:10},color:'rgba(212,222,235,.6)',padding:6}}}}});
 }
 
 // ═══ DONUT ═══
