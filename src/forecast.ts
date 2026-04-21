@@ -14,7 +14,7 @@
 
 import { validateToken, extractBearerToken } from './auth';
 import { ClickHouseClient } from './clickhouse';
-import { corsHeadersFor, requireJwtSecret, parsePositiveIntStrict } from './security';
+import { corsHeadersFor, requireJwtSecret, parsePositiveIntStrict, rateLimitOrResponse, RATE_LIMIT_DATA } from './security';
 import type { Env } from './index';
 
 function jsonResponse(body: unknown, request: Request, status: number = 200): Response {
@@ -204,6 +204,9 @@ export async function handleForecast(request: Request, env: Env): Promise<Respon
     if (!payload) {
       return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, request, 401);
     }
+
+    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${payload.user_id}`, RATE_LIMIT_DATA, request);
+    if (rl) return rl;
 
     // --- Input ---
     const url = new URL(request.url);

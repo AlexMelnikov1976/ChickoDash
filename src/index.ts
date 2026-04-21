@@ -11,7 +11,7 @@ import { DASHBOARD_HTML } from './dashboard';
 import { handleDowProfiles } from './dow_profiles';
 import { handleForecast } from './forecast';
 import { handleRestaurantsList, handleBenchmarks, handleRestaurantMeta } from './data_endpoints';
-import { requireJwtSecret } from './security';
+import { requireJwtSecret, rateLimitOrResponse, RATE_LIMIT_FEEDBACK } from './security';
 
 export interface Env {
   CLICKHOUSE_HOST: string;
@@ -305,6 +305,9 @@ async function handleFeedback(request: Request, env: Env, ctx: ExecutionContext)
     if (!payload) {
       return jsonResponse({ error: 'Unauthorized' }, request, 401);
     }
+
+    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `feedback:${payload.user_id}`, RATE_LIMIT_FEEDBACK, request);
+    if (rl) return rl;
 
     const body = await request.json() as { category: string; text: string; restaurant: string };
 

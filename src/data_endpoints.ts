@@ -28,6 +28,8 @@ import {
   parseIsoDate,
   daysBetween,
   MAX_DATE_RANGE_DAYS,
+  rateLimitOrResponse,
+  RATE_LIMIT_DATA,
 } from './security';
 import type { Env } from './index';
 
@@ -80,6 +82,9 @@ export async function handleRestaurantsList(request: Request, env: Env): Promise
   try {
     const a = await auth(request, env);
     if (a instanceof Response) return a;
+
+    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);
+    if (rl) return rl;
 
     const url = new URL(request.url);
     const fullHistory = url.searchParams.get('full_history') === '1';
@@ -144,6 +149,9 @@ export async function handleBenchmarks(request: Request, env: Env): Promise<Resp
   try {
     const a = await auth(request, env);
     if (a instanceof Response) return a;
+
+    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);
+    if (rl) return rl;
 
     const url = new URL(request.url);
     const startRaw = url.searchParams.get('start');
@@ -259,6 +267,9 @@ export async function handleRestaurantMeta(request: Request, env: Env): Promise<
   try {
     const a = await auth(request, env);
     if (a instanceof Response) return a;
+
+    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);
+    if (rl) return rl;
 
     const url = new URL(request.url);
     const restIdStr = url.searchParams.get('restaurant_id');
