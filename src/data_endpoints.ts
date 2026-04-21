@@ -2,7 +2,7 @@
 // © 2026 System360 by Alex Melnikov. All rights reserved.
 // Proprietary software — unauthorized copying or distribution prohibited.
 //
-// Three endpoints, all require Bearer JWT:
+// Three endpoints, all require session cookie (chicko_session, HttpOnly):
 //
 //   GET /api/restaurants?full_history=0|1
 //     List of restaurants with time-series data.
@@ -16,14 +16,12 @@
 //     Precomputed score + top recommendations for a specific restaurant.
 //
 // Moved from client in Phase 2.3 (2026-04-21).
-// Rationale: replace the universal /api/query SQL proxy with whitelisted endpoints.
-// Client can no longer execute arbitrary SQL against ClickHouse.
+// Auth migrated from Authorization: Bearer to session cookie in Phase 2.4d.
 
-import { validateToken, extractBearerToken } from './auth';
 import { ClickHouseClient } from './clickhouse';
 import {
+  authFromCookie,
   corsHeadersFor,
-  requireJwtSecret,
   parsePositiveIntStrict,
   parseIsoDate,
   daysBetween,
@@ -43,20 +41,6 @@ function jsonResponse(body: unknown, request: Request, status: number = 200): Re
   });
 }
 
-async function auth(request: Request, env: Env): Promise<{ user_id: string; email: string } | Response> {
-  const authHeader = request.headers.get('Authorization');
-  const token = extractBearerToken(authHeader);
-  if (!token) return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, request, 401);
-
-  const payload = await validateToken(
-    token,
-    requireJwtSecret(env)
-  );
-  if (!payload) return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, request, 401);
-
-  return payload as { user_id: string; email: string };
-}
-
 function mkClickhouse(env: Env): ClickHouseClient {
   return new ClickHouseClient({
     host: env.CLICKHOUSE_HOST || 'http://localhost:8123',
@@ -65,9 +49,9 @@ function mkClickhouse(env: Env): ClickHouseClient {
   });
 }
 
-// Date validation moved to security.ts (parseIsoDate, daysBetween).
-// Old local isValidDate was a regex-only check; new helper does regex +
-// real-date validation + round-trip check.
+// Local auth() helper removed in Phase 2.4d — заменён на shared authFromCookie
+// из security.ts. Использует HttpOnly session cookie вместо Bearer token.
+// Date validation moved to security.ts (parseIsoDate, daysBetween) in Phase 2.4a.
 
 /**
  * GET /api/restaurants?full_history=0|1
@@ -80,7 +64,7 @@ function mkClickhouse(env: Env): ClickHouseClient {
  */
 export async function handleRestaurantsList(request: Request, env: Env): Promise<Response> {
   try {
-    const a = await auth(request, env);
+    const a = await authFromCookie(request, env);
     if (a instanceof Response) return a;
 
     const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);
@@ -147,7 +131,7 @@ export async function handleRestaurantsList(request: Request, env: Env): Promise
  */
 export async function handleBenchmarks(request: Request, env: Env): Promise<Response> {
   try {
-    const a = await auth(request, env);
+    const a = await authFromCookie(request, env);
     if (a instanceof Response) return a;
 
     const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);
@@ -265,7 +249,7 @@ export async function handleBenchmarks(request: Request, env: Env): Promise<Resp
  */
 export async function handleRestaurantMeta(request: Request, env: Env): Promise<Response> {
   try {
-    const a = await auth(request, env);
+    const a = await authFromCookie(request, env);
     if (a instanceof Response) return a;
 
     const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);

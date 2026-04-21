@@ -1,4 +1,10 @@
-import { generateToken as generateJWT, validateToken, extractBearerToken } from './auth';
+import {
+  generateToken as generateJWT,
+  extractTokenFromCookie,
+  validateToken,
+  buildSessionCookie,
+  buildClearCookie,
+} from './auth';
 import {
   generateToken as generateMagicToken,
   storeToken,
@@ -12,7 +18,13 @@ import { handleDowProfiles } from './dow_profiles';
 import { handleForecast } from './forecast';
 import { handleRestaurantsList, handleBenchmarks, handleRestaurantMeta } from './data_endpoints';
 import { handleCspReport } from './csp_report';
-import { requireJwtSecret, rateLimitOrResponse, RATE_LIMIT_FEEDBACK } from './security';
+import {
+  requireJwtSecret,
+  rateLimitOrResponse,
+  RATE_LIMIT_FEEDBACK,
+  authFromCookie,
+  checkOrigin,
+} from './security';
 
 export interface Env {
   CLICKHOUSE_HOST: string;
@@ -27,6 +39,10 @@ export interface Env {
 
 // Allowed origins for CORS. Add custom domains here when ready.
 // Wildcard '*' was removed in Phase 2.4 (security audit remediation).
+//
+// NOTE: этот whitelist дублирует ALLOWED_ORIGINS из security.ts. Не
+// рефакторим сейчас, чтобы не смешивать с Phase 2.4d (cookie migration) —
+// отдельный cleanup после деплоя.
 const ALLOWED_ORIGINS = new Set([
   'https://chicko-api-proxy.chicko-api.workers.dev',
 ]);
@@ -34,11 +50,17 @@ const ALLOWED_ORIGINS = new Set([
 // Build CORS headers based on the request's Origin. If origin matches the
 // whitelist, echo it back; otherwise no Access-Control-Allow-Origin is set
 // (cross-origin browser requests will fail at the SOP layer).
+//
+// Phase 2.4d (2026-04-21):
+//   - Убран 'Authorization' из Allow-Headers (больше не используется)
+//   - Добавлен Allow-Credentials: true — обязателен для cookie-auth
+//     при cross-origin (задел на кастомный домен)
 function corsHeadersFor(request: Request): Record<string, string> {
   const origin = request.headers.get('Origin');
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Credentials': 'true',
     'Vary': 'Origin',
   };
   if (origin && ALLOWED_ORIGINS.has(origin)) {
@@ -160,6 +182,20 @@ export default {
       return handleCspReport(request, env);
     }
 
+    // --- Auth-state endpoints (Phase 2.4d) ---
+
+    // Клиент не может прочитать HttpOnly cookie из JS, поэтому использует
+    // этот endpoint как "am I logged in?". Возвращает 200+{email} или 401.
+    if (url.pathname === '/api/auth/me' && request.method === 'GET') {
+      return handleAuthMe(request, env);
+    }
+
+    // Logout: чистим session cookie. Origin-check защищает от CSRF
+    // (злоумышленник не должен иметь возможность форсировать logout).
+    if (url.pathname === '/api/auth/logout' && request.method === 'POST') {
+      return handleLogout(request);
+    }
+
     // --- Protected API endpoints ---
 
     // /api/query REMOVED in Phase 2.3 (2026-04-21).
@@ -253,7 +289,8 @@ async function handleRequestLink(request: Request, env: Env): Promise<Response> 
  * GET /auth/callback?token=...
  * Called when user clicks the magic link in email.
  * Redirects to dashboard (/) with ?login_token=<same_token>.
- * The frontend picks up login_token from URL and exchanges it for JWT via /api/auth/verify.
+ * The frontend picks up login_token from URL and exchanges it for a session
+ * cookie via /api/auth/verify.
  * Token is NOT consumed here — it's consumed when frontend calls /api/auth/verify.
  */
 async function handleAuthCallback(request: Request, env: Env): Promise<Response> {
@@ -300,8 +337,12 @@ async function handleAuthCallback(request: Request, env: Env): Promise<Response>
 /**
  * POST /api/auth/verify
  * Body: { token: string }
- * Consumes magic-link token, returns JWT as JSON.
- * Used by frontend after user clicks link and is redirected to /?login_token=...
+ *
+ * Phase 2.4d (2026-04-21):
+ *   - Consumes magic-link token
+ *   - Sets HttpOnly session cookie (chicko_session)
+ *   - Returns JSON {success, email} — JWT больше НЕ возвращается в теле
+ *     ответа. Клиент не должен видеть токен ни в каком виде.
  */
 async function handleVerify(request: Request, env: Env): Promise<Response> {
   try {
@@ -330,12 +371,19 @@ async function handleVerify(request: Request, env: Env): Promise<Response> {
     );
 
     console.log(`[verify] login success for ${email}, user_id=${userId}`);
-    return jsonResponse({
-      success: true,
-      token: jwt,
-      expires_in: 60 * 60 * 24 * 7, // 7 days in seconds (aligned with auth.ts #11 fix)
-      email,
-    }, request);
+
+    // Cookie-based session. JWT в теле ответа больше не возвращается.
+    return new Response(
+      JSON.stringify({ success: true, email }),
+      {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Set-Cookie': buildSessionCookie(jwt),
+          ...corsHeadersFor(request),
+        },
+      },
+    );
   } catch (error) {
     const err = error as Error;
     console.error(`[verify] error: ${err.message}`, err.stack);
@@ -344,27 +392,79 @@ async function handleVerify(request: Request, env: Env): Promise<Response> {
 }
 
 /**
+ * GET /api/auth/me
+ * Requires session cookie.
+ *
+ * Клиент не видит HttpOnly cookie и поэтому не может из JS понять, залогинен
+ * ли пользователь. Этот endpoint — единственный способ проверить: 200 с
+ * {email, user_id} → залогинен, 401 → показать форму логина.
+ *
+ * Не пишет в KV (нет rate-limit), т.к. вызывается на каждом открытии страницы
+ * и должен быть лёгким. Проверка JWT — чисто CPU, масштабируется.
+ */
+async function handleAuthMe(request: Request, env: Env): Promise<Response> {
+  try {
+    const a = await authFromCookie(request, env);
+    if (a instanceof Response) return a;
+
+    return jsonResponse({ user_id: a.user_id, email: a.email }, request);
+  } catch (error) {
+    const err = error as Error;
+    console.error(`[auth-me] error: ${err.message}`, err.stack);
+    return jsonResponse({ error: 'Request failed' }, request, 500);
+  }
+}
+
+/**
+ * POST /api/auth/logout
+ *
+ * Возвращает Set-Cookie с Max-Age=0, браузер удаляет session cookie.
+ * Origin-check защищает от CSRF-форсированного logout (атакующий не
+ * должен иметь возможность выкинуть легитимного пользователя из системы,
+ * даже если это "всего лишь" отказ в обслуживании).
+ *
+ * Endpoint не требует валидного cookie — логаут должен работать, даже если
+ * cookie уже протух на стороне сервера (клиент всё равно хочет "забыть" его).
+ */
+async function handleLogout(request: Request): Promise<Response> {
+  const originError = checkOrigin(request);
+  if (originError) return originError;
+
+  console.log(`[logout] clearing session cookie`);
+
+  return new Response(
+    JSON.stringify({ success: true }),
+    {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Set-Cookie': buildClearCookie(),
+        ...corsHeadersFor(request),
+      },
+    },
+  );
+}
+
+/**
  * POST /api/feedback
- * Requires Bearer JWT.
+ * Requires session cookie.
  * Body: { category: string, text: string, restaurant: string }
  * Forwards feedback to n8n webhook → Notion + Telegram.
  * Returns 200 immediately, webhook fires in background (waitUntil).
+ *
+ * Phase 2.4d: migrated from Authorization: Bearer to session cookie,
+ * added Origin-check for CSRF protection (state-changing endpoint).
  */
 async function handleFeedback(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   try {
-    const authHeader = request.headers.get('Authorization');
-    const token = extractBearerToken(authHeader);
+    // CSRF-защита: state-changing POST обязан проверять Origin.
+    const originError = checkOrigin(request);
+    if (originError) return originError;
 
-    if (!token) {
-      return jsonResponse({ error: 'Unauthorized' }, request, 401);
-    }
+    const a = await authFromCookie(request, env);
+    if (a instanceof Response) return a;
 
-    const payload = await validateToken(token, requireJwtSecret(env));
-    if (!payload) {
-      return jsonResponse({ error: 'Unauthorized' }, request, 401);
-    }
-
-    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `feedback:${payload.user_id}`, RATE_LIMIT_FEEDBACK, request);
+    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `feedback:${a.user_id}`, RATE_LIMIT_FEEDBACK, request);
     if (rl) return rl;
 
     const body = await request.json() as { category: string; text: string; restaurant: string };
@@ -382,12 +482,12 @@ async function handleFeedback(request: Request, env: Env, ctx: ExecutionContext)
       category,
       text,
       restaurant,
-      email: payload.email,
-      user_id: payload.user_id,
+      email: a.email,
+      user_id: a.user_id,
       timestamp: new Date().toISOString(),
     };
 
-    console.log(`[feedback] from=${payload.email} cat=${category} rest=${restaurant}`);
+    console.log(`[feedback] from=${a.email} cat=${category} rest=${restaurant}`);
 
     // Fire-and-forget: forward to n8n webhook in background
     if (env.FEEDBACK_WEBHOOK) {

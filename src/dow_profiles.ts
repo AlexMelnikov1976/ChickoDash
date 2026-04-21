@@ -5,11 +5,16 @@
 // Endpoint: GET /api/dow-profiles?restaurant_id=N
 // Returns aggregated 90-day DOW profiles for network and specific restaurant.
 // Moved from client (dashboard.ts loadDowProfiles) in Phase 2.1 (2026-04-21).
-// Rationale: hide SQL schema, table names, and aggregation logic from the browser.
+// Auth migrated from Authorization: Bearer to session cookie in Phase 2.4d.
 
-import { validateToken, extractBearerToken } from './auth';
 import { ClickHouseClient } from './clickhouse';
-import { corsHeadersFor, requireJwtSecret, parsePositiveIntStrict, rateLimitOrResponse, RATE_LIMIT_DATA } from './security';
+import {
+  authFromCookie,
+  corsHeadersFor,
+  parsePositiveIntStrict,
+  rateLimitOrResponse,
+  RATE_LIMIT_DATA,
+} from './security';
 import type { Env } from './index';
 
 function jsonResponse(body: unknown, request: Request, status: number = 200): Response {
@@ -24,7 +29,7 @@ function jsonResponse(body: unknown, request: Request, status: number = 200): Re
 
 /**
  * GET /api/dow-profiles?restaurant_id=N
- * Requires Bearer JWT.
+ * Requires session cookie (chicko_session, HttpOnly).
  *
  * Returns:
  *   {
@@ -39,22 +44,11 @@ function jsonResponse(body: unknown, request: Request, status: number = 200): Re
  */
 export async function handleDowProfiles(request: Request, env: Env): Promise<Response> {
   try {
-    // --- Auth ---
-    const authHeader = request.headers.get('Authorization');
-    const token = extractBearerToken(authHeader);
-    if (!token) {
-      return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, request, 401);
-    }
+    // --- Auth (shared helper, Phase 2.4d) ---
+    const a = await authFromCookie(request, env);
+    if (a instanceof Response) return a;
 
-    const payload = await validateToken(
-      token,
-      requireJwtSecret(env)
-    );
-    if (!payload) {
-      return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, request, 401);
-    }
-
-    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${payload.user_id}`, RATE_LIMIT_DATA, request);
+    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);
     if (rl) return rl;
 
     // --- Input ---
@@ -66,7 +60,7 @@ export async function handleDowProfiles(request: Request, env: Env): Promise<Res
       return jsonResponse({ error: 'Invalid restaurant_id' }, request, 400);
     }
 
-    console.log(`[dow-profiles] user=${payload.user_id} restaurant_id=${restId ?? 'none'}`);
+    console.log(`[dow-profiles] user=${a.user_id} restaurant_id=${restId ?? 'none'}`);
 
     // --- ClickHouse client ---
     const clickhouse = new ClickHouseClient({

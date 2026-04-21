@@ -9,12 +9,16 @@
 //   C. fallback → 90-day DOW profile
 //
 // Moved from client (dashboard.ts computeForecast) in Phase 2.2 (2026-04-21).
-// Rationale: hide the core forecasting algorithm and YoY coefficient formula
-// from the browser. Client now receives pre-computed bars and totals only.
+// Auth migrated from Authorization: Bearer to session cookie in Phase 2.4d.
 
-import { validateToken, extractBearerToken } from './auth';
 import { ClickHouseClient } from './clickhouse';
-import { corsHeadersFor, requireJwtSecret, parsePositiveIntStrict, rateLimitOrResponse, RATE_LIMIT_DATA } from './security';
+import {
+  authFromCookie,
+  corsHeadersFor,
+  parsePositiveIntStrict,
+  rateLimitOrResponse,
+  RATE_LIMIT_DATA,
+} from './security';
 import type { Env } from './index';
 
 function jsonResponse(body: unknown, request: Request, status: number = 200): Response {
@@ -186,26 +190,15 @@ function computeForecastCore(
 
 /**
  * GET /api/forecast?restaurant_id=N  or  GET /api/forecast?network=1
- * Requires Bearer JWT.
+ * Requires session cookie (chicko_session, HttpOnly).
  */
 export async function handleForecast(request: Request, env: Env): Promise<Response> {
   try {
-    // --- Auth ---
-    const authHeader = request.headers.get('Authorization');
-    const token = extractBearerToken(authHeader);
-    if (!token) {
-      return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, request, 401);
-    }
+    // --- Auth (shared helper, Phase 2.4d) ---
+    const a = await authFromCookie(request, env);
+    if (a instanceof Response) return a;
 
-    const payload = await validateToken(
-      token,
-      requireJwtSecret(env)
-    );
-    if (!payload) {
-      return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, request, 401);
-    }
-
-    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${payload.user_id}`, RATE_LIMIT_DATA, request);
+    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);
     if (rl) return rl;
 
     // --- Input ---
@@ -219,7 +212,7 @@ export async function handleForecast(request: Request, env: Env): Promise<Respon
       return jsonResponse({ error: 'Either restaurant_id or network=1 required' }, request, 400);
     }
 
-    console.log(`[forecast] user=${payload.user_id} ${isNetwork ? 'network' : 'restaurant_id=' + restId}`);
+    console.log(`[forecast] user=${a.user_id} ${isNetwork ? 'network' : 'restaurant_id=' + restId}`);
 
     const clickhouse = new ClickHouseClient({
       host: env.CLICKHOUSE_HOST || 'http://localhost:8123',

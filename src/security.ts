@@ -6,6 +6,12 @@
 //   • parsePositiveIntStrict — строгий парсинг id (regex ^[1-9]\d*$)
 //   • parseIsoDate          — каноническая валидация ISO даты + проверка реальности
 //   • daysBetween           — для проверки максимального диапазона запросов
+//   • rateLimitOrResponse   — fixed-window rate limiting в KV (Phase 2.4b)
+//
+// Phase 2.4d (2026-04-21):
+//   • authFromCookie        — shared auth helper (cookie → JWTPayload)
+//   • checkOrigin           — CSRF-защита для state-changing POST
+//   • corsHeadersFor        — обновлён: Allow-Credentials: true
 //
 // Использование во всех handler-ах вместо встроенных fallback'ов и parseInt.
 
@@ -14,11 +20,24 @@ export const ALLOWED_ORIGINS = new Set([
   'https://chicko-api-proxy.chicko-api.workers.dev',
 ]);
 
+/**
+ * CORS headers. Обновлены в Phase 2.4d:
+ *   - Убран 'Authorization' из Allow-Headers (больше не используется,
+ *     auth теперь через HttpOnly cookie)
+ *   - Добавлен 'Access-Control-Allow-Credentials: true' — обязателен
+ *     для того, чтобы cross-origin fetch с credentials:'include' мог
+ *     отправлять и получать cookie. На текущий момент мы same-origin,
+ *     но закладываемся на будущий кастомный домен.
+ *
+ * Важно: при Allow-Credentials: true wildcard '*' в Allow-Origin
+ * запрещён спецификацией — echo-back из whitelist здесь корректен.
+ */
 export function corsHeadersFor(request: Request): Record<string, string> {
   const origin = request.headers.get('Origin');
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Credentials': 'true',
     'Vary': 'Origin',
   };
   if (origin && ALLOWED_ORIGINS.has(origin)) {
@@ -28,6 +47,7 @@ export function corsHeadersFor(request: Request): Record<string, string> {
 }
 
 import type { Env } from './index';
+import { extractTokenFromCookie, validateToken } from './auth';
 
 /**
  * Возвращает JWT_SECRET из env или бросает исключение, если он не задан или
@@ -87,6 +107,90 @@ export function daysBetween(start: string, end: string): number {
  * Чтобы один запрос не выгребал годы данных и не клал ClickHouse.
  */
 export const MAX_DATE_RANGE_DAYS = 400;
+
+// -----------------------------------------------------------------------------
+// Cookie-based auth (Phase 2.4d, 2026-04-21)
+// -----------------------------------------------------------------------------
+
+export interface AuthContext {
+  user_id: string;
+  email: string;
+}
+
+/**
+ * Shared auth helper для всех protected endpoints.
+ *
+ * Читает session cookie, валидирует JWT, возвращает user_id/email
+ * либо готовый 401 Response.
+ *
+ * Идиома использования в handler-ах:
+ *
+ *   const a = await authFromCookie(request, env);
+ *   if (a instanceof Response) return a;
+ *   // дальше a.user_id, a.email доступны как AuthContext
+ *
+ * Заменяет три одинаковых блока auth() в data_endpoints.ts, dow_profiles.ts,
+ * forecast.ts, а также inline-логику в index.ts:handleFeedback.
+ */
+export async function authFromCookie(
+  request: Request,
+  env: Env,
+): Promise<AuthContext | Response> {
+  const cookieHeader = request.headers.get('Cookie');
+  const token = extractTokenFromCookie(cookieHeader);
+  if (!token) {
+    return unauthorized(request, 'Not authenticated');
+  }
+
+  const payload = await validateToken(token, requireJwtSecret(env));
+  if (!payload) {
+    return unauthorized(request, 'Invalid or expired session');
+  }
+
+  return { user_id: payload.user_id, email: payload.email };
+}
+
+function unauthorized(request: Request, message: string): Response {
+  return new Response(
+    JSON.stringify({ error: 'Unauthorized', message }),
+    {
+      status: 401,
+      headers: {
+        'Content-Type': 'application/json',
+        ...corsHeadersFor(request),
+      },
+    },
+  );
+}
+
+/**
+ * CSRF-защита для state-changing POST endpoints.
+ *
+ * SameSite=Lax уже блокирует cross-site POST на уровне браузера, но это
+ * defense-in-depth: проверяем Origin явно. Применять к /api/feedback и
+ * /api/auth/logout. НЕ применять к /api/auth/request-link и /api/auth/verify —
+ * они потребляют собственные одноразовые токены и не зависят от session cookie,
+ * cross-origin вызов для них не создаёт CSRF-риска.
+ *
+ * Возвращает 403 Response или null (пропустить дальше).
+ */
+export function checkOrigin(request: Request): Response | null {
+  const origin = request.headers.get('Origin');
+  if (!origin || !ALLOWED_ORIGINS.has(origin)) {
+    console.log(`[check-origin] rejected: origin=${origin ?? 'null'}`);
+    return new Response(
+      JSON.stringify({ error: 'Forbidden', message: 'Origin not allowed' }),
+      {
+        status: 403,
+        headers: {
+          'Content-Type': 'application/json',
+          ...corsHeadersFor(request),
+        },
+      },
+    );
+  }
+  return null;
+}
 
 // -----------------------------------------------------------------------------
 // Rate limiting (Phase 2.4b, 2026-04-21) — #6 из аудита
