@@ -194,7 +194,7 @@ export async function handleForecast(request: Request, env: Env): Promise<Respon
     const authHeader = request.headers.get('Authorization');
     const token = extractBearerToken(authHeader);
     if (!token) {
-      return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, 401, request);
+      return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, request, 401);
     }
 
     const payload = await validateToken(
@@ -202,7 +202,7 @@ export async function handleForecast(request: Request, env: Env): Promise<Respon
       requireJwtSecret(env)
     );
     if (!payload) {
-      return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, 401, request);
+      return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, request, 401);
     }
 
     // --- Input ---
@@ -213,7 +213,7 @@ export async function handleForecast(request: Request, env: Env): Promise<Respon
     const restId = restIdStr !== null ? parsePositiveIntStrict(restIdStr) : null;
 
     if (!isNetwork && restId === null) {
-      return jsonResponse({ error: 'Either restaurant_id or network=1 required' }, 400, request);
+      return jsonResponse({ error: 'Either restaurant_id or network=1 required' }, request, 400);
     }
 
     console.log(`[forecast] user=${payload.user_id} ${isNetwork ? 'network' : 'restaurant_id=' + restId}`);
@@ -259,11 +259,11 @@ export async function handleForecast(request: Request, env: Env): Promise<Respon
     } catch (e) {
       const err = e as Error;
       console.error(`[forecast] ts query failed: ${err.message}`);
-      return jsonResponse({ error: 'Data fetch failed' }, 500, request);
+      return jsonResponse({ error: 'Data fetch failed' }, request, 500);
     }
 
     if (!ts.length) {
-      return jsonResponse({ error: 'No data available' }, 404, request);
+      return jsonResponse({ error: 'No data available' }, request, 404);
     }
 
     // Determine MAX_DATE from the data itself
@@ -317,6 +317,6 @@ export async function handleForecast(request: Request, env: Env): Promise<Respon
   } catch (error) {
     const err = error as Error;
     console.error(`[forecast] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, 500, request);
+    return jsonResponse({ error: 'Request failed' }, request, 500);
   }
 }

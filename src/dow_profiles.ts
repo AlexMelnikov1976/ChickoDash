@@ -43,7 +43,7 @@ export async function handleDowProfiles(request: Request, env: Env): Promise<Res
     const authHeader = request.headers.get('Authorization');
     const token = extractBearerToken(authHeader);
     if (!token) {
-      return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, 401, request);
+      return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, request, 401);
     }
 
     const payload = await validateToken(
@@ -51,7 +51,7 @@ export async function handleDowProfiles(request: Request, env: Env): Promise<Res
       requireJwtSecret(env)
     );
     if (!payload) {
-      return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, 401, request);
+      return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, request, 401);
     }
 
     // --- Input ---
@@ -60,7 +60,7 @@ export async function handleDowProfiles(request: Request, env: Env): Promise<Res
     const restId = restIdStr !== null ? parsePositiveIntStrict(restIdStr) : null;
 
     if (restIdStr !== null && restId === null) {
-      return jsonResponse({ error: 'Invalid restaurant_id' }, 400, request);
+      return jsonResponse({ error: 'Invalid restaurant_id' }, request, 400);
     }
 
     console.log(`[dow-profiles] user=${payload.user_id} restaurant_id=${restId ?? 'none'}`);
@@ -178,6 +178,6 @@ export async function handleDowProfiles(request: Request, env: Env): Promise<Res
   } catch (error) {
     const err = error as Error;
     console.error(`[dow-profiles] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, 500, request);
+    return jsonResponse({ error: 'Request failed' }, request, 500);
   }
 }

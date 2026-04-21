@@ -158,7 +158,7 @@ async function handleRequestLink(request: Request, env: Env): Promise<Response> 
 
     if (!email || !email.includes('@')) {
       console.log(`[request-link] invalid email format`);
-      return jsonResponse({ error: 'Invalid email' }, 400, request);
+      return jsonResponse({ error: 'Invalid email' }, request, 400);
     }
 
     console.log(`[request-link] attempt for email=${email}`);
@@ -167,7 +167,7 @@ async function handleRequestLink(request: Request, env: Env): Promise<Response> 
     const allowed = await checkRateLimit(env.MAGIC_LINKS, email);
     if (!allowed) {
       console.log(`[request-link] rate-limited for email=${email}`);
-      return jsonResponse({ error: 'Too many requests. Try again in 60 seconds.' }, 429, request);
+      return jsonResponse({ error: 'Too many requests. Try again in 60 seconds.' }, request, 429);
     }
 
     // Check whitelist. If user not allowed — still return 200 (no user enumeration),
@@ -187,7 +187,7 @@ async function handleRequestLink(request: Request, env: Env): Promise<Response> 
 
     if (!emailResult.success) {
       console.error(`[request-link] email send failed: ${emailResult.error}`);
-      return jsonResponse({ error: 'Failed to send email. Please try again.' }, 500, request);
+      return jsonResponse({ error: 'Failed to send email. Please try again.' }, request, 500);
     }
 
     console.log(`[request-link] email sent to ${email}, user_id=${userId}`);
@@ -195,7 +195,7 @@ async function handleRequestLink(request: Request, env: Env): Promise<Response> 
   } catch (error) {
     const err = error as Error;
     console.error(`[request-link] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, 500, request);
+    return jsonResponse({ error: 'Request failed' }, request, 500);
   }
 }
 
@@ -251,19 +251,19 @@ async function handleVerify(request: Request, env: Env): Promise<Response> {
     const token = body.token;
 
     if (!token) {
-      return jsonResponse({ error: 'Token required' }, 400, request);
+      return jsonResponse({ error: 'Token required' }, request, 400);
     }
 
     const email = await consumeToken(env.MAGIC_LINKS, token);
     if (!email) {
       console.log(`[verify] invalid or expired token`);
-      return jsonResponse({ error: 'Invalid or expired token' }, 401, request);
+      return jsonResponse({ error: 'Invalid or expired token' }, request, 401);
     }
 
     const userId = await isAllowedUser(env.USERS, email);
     if (!userId) {
       console.log(`[verify] email no longer in whitelist: ${email}`);
-      return jsonResponse({ error: 'Access denied' }, 403, request);
+      return jsonResponse({ error: 'Access denied' }, request, 403);
     }
 
     const jwt = await generateJWT(
@@ -281,7 +281,7 @@ async function handleVerify(request: Request, env: Env): Promise<Response> {
   } catch (error) {
     const err = error as Error;
     console.error(`[verify] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Verification failed' }, 500, request);
+    return jsonResponse({ error: 'Verification failed' }, request, 500);
   }
 }
 
@@ -298,18 +298,18 @@ async function handleFeedback(request: Request, env: Env, ctx: ExecutionContext)
     const token = extractBearerToken(authHeader);
 
     if (!token) {
-      return jsonResponse({ error: 'Unauthorized' }, 401, request);
+      return jsonResponse({ error: 'Unauthorized' }, request, 401);
     }
 
     const payload = await validateToken(token, requireJwtSecret(env));
     if (!payload) {
-      return jsonResponse({ error: 'Unauthorized' }, 401, request);
+      return jsonResponse({ error: 'Unauthorized' }, request, 401);
     }
 
     const body = await request.json() as { category: string; text: string; restaurant: string };
 
     if (!body.category || !body.text?.trim()) {
-      return jsonResponse({ error: 'Category and text required' }, 400, request);
+      return jsonResponse({ error: 'Category and text required' }, request, 400);
     }
 
     // Защита от abuse: ограничиваем длину полей.
@@ -345,7 +345,7 @@ async function handleFeedback(request: Request, env: Env, ctx: ExecutionContext)
   } catch (error) {
     const err = error as Error;
     console.error(`[feedback] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Feedback failed' }, 500, request);
+    return jsonResponse({ error: 'Feedback failed' }, request, 500);
   }
 }
 

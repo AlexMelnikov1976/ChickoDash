@@ -44,13 +44,13 @@ function jsonResponse(body: unknown, request: Request, status: number = 200): Re
 async function auth(request: Request, env: Env): Promise<{ user_id: string; email: string } | Response> {
   const authHeader = request.headers.get('Authorization');
   const token = extractBearerToken(authHeader);
-  if (!token) return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, 401, request);
+  if (!token) return jsonResponse({ error: 'Unauthorized', message: 'Missing Authorization header' }, request, 401);
 
   const payload = await validateToken(
     token,
     requireJwtSecret(env)
   );
-  if (!payload) return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, 401, request);
+  if (!payload) return jsonResponse({ error: 'Unauthorized', message: 'Invalid or expired token' }, request, 401);
 
   return payload as { user_id: string; email: string };
 }
@@ -122,7 +122,7 @@ export async function handleRestaurantsList(request: Request, env: Env): Promise
   } catch (error) {
     const err = error as Error;
     console.error(`[restaurants] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, 500, request);
+    return jsonResponse({ error: 'Request failed' }, request, 500);
   }
 }
 
@@ -154,18 +154,18 @@ export async function handleBenchmarks(request: Request, env: Env): Promise<Resp
     const start = parseIsoDate(startRaw);
     const end = parseIsoDate(endRaw);
     if (!start || !end) {
-      return jsonResponse({ error: 'Invalid start/end date (expected YYYY-MM-DD)' }, 400, request);
+      return jsonResponse({ error: 'Invalid start/end date (expected YYYY-MM-DD)' }, request, 400);
     }
 
     // Защита от перевёрнутого диапазона.
     if (start > end) {
-      return jsonResponse({ error: 'start must be <= end' }, 400, request);
+      return jsonResponse({ error: 'start must be <= end' }, request, 400);
     }
 
     // Защита от чрезмерно широких диапазонов, перегружающих ClickHouse.
     const span = daysBetween(start, end);
     if (span > MAX_DATE_RANGE_DAYS) {
-      return jsonResponse({ error: `Date range too wide (max ${MAX_DATE_RANGE_DAYS} days, got ${span})` }, 400, request);
+      return jsonResponse({ error: `Date range too wide (max ${MAX_DATE_RANGE_DAYS} days, got ${span})` }, request, 400);
     }
 
     console.log(`[benchmarks] user=${a.user_id} ${start}..${end} span=${span}d`);
@@ -239,7 +239,7 @@ export async function handleBenchmarks(request: Request, env: Env): Promise<Resp
   } catch (error) {
     const err = error as Error;
     console.error(`[benchmarks] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, 500, request);
+    return jsonResponse({ error: 'Request failed' }, request, 500);
   }
 }
 
@@ -265,7 +265,7 @@ export async function handleRestaurantMeta(request: Request, env: Env): Promise<
     const restId = restIdStr !== null ? parsePositiveIntStrict(restIdStr) : null;
 
     if (restId === null) {
-      return jsonResponse({ error: 'Invalid restaurant_id' }, 400, request);
+      return jsonResponse({ error: 'Invalid restaurant_id' }, request, 400);
     }
 
     console.log(`[restaurant-meta] user=${a.user_id} restaurant_id=${restId}`);
@@ -314,6 +314,6 @@ export async function handleRestaurantMeta(request: Request, env: Env): Promise<
   } catch (error) {
     const err = error as Error;
     console.error(`[restaurant-meta] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, 500, request);
+    return jsonResponse({ error: 'Request failed' }, request, 500);
   }
 }
