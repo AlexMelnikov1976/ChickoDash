@@ -600,58 +600,87 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
     <div id="wdbInsights" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
   </div>
 
-  <!-- P&L Calculator -->
+  <!-- P&L Calculator — #76 вариант B: два сценария (будни/выходные) -->
   <div class="card" style="margin-bottom:12px">
     <div class="ctitle">🧮 Калькулятор маржи «Что если»</div>
     <div style="background:rgba(142,170,206,.08);border-left:3px solid var(--blue);padding:10px 14px;margin-bottom:14px;border-radius:4px;font-size:11px;color:var(--text2);line-height:1.55">
-      ℹ️ Здесь считается <b style="color:var(--text)">маржа до прочих расходов</b> на основе реальных данных из iiko (выручка, скидки, фудкост). Полный P&amp;L с ФОТ, арендой, коммуналкой и итоговой прибылью будет в отдельной вкладке <b>(в разработке — после подключения 1С)</b>.
+      ℹ️ Здесь считается <b style="color:var(--text)">маржа до прочих расходов</b> на основе реальных данных из iiko. Калькулятор разделяет будни (Пн-Пт) и выходные (Сб-Вс) — итог месяца = (22 будних × маржа будни) + (8 выходных × маржа выходные). Полный P&amp;L с ФОТ, арендой и прибылью — в отдельной вкладке <b>(в разработке после 1С)</b>.
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px">
-      <!-- Sliders -->
-      <div>
-        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;font-weight:600">Параметры</div>
+    <div class="g2" style="gap:16px">
+      <!-- Weekday scenario -->
+      <div style="background:rgba(74,158,245,.04);border:1px solid rgba(74,158,245,.15);border-radius:8px;padding:14px">
+        <div style="font-size:11px;color:var(--blue);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:10px">📅 Будни (Пн–Пт) · <span id="pl-wd-days">22 дня/мес</span></div>
         <div class="sl-row">
-          <div class="sl-hdr"><span class="sl-name">Средний чек (₽)</span><span class="sl-val" id="sl-chk-v">—</span></div>
-          <input type="range" id="sl-chk" min="300" max="3500" step="10" oninput="calcPL()">
-          <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text3);margin-top:2px"><span>300₽</span><span>3500₽</span></div>
+          <div class="sl-hdr"><span class="sl-name">Средний чек (₽)</span><span class="sl-val" id="sl-wd-chk-v">—</span></div>
+          <input type="range" id="sl-wd-chk" min="300" max="3500" step="10" oninput="calcPL()">
         </div>
         <div class="sl-row">
-          <div class="sl-hdr"><span class="sl-name">Чеков в день</span><span class="sl-val" id="sl-cnt-v">—</span></div>
-          <input type="range" id="sl-cnt" min="5" max="400" step="1" oninput="calcPL()">
+          <div class="sl-hdr"><span class="sl-name">Чеков в день</span><span class="sl-val" id="sl-wd-cnt-v">—</span></div>
+          <input type="range" id="sl-wd-cnt" min="5" max="400" step="1" oninput="calcPL()">
         </div>
         <div class="sl-row">
-          <div class="sl-hdr"><span class="sl-name">Фудкост (%)</span><span><span class="sl-val" id="sl-fc-v">—</span><span class="sl-unit">%</span></span></div>
-          <input type="range" id="sl-fc" min="12" max="40" step="0.1" oninput="calcPL()">
+          <div class="sl-hdr"><span class="sl-name">Фудкост (%)</span><span><span class="sl-val" id="sl-wd-fc-v">—</span><span class="sl-unit">%</span></span></div>
+          <input type="range" id="sl-wd-fc" min="12" max="40" step="0.1" oninput="calcPL()">
         </div>
         <div class="sl-row">
-          <div class="sl-hdr"><span class="sl-name">Скидки (%)</span><span><span class="sl-val" id="sl-disc-v">—</span><span class="sl-unit">%</span></span></div>
-          <input type="range" id="sl-disc" min="0" max="25" step="0.1" oninput="calcPL()">
+          <div class="sl-hdr"><span class="sl-name">Скидки (%)</span><span><span class="sl-val" id="sl-wd-disc-v">—</span><span class="sl-unit">%</span></span></div>
+          <input type="range" id="sl-wd-disc" min="0" max="25" step="0.1" oninput="calcPL()">
         </div>
-        <div style="display:flex;gap:6px;margin-top:4px">
-          <button onclick="resetPL()" style="padding:5px 12px;background:rgba(212,168,75,.12);border:1px solid rgba(212,168,75,.25);border-radius:6px;color:var(--gold);font-size:10px;cursor:pointer;font-family:Inter,sans-serif">↺ Факт</button>
-          <button onclick="setWDayPL()" style="padding:5px 12px;background:rgba(74,158,245,.12);border:1px solid rgba(74,158,245,.25);border-radius:6px;color:var(--blue);font-size:10px;cursor:pointer;font-family:Inter,sans-serif">📅 Будни</button>
-          <button onclick="setWEndPL()" style="padding:5px 12px;background:rgba(212,168,75,.12);border:1px solid rgba(212,168,75,.25);border-radius:6px;color:var(--gold);font-size:10px;cursor:pointer;font-family:Inter,sans-serif">🎉 Выходные</button>
+        <div style="border-top:1px solid rgba(74,158,245,.2);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-size:10px;color:var(--text2)">Маржа/будний день</span>
+          <span id="pl-wd-margin" style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:var(--blue)">—</span>
         </div>
       </div>
-      <!-- Current P&L -->
-      <div>
-        <div style="font-size:10px;color:var(--blue);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;font-weight:600">Текущий факт</div>
-        <div id="plCurrent"></div>
+      <!-- Weekend scenario -->
+      <div style="background:rgba(212,168,75,.04);border:1px solid rgba(212,168,75,.15);border-radius:8px;padding:14px">
+        <div style="font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:10px">🎉 Выходные (Сб–Вс) · <span id="pl-we-days">8 дней/мес</span></div>
+        <div class="sl-row">
+          <div class="sl-hdr"><span class="sl-name">Средний чек (₽)</span><span class="sl-val" id="sl-we-chk-v">—</span></div>
+          <input type="range" id="sl-we-chk" min="300" max="3500" step="10" oninput="calcPL()">
+        </div>
+        <div class="sl-row">
+          <div class="sl-hdr"><span class="sl-name">Чеков в день</span><span class="sl-val" id="sl-we-cnt-v">—</span></div>
+          <input type="range" id="sl-we-cnt" min="5" max="400" step="1" oninput="calcPL()">
+        </div>
+        <div class="sl-row">
+          <div class="sl-hdr"><span class="sl-name">Фудкост (%)</span><span><span class="sl-val" id="sl-we-fc-v">—</span><span class="sl-unit">%</span></span></div>
+          <input type="range" id="sl-we-fc" min="12" max="40" step="0.1" oninput="calcPL()">
+        </div>
+        <div class="sl-row">
+          <div class="sl-hdr"><span class="sl-name">Скидки (%)</span><span><span class="sl-val" id="sl-we-disc-v">—</span><span class="sl-unit">%</span></span></div>
+          <input type="range" id="sl-we-disc" min="0" max="25" step="0.1" oninput="calcPL()">
+        </div>
+        <div style="border-top:1px solid rgba(212,168,75,.2);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-size:10px;color:var(--text2)">Маржа/выходной день</span>
+          <span id="pl-we-margin" style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:var(--gold)">—</span>
+        </div>
       </div>
-      <!-- Adjusted P&L -->
-      <div>
-        <div style="font-size:10px;color:var(--gold);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;font-weight:600">Ваш сценарий</div>
-        <div id="plAdjusted"></div>
-      </div>
+    </div>
+    <div style="margin-top:12px">
+      <button onclick="resetPL()" style="padding:6px 14px;background:rgba(212,168,75,.12);border:1px solid rgba(212,168,75,.25);border-radius:6px;color:var(--gold);font-size:11px;cursor:pointer;font-family:Inter,sans-serif">↺ Сбросить к текущему факту</button>
     </div>
   </div>
 
-  <!-- Forecast -->
+  <!-- Month totals: factual vs scenario -->
   <div class="card" style="margin-bottom:12px">
-    <div class="ctitle">📈 Прогноз на 30 дней</div>
-    <div class="fc-compare" id="fcBoxes"></div>
+    <div class="ctitle">📊 Итог месяца: факт vs сценарий</div>
+    <div class="g2" style="gap:14px">
+      <div style="background:rgba(74,158,245,.04);border:1px solid rgba(74,158,245,.2);border-radius:8px;padding:14px">
+        <div style="font-size:11px;color:var(--blue);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:8px">📊 Текущий факт</div>
+        <div id="plMonthFactual"></div>
+      </div>
+      <div style="background:rgba(212,168,75,.04);border:1px solid rgba(212,168,75,.2);border-radius:8px;padding:14px">
+        <div style="font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:8px">🎯 Ваш сценарий</div>
+        <div id="plMonthScenario"></div>
+      </div>
+    </div>
+    <div id="plMonthEffect" style="margin-top:12px"></div>
+  </div>
+
+  <!-- Forecast 30-day chart -->
+  <div class="card" style="margin-bottom:12px">
+    <div class="ctitle">📈 Накопленная маржа за 30 дней</div>
     <div style="height:180px"><canvas id="fcC30"></canvas></div>
-    <div id="fcDelta" style="margin-top:10px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px"></div>
   </div>
 
   <!-- Breakeven & Scenarios -->
@@ -667,7 +696,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
   </div>
 
   <div class="card">
-    <div class="ctitle">📊 Структура нетто-выручки</div>
+    <div class="ctitle">📊 Структура месячной нетто-выручки</div>
     <div style="height:185px"><canvas id="plBarC"></canvas></div>
   </div>
 </div>
@@ -957,7 +986,9 @@ const S = {
   dynGroup: 'day',
   cmpGroup: 'day',
   revMetric: 'revenue', dowMetric: 'revenue', dowFilter: 'all', compMetric: 'revenue',
-  plChk: 0, plCnt: 0, plFc: 0, plDisc: 0,
+  // #76 B: два сценария — будни и выходные. Каждый со своими 4 параметрами.
+  plWdChk: 0, plWdCnt: 0, plWdFc: 0, plWdDisc: 0,
+  plWeChk: 0, plWeCnt: 0, plWeFc: 0, plWeDisc: 0,
 };
 let R = null;
 const CHS = {};
@@ -2743,41 +2774,45 @@ function renderCompare(){
 }
 
 // ═══ ANALYSIS ═══
+// #76 B: калькулятор маржи с разбивкой на будни/выходные. Инициализируем
+// 8 ползунков из реальных средних по wd/we дням в выбранном периоде. Факт
+// месяца считается честно: 22 будних дня × маржа будни + 8 выходных × маржа выходные.
 function renderAnalysis(){
   renderWDB();
   const ts=getGlobalTs();
-  const fc=safeAvg(ts,'foodcost')||NET.foodcost||23;
-  const chk=safeAvg(ts,'avgCheck')||R.avgCheck||1400;
-  const cnt=safeAvg(ts,'checks')||R.checks||80;
-  const disc=safeAvg(ts,'discount')||R.discount||7;
-  const rev=safeAvg(ts,'revenue')||R.revenue||0;
-  const net_rev=rev*(1-disc/100);
-  S.plChk=chk;S.plCnt=cnt;S.plFc=fc;S.plDisc=disc;
-  document.getElementById('sl-chk').value=Math.round(chk);
-  document.getElementById('sl-cnt').value=Math.round(cnt);
-  document.getElementById('sl-fc').value=fc;
-  document.getElementById('sl-disc').value=disc;
+  const wdTs=ts.filter(t=>!isWeekend(t.date));
+  const weTs=ts.filter(t=>isWeekend(t.date));
+
+  // Будни — средние. Если данных нет (например, выбран только выходной день) — fallback к среднему по всем дням.
+  const wdChk=safeAvg(wdTs,'avgCheck')||safeAvg(ts,'avgCheck')||R.avgCheck||1400;
+  const wdCnt=safeAvg(wdTs,'checks')||safeAvg(ts,'checks')||R.checks||80;
+  const wdFc=safeAvg(wdTs,'foodcost')||safeAvg(ts,'foodcost')||NET.foodcost||23;
+  const wdDisc=safeAvg(wdTs,'discount')||safeAvg(ts,'discount')||R.discount||7;
+
+  // Выходные — аналогично
+  const weChk=safeAvg(weTs,'avgCheck')||safeAvg(ts,'avgCheck')||R.avgCheck||1400;
+  const weCnt=safeAvg(weTs,'checks')||safeAvg(ts,'checks')||R.checks||80;
+  const weFc=safeAvg(weTs,'foodcost')||safeAvg(ts,'foodcost')||NET.foodcost||23;
+  const weDisc=safeAvg(weTs,'discount')||safeAvg(ts,'discount')||R.discount||7;
+
+  // Сохраняем как FACT baseline для сравнения «факт vs сценарий»
+  S.plWdChk=wdChk;S.plWdCnt=wdCnt;S.plWdFc=wdFc;S.plWdDisc=wdDisc;
+  S.plWeChk=weChk;S.plWeCnt=weCnt;S.plWeFc=weFc;S.plWeDisc=weDisc;
+
+  // Инициализируем ползунки
+  document.getElementById('sl-wd-chk').value=Math.round(wdChk);
+  document.getElementById('sl-wd-cnt').value=Math.round(wdCnt);
+  document.getElementById('sl-wd-fc').value=wdFc;
+  document.getElementById('sl-wd-disc').value=wdDisc;
+
+  document.getElementById('sl-we-chk').value=Math.round(weChk);
+  document.getElementById('sl-we-cnt').value=Math.round(weCnt);
+  document.getElementById('sl-we-fc').value=weFc;
+  document.getElementById('sl-we-disc').value=weDisc;
+
   calcPL();
 }
 function resetPL(){renderAnalysis()}
-function setWDayPL(){
-  const ts=getGlobalTs().filter(t=>!isWeekend(t.date));
-  if(!ts.length) return;
-  document.getElementById('sl-chk').value=Math.round(safeAvg(ts,'avgCheck'));
-  document.getElementById('sl-cnt').value=Math.round(safeAvg(ts,'checks'));
-  if(safeAvg(ts,'foodcost')) document.getElementById('sl-fc').value=safeAvg(ts,'foodcost');
-  document.getElementById('sl-disc').value=safeAvg(ts,'discount')||0;
-  calcPL();
-}
-function setWEndPL(){
-  const ts=getGlobalTs().filter(t=>isWeekend(t.date));
-  if(!ts.length) return;
-  document.getElementById('sl-chk').value=Math.round(safeAvg(ts,'avgCheck'));
-  document.getElementById('sl-cnt').value=Math.round(safeAvg(ts,'checks'));
-  if(safeAvg(ts,'foodcost')) document.getElementById('sl-fc').value=safeAvg(ts,'foodcost');
-  document.getElementById('sl-disc').value=safeAvg(ts,'discount')||0;
-  calcPL();
-}
 
 function renderWDB(){
   const ts=getGlobalTs();
@@ -2845,74 +2880,100 @@ function plCalc(chk,cnt,fc,disc) {
   const margin = net - fcAmt; // Маржа до прочих расходов (ФОТ, аренда, коммуналка и т.д.)
   return { rev, discAmt, net, fcAmt, margin };
 }
-function plHtml(p,color){
-  const mColor = p.margin >= 0 ? 'var(--green)' : 'var(--red)';
-  return \`<div class="pl-r"><span class="pl-lbl">Выручка/день</span><span class="pl-amt">\${fmtR(p.rev)}</span></div>
-    <div class="pl-r"><span class="pl-lbl">− Скидки</span><span class="pl-amt" style="color:var(--red)">−\${fmtR(p.discAmt)}</span></div>
-    <div class="pl-r"><span class="pl-lbl">Нетто</span><span class="pl-amt">\${fmtR(p.net)}</span></div>
-    <div class="pl-r"><span class="pl-lbl">− Фудкост</span><span class="pl-amt" style="color:var(--amber)">−\${fmtR(p.fcAmt)}</span></div>
-    <div class="pl-tot" title="Маржа до прочих расходов (ФОТ, аренда, коммуналка). Реальная прибыль — после подключения 1С."><span class="pl-tot-lbl">Маржа/день</span><span class="pl-tot-amt" style="color:\${mColor}">\${fmtR(p.margin)}</span></div>
-    <div style="font-size:10px;color:var(--text3);text-align:right">×26 дней: <span style="color:\${mColor};font-family:'Cormorant Garamond',serif;font-size:14px">\${fmtR(p.margin*26)}</span></div>\`;
-}
+function plHtml_DEPRECATED_REMOVED_v76b(){ /* удалено в #76 B */ }
+
+// #76 B: два сценария — будни и выходные. Фиксированное количество дней
+// в среднем месяце: 22 будних + 8 выходных = 30 календарных дней.
+// Это усреднение для 30-31-дневного месяца (реально бывает 20-23 будних).
+// Реальная разбивка за период использована для инициализации ползунков в
+// renderAnalysis, здесь для месячных итогов — стандартная структура.
+const PL_WD_DAYS = 22;
+const PL_WE_DAYS = 8;
 
 function calcPL(){
-  const slChk=document.getElementById('sl-chk');
-  if(!slChk) return; // Analysis tab not rendered yet
-  const chk=+slChk.value;
-  const cnt=+document.getElementById('sl-cnt').value;
-  const fc=+document.getElementById('sl-fc').value;
-  const disc=+document.getElementById('sl-disc').value;
-  document.getElementById('sl-chk-v').textContent=fmtR(chk);
-  document.getElementById('sl-cnt-v').textContent=cnt;
-  document.getElementById('sl-fc-v').textContent=fmtN(fc,1);
-  document.getElementById('sl-disc-v').textContent=fmtN(disc,1);
+  const slWdChk = document.getElementById('sl-wd-chk');
+  if(!slWdChk) return; // Analysis tab not rendered yet
 
-  const current=plCalc(S.plChk,S.plCnt,S.plFc,S.plDisc);
-  const adjusted=plCalc(chk,cnt,fc,disc);
-  document.getElementById('plCurrent').innerHTML=plHtml(current,'var(--blue)');
-  document.getElementById('plAdjusted').innerHTML=plHtml(adjusted,'var(--gold)');
+  // Читаем 8 ползунков
+  const wdChk = +slWdChk.value;
+  const wdCnt = +document.getElementById('sl-wd-cnt').value;
+  const wdFc  = +document.getElementById('sl-wd-fc').value;
+  const wdDisc= +document.getElementById('sl-wd-disc').value;
+  const weChk = +document.getElementById('sl-we-chk').value;
+  const weCnt = +document.getElementById('sl-we-cnt').value;
+  const weFc  = +document.getElementById('sl-we-fc').value;
+  const weDisc= +document.getElementById('sl-we-disc').value;
 
-  // Forecast boxes
-  const marginDelta = adjusted.margin - current.margin;
-  const marginDeltaColor = marginDelta >= 0 ? 'var(--green)' : 'var(--red)';
-  document.getElementById('fcBoxes').innerHTML=\`
-    <div class="fc-box current">
-      <div class="fc-box-title" style="color:var(--blue)">📊 При текущих показателях</div>
-      <div class="fc-big" style="color:var(--blue)">\${fmtR(current.margin*26)}</div>
-      <div class="fc-sub">маржа/месяц</div>
-      <div class="fc-metric" style="margin-top:8px"><span style="color:var(--text2)">Выручка/мес</span><span>\${fmtR(current.rev*26)}</span></div>
-      <div class="fc-metric"><span style="color:var(--text2)">Выручка/год</span><span>\${fmtR(current.rev*26*12)}</span></div>
-    </div>
-    <div class="fc-box adjusted">
-      <div class="fc-box-title" style="color:var(--gold)">🎯 Ваш сценарий</div>
-      <div class="fc-big" style="color:var(--gold)">\${fmtR(adjusted.margin*26)}</div>
-      <div class="fc-sub">маржа/месяц</div>
-      <div class="fc-metric" style="margin-top:8px"><span style="color:var(--text2)">Выручка/мес</span><span>\${fmtR(adjusted.rev*26)}</span></div>
-      <div class="fc-metric"><span style="color:var(--text2)">Маржа/год</span><span style="color:var(--gold)">\${fmtR(adjusted.margin*26*12)}</span></div>
-      <div class="fc-metric"><span style="color:var(--text2)">Эффект за год</span><span style="color:\${marginDeltaColor}">\${marginDelta>=0?'+':''}\${fmtR(marginDelta*26*12)}/год</span></div>
+  // Подписи около ползунков
+  document.getElementById('sl-wd-chk-v').textContent = fmtR(wdChk);
+  document.getElementById('sl-wd-cnt-v').textContent = wdCnt;
+  document.getElementById('sl-wd-fc-v').textContent  = fmtN(wdFc,1);
+  document.getElementById('sl-wd-disc-v').textContent= fmtN(wdDisc,1);
+  document.getElementById('sl-we-chk-v').textContent = fmtR(weChk);
+  document.getElementById('sl-we-cnt-v').textContent = weCnt;
+  document.getElementById('sl-we-fc-v').textContent  = fmtN(weFc,1);
+  document.getElementById('sl-we-disc-v').textContent= fmtN(weDisc,1);
+
+  // Посчитать маржу в день для каждого сценария (и его факта)
+  const wdScen = plCalc(wdChk, wdCnt, wdFc, wdDisc);
+  const weScen = plCalc(weChk, weCnt, weFc, weDisc);
+  const wdFact = plCalc(S.plWdChk, S.plWdCnt, S.plWdFc, S.plWdDisc);
+  const weFact = plCalc(S.plWeChk, S.plWeCnt, S.plWeFc, S.plWeDisc);
+
+  // Обновить компактные «Маржа/будний день» и «Маржа/выходной день»
+  document.getElementById('pl-wd-margin').textContent = fmtR(wdScen.margin);
+  document.getElementById('pl-we-margin').textContent = fmtR(weScen.margin);
+
+  // Месячные итоги (честное сложение)
+  const factMonth = wdFact.margin * PL_WD_DAYS + weFact.margin * PL_WE_DAYS;
+  const scenMonth = wdScen.margin * PL_WD_DAYS + weScen.margin * PL_WE_DAYS;
+  const factRevMonth = wdFact.rev * PL_WD_DAYS + weFact.rev * PL_WE_DAYS;
+  const scenRevMonth = wdScen.rev * PL_WD_DAYS + weScen.rev * PL_WE_DAYS;
+
+  // Рендер блока «Факт» (левая колонка итога месяца)
+  document.getElementById('plMonthFactual').innerHTML = \`
+    <div class="pl-r" title="Реальные средние значения из выбранного периода"><span class="pl-lbl">📅 Будни: \${PL_WD_DAYS} × \${fmtR(wdFact.margin)}</span><span class="pl-amt" style="color:var(--blue)">\${fmtR(wdFact.margin * PL_WD_DAYS)}</span></div>
+    <div class="pl-r"><span class="pl-lbl">🎉 Выходные: \${PL_WE_DAYS} × \${fmtR(weFact.margin)}</span><span class="pl-amt" style="color:var(--gold)">\${fmtR(weFact.margin * PL_WE_DAYS)}</span></div>
+    <div class="pl-tot"><span class="pl-tot-lbl">Маржа/месяц</span><span class="pl-tot-amt" style="color:var(--blue)">\${fmtR(factMonth)}</span></div>
+    <div style="font-size:10px;color:var(--text3);text-align:right;margin-top:4px">Выручка/мес: \${fmtR(factRevMonth)} · Год: \${fmtR(factMonth*12)}</div>\`;
+
+  // Рендер блока «Сценарий» (правая колонка итога месяца)
+  document.getElementById('plMonthScenario').innerHTML = \`
+    <div class="pl-r"><span class="pl-lbl">📅 Будни: \${PL_WD_DAYS} × \${fmtR(wdScen.margin)}</span><span class="pl-amt" style="color:var(--blue)">\${fmtR(wdScen.margin * PL_WD_DAYS)}</span></div>
+    <div class="pl-r"><span class="pl-lbl">🎉 Выходные: \${PL_WE_DAYS} × \${fmtR(weScen.margin)}</span><span class="pl-amt" style="color:var(--gold)">\${fmtR(weScen.margin * PL_WE_DAYS)}</span></div>
+    <div class="pl-tot"><span class="pl-tot-lbl">Маржа/месяц</span><span class="pl-tot-amt" style="color:var(--gold)">\${fmtR(scenMonth)}</span></div>
+    <div style="font-size:10px;color:var(--text3);text-align:right;margin-top:4px">Выручка/мес: \${fmtR(scenRevMonth)} · Год: \${fmtR(scenMonth*12)}</div>\`;
+
+  // Эффект: дельта между фактом и сценарием
+  const deltaMonth = scenMonth - factMonth;
+  const deltaYear = deltaMonth * 12;
+  const deltaColor = deltaMonth >= 0 ? 'var(--green)' : 'var(--red)';
+  const deltaSign = deltaMonth >= 0 ? '+' : '';
+  document.getElementById('plMonthEffect').innerHTML = \`
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+      <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Эффект за месяц</div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;color:\${deltaColor}">\${deltaSign}\${fmtR(deltaMonth)}</div>
+      </div>
+      <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Эффект за год</div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;color:\${deltaColor}">\${deltaSign}\${fmtR(deltaYear)}</div>
+      </div>
     </div>\`;
 
-  // 30-day forecast chart
-  const days=Array.from({length:30},(_,i)=>i+1);
-  mkChart('fcC30',{type:'line',data:{labels:days.map(d=>d+'д'),datasets:[
-    {label:'Текущий сценарий',data:days.map(d=>current.margin*d),borderColor:'#4A9EF5',backgroundColor:'rgba(74,158,245,.08)',borderWidth:2,pointRadius:0,fill:true,tension:.3},
-    {label:'Ваш сценарий',data:days.map(d=>adjusted.margin*d),borderColor:'#D4A84B',backgroundColor:'rgba(212,168,75,.08)',borderWidth:2,pointRadius:0,fill:true,tension:.3},
-    {label:'Ноль',data:days.map(()=>0),borderColor:'rgba(142,170,206,.2)',borderWidth:1,pointRadius:0,fill:false,borderDash:[2,4]}
-  ]},options:chartOpts(v=>fmtR(v))});
+  // 30-day chart: накопленная маржа. Для простоты используем ежедневную
+  // blended маржу (wd_margin * 22/30 + we_margin * 8/30) как линейное
+  // приближение. Итоговые точки на 30-й день совпадают с месячными итогами.
+  const factDailyBlend = factMonth / 30;
+  const scenDailyBlend = scenMonth / 30;
+  const days = Array.from({length:30}, (_,i)=>i+1);
+  mkChart('fcC30', {type:'line', data:{labels:days.map(d=>d+'д'), datasets:[
+    {label:'Текущий факт', data:days.map(d=>factDailyBlend*d), borderColor:'#4A9EF5', backgroundColor:'rgba(74,158,245,.08)', borderWidth:2, pointRadius:0, fill:true, tension:.3},
+    {label:'Ваш сценарий', data:days.map(d=>scenDailyBlend*d), borderColor:'#D4A84B', backgroundColor:'rgba(212,168,75,.08)', borderWidth:2, pointRadius:0, fill:true, tension:.3},
+    {label:'Ноль', data:days.map(()=>0), borderColor:'rgba(142,170,206,.2)', borderWidth:1, pointRadius:0, fill:false, borderDash:[2,4]}
+  ]}, options:chartOpts(v=>fmtR(v))});
 
-  // Delta cards
-  document.getElementById('fcDelta').innerHTML=[
-    {l:'Маржа/месяц — факт',v:current.margin*26,f:v=>fmtR(v)},
-    {l:'Маржа/месяц — сценарий',v:adjusted.margin*26,f:v=>fmtR(v)},
-    {l:'Маржа/год — сценарий',v:adjusted.margin*26*12,f:v=>fmtR(v)},
-    {l:'Эффект за год vs факт',v:(adjusted.margin-current.margin)*26*12,f:v=>fmtR(v)},
-  ].map(item=>{
-    const c=item.v>0?'var(--green)':item.v<0?'var(--red)':'var(--text2)';
-    return \`<div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center"><div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">\${item.l}</div><div style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:\${c}">\${item.v>=0?'+':''}\${item.f(item.v)}</div></div>\`;
-  }).join('');
-
-  // Breakeven — требует реальных ФОТ/Аренды/прочих затрат.
-  // До подключения 1С показываем заглушку вместо модельного расчёта.
+  // Breakeven — заглушка как было (требует ФОТ/Аренда из 1С)
   document.getElementById('breakevenBox').innerHTML = \`
     <div style="text-align:center;padding:24px 12px;color:var(--text3);font-size:12px;line-height:1.6">
       <div style="font-size:24px;margin-bottom:8px">🔒</div>
@@ -2920,20 +2981,47 @@ function calcPL(){
       <div style="font-size:11px">Для корректного расчёта нужны реальные ФОТ, аренда и прочие постоянные расходы. Появится после подключения 1С <b>(Волна 6)</b>.</div>
     </div>\`;
 
-  document.getElementById('scenBox').innerHTML=[
-    {l:'+10% чеков в день',delta:(plCalc(chk,cnt*1.1,fc,disc).margin-adjusted.margin)},
-    {l:'−1% фудкост',delta:(plCalc(chk,cnt,fc-1,disc).margin-adjusted.margin)},
-    {l:'−1% скидок',delta:(plCalc(chk,cnt,fc,disc-1).margin-adjusted.margin)},
-    {l:'+100₽ к чеку',delta:(plCalc(chk+100,cnt,fc,disc).margin-adjusted.margin)},
-    {l:'Будни = уровню выходных',delta:adjusted.margin*0.3},
-  ].map(s=>\`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(46,64,104,.4);font-size:11px"><span style="color:var(--text2)">\${s.l}</span><span style="color:var(--green);font-weight:600">+\${fmtR(s.delta)}/д = +\${fmtR(s.delta*26)}/мес</span></div>\`).join('');
+  // Сценарии улучшений — применяются и к будням, и к выходным отдельно,
+  // показываем суммарный месячный эффект
+  const mkScen = (wdMod, weMod, label) => {
+    const newMonth = wdMod().margin * PL_WD_DAYS + weMod().margin * PL_WE_DAYS;
+    return { l: label, delta: newMonth - scenMonth };
+  };
+  document.getElementById('scenBox').innerHTML = [
+    mkScen(
+      () => plCalc(wdChk, wdCnt*1.1, wdFc, wdDisc),
+      () => plCalc(weChk, weCnt*1.1, weFc, weDisc),
+      '+10% чеков (и будни и выходные)'
+    ),
+    mkScen(
+      () => plCalc(wdChk, wdCnt, Math.max(0, wdFc-1), wdDisc),
+      () => plCalc(weChk, weCnt, Math.max(0, weFc-1), weDisc),
+      '−1% фудкост'
+    ),
+    mkScen(
+      () => plCalc(wdChk, wdCnt, wdFc, Math.max(0, wdDisc-1)),
+      () => plCalc(weChk, weCnt, weFc, Math.max(0, weDisc-1)),
+      '−1% скидок'
+    ),
+    mkScen(
+      () => plCalc(wdChk+100, wdCnt, wdFc, wdDisc),
+      () => plCalc(weChk+100, weCnt, weFc, weDisc),
+      '+100₽ к среднему чеку'
+    ),
+    { l: 'Будни подтянуть до уровня выходных', delta: (weScen.margin - wdScen.margin) * PL_WD_DAYS },
+  ].map(s => \`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(46,64,104,.4);font-size:11px"><span style="color:var(--text2)">\${s.l}</span><span style="color:\${s.delta>=0?'var(--green)':'var(--red)'};font-weight:600">\${s.delta>=0?'+':''}\${fmtR(s.delta)}/мес</span></div>\`).join('');
 
-  // P&L stacked bar — без ФОТ/Аренды, только реальные компоненты нетто-выручки
-  mkChart('plBarC',{type:'bar',data:{labels:['Факт','Сценарий'],datasets:[
-    {label:'Скидки',data:[current.discAmt,adjusted.discAmt],backgroundColor:'#E74C3C88',borderColor:'#E74C3C',borderWidth:1,borderRadius:2},
-    {label:'Фудкост',data:[current.fcAmt,adjusted.fcAmt],backgroundColor:'#F39C1288',borderColor:'#F39C12',borderWidth:1},
-    {label:'Маржа',data:[Math.max(0,current.margin),Math.max(0,adjusted.margin)],backgroundColor:'#2ECC7188',borderColor:'#2ECC71',borderWidth:1},
-  ]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#8AAACE',font:{size:9},boxWidth:10}}},scales:{x:{stacked:true,grid:{color:'rgba(46,64,104,.4)'},ticks:{color:'#4E6A90',font:{size:9},callback:v=>fmtR(v)}},y:{stacked:true,grid:{color:'rgba(46,64,104,.4)'},ticks:{color:'#4E6A90',font:{size:9}}}}}});
+  // Stacked bar: структура МЕСЯЧНОЙ нетто-выручки, с учётом веса wd/we
+  const factDisc = wdFact.discAmt * PL_WD_DAYS + weFact.discAmt * PL_WE_DAYS;
+  const factFc   = wdFact.fcAmt * PL_WD_DAYS + weFact.fcAmt * PL_WE_DAYS;
+  const scenDisc = wdScen.discAmt * PL_WD_DAYS + weScen.discAmt * PL_WE_DAYS;
+  const scenFc   = wdScen.fcAmt * PL_WD_DAYS + weScen.fcAmt * PL_WE_DAYS;
+
+  mkChart('plBarC', {type:'bar', data:{labels:['Факт','Сценарий'], datasets:[
+    {label:'Скидки',  data:[factDisc, scenDisc], backgroundColor:'#E74C3C88', borderColor:'#E74C3C', borderWidth:1, borderRadius:2},
+    {label:'Фудкост', data:[factFc, scenFc],     backgroundColor:'#F39C1288', borderColor:'#F39C12', borderWidth:1},
+    {label:'Маржа',   data:[Math.max(0,factMonth), Math.max(0,scenMonth)], backgroundColor:'#2ECC7188', borderColor:'#2ECC71', borderWidth:1},
+  ]}, options:{indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#8AAACE',font:{size:9},boxWidth:10}}}, scales:{x:{stacked:true,grid:{color:'rgba(46,64,104,.4)'},ticks:{color:'#4E6A90',font:{size:9},callback:v=>fmtR(v)}}, y:{stacked:true,grid:{color:'rgba(46,64,104,.4)'},ticks:{color:'#4E6A90',font:{size:9}}}}}});
 }
 
 // ═══ FEEDBACK WIDGET ═══
