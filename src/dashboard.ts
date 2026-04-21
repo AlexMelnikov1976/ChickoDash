@@ -1549,6 +1549,10 @@ function renderAll() {
   // Пересчитываем все вкладки при смене ресторана / «Вся сеть»
   if (typeof renderDynamics === 'function') try { renderDynamics(); } catch(e) { console.warn('[renderAll] dynamics:', e.message); }
   if (typeof renderCompare === 'function') try { renderCompare(); } catch(e) { console.warn('[renderAll] compare:', e.message); }
+  // #76 B: Analysis тоже должен обновляться при смене города (иначе
+  // калькулятор показывает baseline предыдущего ресторана). Вкладка
+  // всегда в DOM (скрыта через CSS), так что рендер безопасен.
+  if (typeof renderAnalysis === 'function') try { renderAnalysis(); } catch(e) { console.warn('[renderAll] analysis:', e.message); }
 }
 
 // ═══ UTILS ═══
