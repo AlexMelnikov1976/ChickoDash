@@ -1403,7 +1403,11 @@ async function renderForecast() {
   if (!box || !R) { if(box) box.innerHTML = ''; return; }
 
   // Skeleton пока идёт запрос (первая отрисовка).
-  const label = NETWORK_MODE ? \`Вся сеть (\${RESTS.length} ресторанов)\` : R.name + ' (' + R.city + ')';
+  // #dup-city fix: если R.name уже содержит R.city (напр. "Чико (Калининград-1)"),
+  // то не клеим город вторым разом. Защита от пустого city тоже есть — пустая строка
+  // всегда содержится в name, так что в этом случае city не добавляем.
+  const cityInName = R.city && R.name.includes(R.city);
+  const label = NETWORK_MODE ? \`Вся сеть (\${RESTS.length} ресторанов)\` : (cityInName ? R.name : R.name + ' (' + R.city + ')');
   const haveCache = FORECAST_CACHE[NETWORK_MODE ? '__network__' : String(R.id)];
   if (!haveCache) {
     box.innerHTML = \`<div class="fc-block"><div class="fc-hdr"><div class="fc-hdr-left"><span class="fc-lbl">Прогноз</span><span class="fc-sub">\${label}</span></div></div><div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Расчёт прогноза…</div></div>\`;
@@ -1495,7 +1499,12 @@ function fmtR(v,full) {
     if(n>=10e3) return (v/1000).toFixed(1)+'К₽';
     if(n>=1e3) return (v/1000).toFixed(1)+'К₽';
   }
-  return Math.round(v).toLocaleString('ru')+'₽';
+  // #48: в длинном формате неразрывный пробел перед ₽ — стандарт русской
+  // типографики. Короткий формат (154К₽, 1.5М₽) оставляем плотным — он
+  // используется в компактных местах (KPI-карточки, подписи графиков).
+  // toLocaleString('ru') уже вставляет NBSP как разделитель тысяч,
+  // поэтому итог: "153 124 ₽" (все пробелы неразрывные).
+  return Math.round(v).toLocaleString('ru')+'\u00A0₽';
 }
 function fmtN(v,d=1){return v===null||v===undefined?'—':Number(v).toFixed(d)}
 function fmtD(dateStr){if(!dateStr||dateStr.length<10)return dateStr||'';return dateStr.slice(8,10)+'.'+dateStr.slice(5,7)}
@@ -2686,7 +2695,11 @@ function renderCompare(){
   }).join('');
 
   const r=comps[0],dp=r.revenue>0?r.delivery/r.revenue*100:0;
-  const rows=[{l:'Выручка/день',s:r.revenue,n:NET.revenue,t:TOP10.revenue,f:fmtR,lb:false},{l:'Ср. чек',s:r.avgCheck,n:NET.avgCheck,t:TOP10.avgCheck,f:fmtR,lb:false},{l:'Чеков/день',s:r.checks,n:NET.checks,t:null,f:v=>Math.round(v),lb:false},{l:'Фудкост %',s:r.foodcost,n:NET.foodcost,t:TOP10.foodcost,f:v=>v!==null?fmtN(v)+'%':'—',lb:true},{l:'Скидки %',s:r.discount,n:NET.discount,t:TOP10.discount,f:v=>fmtN(v,1)+'%',lb:true},{l:'Доставка %',s:dp,n:NET.deliveryPct,t:TOP10.deliveryPct,f:v=>fmtN(v,1)+'%',lb:false}];
+  // #43 extension: если у ресторана доставки нет (≤1%) — не показываем строку
+  // в таблице vs Сеть/ТОП-10. KPI-карточка скрывается отдельно (см. выше).
+  const hasDelivery = dp > 1;
+  const rows=[{l:'Выручка/день',s:r.revenue,n:NET.revenue,t:TOP10.revenue,f:fmtR,lb:false},{l:'Ср. чек',s:r.avgCheck,n:NET.avgCheck,t:TOP10.avgCheck,f:fmtR,lb:false},{l:'Чеков/день',s:r.checks,n:NET.checks,t:null,f:v=>Math.round(v),lb:false},{l:'Фудкост %',s:r.foodcost,n:NET.foodcost,t:TOP10.foodcost,f:v=>v!==null?fmtN(v)+'%':'—',lb:true},{l:'Скидки %',s:r.discount,n:NET.discount,t:TOP10.discount,f:v=>fmtN(v,1)+'%',lb:true}];
+  if (hasDelivery) rows.push({l:'Доставка %',s:dp,n:NET.deliveryPct,t:TOP10.deliveryPct,f:v=>fmtN(v,1)+'%',lb:false});
   // Update "ваша точка" header with city name
   const ownHdr=document.getElementById('netTH_own');
   if(ownHdr) ownHdr.textContent=comps[0]?comps[0].city:'Точка 1';
