@@ -602,7 +602,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 
   <!-- P&L Calculator -->
   <div class="card" style="margin-bottom:12px">
-    <div class="ctitle">🧮 P&L Калькулятор «Что если»</div>
+    <div class="ctitle">🧮 Калькулятор маржи «Что если»</div>
+    <div style="background:rgba(142,170,206,.08);border-left:3px solid var(--blue);padding:10px 14px;margin-bottom:14px;border-radius:4px;font-size:11px;color:var(--text2);line-height:1.55">
+      ℹ️ Здесь считается <b style="color:var(--text)">маржа до прочих расходов</b> на основе реальных данных из iiko (выручка, скидки, фудкост). Полный P&amp;L с ФОТ, арендой, коммуналкой и итоговой прибылью будет в отдельной вкладке <b>(в разработке — после подключения 1С)</b>.
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px">
       <!-- Sliders -->
       <div>
@@ -2828,26 +2831,28 @@ function renderWDB(){
   document.getElementById('wdbInsights').innerHTML=ins.map(i=>\`<div class="ins-card \${i.t}" style="margin:0"><div class="ins-b" style="font-size:11px">\${i.txt}</div></div>\`).join('');
 }
 
-function plCalc(chk,cnt,fc,disc){
-  const rev=chk*cnt;
-  const discAmt=rev*disc/100;
-  const net=rev-discAmt;
-  const fcAmt=net*fc/100;
-  const fot=net*0.25;
-  const rent=net*0.15;
-  const profit=net-fcAmt-fot-rent;
-  return{rev,discAmt,net,fcAmt,fot,rent,profit};
+// #76: упрощение P&L калькулятора (21.04.2026).
+// ФОТ 25% и Аренда 15% были захардкожены и одинаковы для всех ресторанов —
+// это модельные допущения без реальных данных. Блок назывался «ФАКТ», но
+// по факту был моделью. Полный P&L с реальными ФОТ/арендой/прочим будет
+// в отдельной вкладке после подключения 1С (Волна 6). Здесь — честная
+// маржа до прочих расходов, на основе только реальных данных из iiko.
+function plCalc(chk,cnt,fc,disc) {
+  const rev = chk*cnt;
+  const discAmt = rev*disc/100;
+  const net = rev - discAmt;
+  const fcAmt = net*fc/100;
+  const margin = net - fcAmt; // Маржа до прочих расходов (ФОТ, аренда, коммуналка и т.д.)
+  return { rev, discAmt, net, fcAmt, margin };
 }
 function plHtml(p,color){
-  const pColor=p.profit>=0?'var(--green)':'var(--red)';
+  const mColor = p.margin >= 0 ? 'var(--green)' : 'var(--red)';
   return \`<div class="pl-r"><span class="pl-lbl">Выручка/день</span><span class="pl-amt">\${fmtR(p.rev)}</span></div>
     <div class="pl-r"><span class="pl-lbl">− Скидки</span><span class="pl-amt" style="color:var(--red)">−\${fmtR(p.discAmt)}</span></div>
     <div class="pl-r"><span class="pl-lbl">Нетто</span><span class="pl-amt">\${fmtR(p.net)}</span></div>
     <div class="pl-r"><span class="pl-lbl">− Фудкост</span><span class="pl-amt" style="color:var(--amber)">−\${fmtR(p.fcAmt)}</span></div>
-    <div class="pl-r"><span class="pl-lbl">− ФОТ 25%</span><span class="pl-amt" style="color:var(--text2)">−\${fmtR(p.fot)}</span></div>
-    <div class="pl-r"><span class="pl-lbl">− Аренда 15%</span><span class="pl-amt" style="color:var(--text2)">−\${fmtR(p.rent)}</span></div>
-    <div class="pl-tot"><span class="pl-tot-lbl">Прибыль/день</span><span class="pl-tot-amt" style="color:\${pColor}">\${fmtR(p.profit)}</span></div>
-    <div style="font-size:10px;color:var(--text3);text-align:right">×26 дней: <span style="color:\${pColor};font-family:'Cormorant Garamond',serif;font-size:14px">\${fmtR(p.profit*26)}</span></div>\`;
+    <div class="pl-tot" title="Маржа до прочих расходов (ФОТ, аренда, коммуналка). Реальная прибыль — после подключения 1С."><span class="pl-tot-lbl">Маржа/день</span><span class="pl-tot-amt" style="color:\${mColor}">\${fmtR(p.margin)}</span></div>
+    <div style="font-size:10px;color:var(--text3);text-align:right">×26 дней: <span style="color:\${mColor};font-family:'Cormorant Garamond',serif;font-size:14px">\${fmtR(p.margin*26)}</span></div>\`;
 }
 
 function calcPL(){
@@ -2868,73 +2873,66 @@ function calcPL(){
   document.getElementById('plAdjusted').innerHTML=plHtml(adjusted,'var(--gold)');
 
   // Forecast boxes
-  const profDelta=adjusted.profit-current.profit;
-  const profDeltaColor=profDelta>=0?'var(--green)':'var(--red)';
+  const marginDelta = adjusted.margin - current.margin;
+  const marginDeltaColor = marginDelta >= 0 ? 'var(--green)' : 'var(--red)';
   document.getElementById('fcBoxes').innerHTML=\`
     <div class="fc-box current">
       <div class="fc-box-title" style="color:var(--blue)">📊 При текущих показателях</div>
-      <div class="fc-big" style="color:var(--blue)">\${fmtR(current.profit*26)}</div>
-      <div class="fc-sub">прибыль/месяц</div>
+      <div class="fc-big" style="color:var(--blue)">\${fmtR(current.margin*26)}</div>
+      <div class="fc-sub">маржа/месяц</div>
       <div class="fc-metric" style="margin-top:8px"><span style="color:var(--text2)">Выручка/мес</span><span>\${fmtR(current.rev*26)}</span></div>
       <div class="fc-metric"><span style="color:var(--text2)">Выручка/год</span><span>\${fmtR(current.rev*26*12)}</span></div>
     </div>
     <div class="fc-box adjusted">
       <div class="fc-box-title" style="color:var(--gold)">🎯 Ваш сценарий</div>
-      <div class="fc-big" style="color:var(--gold)">\${fmtR(adjusted.profit*26)}</div>
-      <div class="fc-sub">прибыль/месяц</div>
+      <div class="fc-big" style="color:var(--gold)">\${fmtR(adjusted.margin*26)}</div>
+      <div class="fc-sub">маржа/месяц</div>
       <div class="fc-metric" style="margin-top:8px"><span style="color:var(--text2)">Выручка/мес</span><span>\${fmtR(adjusted.rev*26)}</span></div>
-      <div class="fc-metric"><span style="color:var(--text2)">Прибыль/год</span><span style="color:var(--gold)">\${fmtR(adjusted.profit*26*12)}</span></div>
-      <div class="fc-metric"><span style="color:var(--text2)">Эффект за год</span><span style="color:\${profDeltaColor}">\${profDelta>=0?'+':''}\${fmtR(profDelta*26*12)}/год</span></div>
+      <div class="fc-metric"><span style="color:var(--text2)">Маржа/год</span><span style="color:var(--gold)">\${fmtR(adjusted.margin*26*12)}</span></div>
+      <div class="fc-metric"><span style="color:var(--text2)">Эффект за год</span><span style="color:\${marginDeltaColor}">\${marginDelta>=0?'+':''}\${fmtR(marginDelta*26*12)}/год</span></div>
     </div>\`;
 
   // 30-day forecast chart
   const days=Array.from({length:30},(_,i)=>i+1);
   mkChart('fcC30',{type:'line',data:{labels:days.map(d=>d+'д'),datasets:[
-    {label:'Текущий сценарий',data:days.map(d=>current.profit*d),borderColor:'#4A9EF5',backgroundColor:'rgba(74,158,245,.08)',borderWidth:2,pointRadius:0,fill:true,tension:.3},
-    {label:'Ваш сценарий',data:days.map(d=>adjusted.profit*d),borderColor:'#D4A84B',backgroundColor:'rgba(212,168,75,.08)',borderWidth:2,pointRadius:0,fill:true,tension:.3},
+    {label:'Текущий сценарий',data:days.map(d=>current.margin*d),borderColor:'#4A9EF5',backgroundColor:'rgba(74,158,245,.08)',borderWidth:2,pointRadius:0,fill:true,tension:.3},
+    {label:'Ваш сценарий',data:days.map(d=>adjusted.margin*d),borderColor:'#D4A84B',backgroundColor:'rgba(212,168,75,.08)',borderWidth:2,pointRadius:0,fill:true,tension:.3},
     {label:'Ноль',data:days.map(()=>0),borderColor:'rgba(142,170,206,.2)',borderWidth:1,pointRadius:0,fill:false,borderDash:[2,4]}
   ]},options:chartOpts(v=>fmtR(v))});
 
   // Delta cards
   document.getElementById('fcDelta').innerHTML=[
-    {l:'Прибыль/месяц — факт',v:current.profit*26,f:v=>fmtR(v)},
-    {l:'Прибыль/месяц — сценарий',v:adjusted.profit*26,f:v=>fmtR(v)},
-    {l:'Прибыль/год — сценарий',v:adjusted.profit*26*12,f:v=>fmtR(v)},
-    {l:'Эффект за год vs факт',v:(adjusted.profit-current.profit)*26*12,f:v=>fmtR(v)},
+    {l:'Маржа/месяц — факт',v:current.margin*26,f:v=>fmtR(v)},
+    {l:'Маржа/месяц — сценарий',v:adjusted.margin*26,f:v=>fmtR(v)},
+    {l:'Маржа/год — сценарий',v:adjusted.margin*26*12,f:v=>fmtR(v)},
+    {l:'Эффект за год vs факт',v:(adjusted.margin-current.margin)*26*12,f:v=>fmtR(v)},
   ].map(item=>{
     const c=item.v>0?'var(--green)':item.v<0?'var(--red)':'var(--text2)';
     return \`<div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center"><div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">\${item.l}</div><div style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:\${c}">\${item.v>=0?'+':''}\${item.f(item.v)}</div></div>\`;
   }).join('');
 
-  // Breakeven — guard against div/0
-  const marginal = chk * (1 - disc/100) * (1 - fc/100);
-  const fixedPerCheck = marginal > 0 ? (adjusted.fot + adjusted.rent) / cnt : 0;
-  const beRev = adjusted.net > 0 ? adjusted.rev * (adjusted.fot + adjusted.rent) / adjusted.net : 0;
-  const beChecks = marginal > 0 ? Math.ceil((adjusted.fot + adjusted.rent) / marginal) : '∞';
-  document.getElementById('breakevenBox').innerHTML=\`
-    <div style="margin-bottom:6px;color:var(--text2);font-size:10px">При текущих параметрах сценария:</div>
-    <div style="font-family:'Cormorant Garamond',serif;font-size:26px;color:var(--gold)">\${fmtR(beRev)}/день</div>
-    <div style="font-size:10px;color:var(--text2);margin-top:3px">\${beChecks} чеков по \${fmtR(chk)}</div>
-    <div style="margin-top:10px;display:flex;flex-direction:column;gap:4px;font-size:11px">
-      <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Запас прочности</span><span style="color:\${adjusted.profit>=0?'var(--green)':'var(--red)'};font-weight:600">\${fmtR(adjusted.profit)}/день</span></div>
-      <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Покрытие ФОТ</span><span>\${(adjusted.net*(1-fc/100)>adjusted.fot?'✅ Да':'⚠️ Нет')}</span></div>
+  // Breakeven — требует реальных ФОТ/Аренды/прочих затрат.
+  // До подключения 1С показываем заглушку вместо модельного расчёта.
+  document.getElementById('breakevenBox').innerHTML = \`
+    <div style="text-align:center;padding:24px 12px;color:var(--text3);font-size:12px;line-height:1.6">
+      <div style="font-size:24px;margin-bottom:8px">🔒</div>
+      <div style="color:var(--text2);font-weight:500;margin-bottom:6px">Точка безубыточности временно недоступна</div>
+      <div style="font-size:11px">Для корректного расчёта нужны реальные ФОТ, аренда и прочие постоянные расходы. Появится после подключения 1С <b>(Волна 6)</b>.</div>
     </div>\`;
 
   document.getElementById('scenBox').innerHTML=[
-    {l:'+10% чеков в день',delta:(plCalc(chk,cnt*1.1,fc,disc).profit-adjusted.profit)},
-    {l:'−1% фудкост',delta:(plCalc(chk,cnt,fc-1,disc).profit-adjusted.profit)},
-    {l:'−1% скидок',delta:(plCalc(chk,cnt,fc,disc-1).profit-adjusted.profit)},
-    {l:'+100₽ к чеку',delta:(plCalc(chk+100,cnt,fc,disc).profit-adjusted.profit)},
-    {l:'Будни = уровню выходных',delta:adjusted.profit*0.3},
+    {l:'+10% чеков в день',delta:(plCalc(chk,cnt*1.1,fc,disc).margin-adjusted.margin)},
+    {l:'−1% фудкост',delta:(plCalc(chk,cnt,fc-1,disc).margin-adjusted.margin)},
+    {l:'−1% скидок',delta:(plCalc(chk,cnt,fc,disc-1).margin-adjusted.margin)},
+    {l:'+100₽ к чеку',delta:(plCalc(chk+100,cnt,fc,disc).margin-adjusted.margin)},
+    {l:'Будни = уровню выходных',delta:adjusted.margin*0.3},
   ].map(s=>\`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(46,64,104,.4);font-size:11px"><span style="color:var(--text2)">\${s.l}</span><span style="color:var(--green);font-weight:600">+\${fmtR(s.delta)}/д = +\${fmtR(s.delta*26)}/мес</span></div>\`).join('');
 
-  // P&L stacked bar
+  // P&L stacked bar — без ФОТ/Аренды, только реальные компоненты нетто-выручки
   mkChart('plBarC',{type:'bar',data:{labels:['Факт','Сценарий'],datasets:[
     {label:'Скидки',data:[current.discAmt,adjusted.discAmt],backgroundColor:'#E74C3C88',borderColor:'#E74C3C',borderWidth:1,borderRadius:2},
     {label:'Фудкост',data:[current.fcAmt,adjusted.fcAmt],backgroundColor:'#F39C1288',borderColor:'#F39C12',borderWidth:1},
-    {label:'ФОТ',data:[current.fot,adjusted.fot],backgroundColor:'#4A9EF588',borderColor:'#4A9EF5',borderWidth:1},
-    {label:'Аренда',data:[current.rent,adjusted.rent],backgroundColor:'#9B59B688',borderColor:'#9B59B6',borderWidth:1},
-    {label:'Прибыль',data:[Math.max(0,current.profit),Math.max(0,adjusted.profit)],backgroundColor:'#2ECC7188',borderColor:'#2ECC71',borderWidth:1},
+    {label:'Маржа',data:[Math.max(0,current.margin),Math.max(0,adjusted.margin)],backgroundColor:'#2ECC7188',borderColor:'#2ECC71',borderWidth:1},
   ]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#8AAACE',font:{size:9},boxWidth:10}}},scales:{x:{stacked:true,grid:{color:'rgba(46,64,104,.4)'},ticks:{color:'#4E6A90',font:{size:9},callback:v=>fmtR(v)}},y:{stacked:true,grid:{color:'rgba(46,64,104,.4)'},ticks:{color:'#4E6A90',font:{size:9}}}}}});
 }
 
