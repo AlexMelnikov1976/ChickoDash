@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "chicko-api-proxy",
   "version": "1.0.0",
   "description": "Chicko Analytics Backend API Proxy",
@@ -10,7 +10,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240502.0",
     "typescript": "^5.4.5",
-    "wrangler": "^3.52.0"
+    "wrangler": "^4.84.0"
   },
   "dependencies": {
     "@tsndr/cloudflare-worker-jwt": "^2.5.3"
