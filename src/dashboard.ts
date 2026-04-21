@@ -810,13 +810,18 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 </div><!-- /main -->
 
 <script>
-// ═══ API CONFIG v6.0 (Phase 2.3: no /api/query, only whitelisted endpoints) ═══
+// ═══ API CONFIG v6.1 (Phase 2.4d: cookie-based auth, JWT не хранится в JS) ═══
 const API_BASE = location.origin;
-const JWT_KEY = 'chicko_jwt';
 
-function getJWT() { return localStorage.getItem(JWT_KEY); }
-function setJWT(t) { localStorage.setItem(JWT_KEY, t); }
-function clearJWT() { localStorage.removeItem(JWT_KEY); }
+// Phase 2.4d: email залогиненного пользователя. Заполняется в bootAuth из
+// ответов /api/auth/verify или /api/auth/me. Заменяет старый JWT-decode
+// в fbGetEmail — JWT теперь в HttpOnly cookie и недоступен из JS.
+let USER_EMAIL = '';
+
+// Phase 2.4d (2026-04-21): session теперь в HttpOnly cookie chicko_session,
+// JavaScript её не видит — XSS не сможет украсть токен. Одноразовая уборка
+// legacy-ключа из localStorage (безопасная: в худшем случае ключ не существует).
+try { localStorage.removeItem('chicko_jwt'); } catch (e) {}
 
 function showLogin() {
   const scr = document.getElementById('login-screen');
@@ -827,15 +832,27 @@ function hideLogin() {
   if (scr) scr.classList.add('hidden');
 }
 
-// Низкоуровневый GET с JWT и 401-handling. Используется всеми API-хелперами.
+// Global logout helper — доступен из консоли и для будущей UI-кнопки.
+// Отправляет POST /api/auth/logout (сервер вернёт Set-Cookie с Max-Age=0),
+// после чего перезагружает страницу → bootAuth увидит 401 → покажет login.
+window.logout = async function() {
+  try {
+    await fetch(API_BASE + '/api/auth/logout', {
+      method: 'POST',
+      credentials: 'include'
+    });
+  } catch (e) { /* продолжаем перезагрузку в любом случае */ }
+  location.reload();
+};
+
+// Низкоуровневый GET. Cookie прикладывается автоматически (credentials:'include').
+// 401 → сессия истекла или её нет → показываем login-экран.
 async function apiGet(path) {
-  const jwt = getJWT();
-  if (!jwt) { showLogin(); throw new Error('Not authenticated'); }
   const r = await fetch(API_BASE + path, {
-    headers: { 'Authorization': 'Bearer ' + jwt }
+    credentials: 'include'
   });
   if (r.status === 401) {
-    clearJWT(); showLogin();
+    showLogin();
     throw new Error('Session expired');
   }
   const j = await r.json();
@@ -879,6 +896,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const r = await fetch(API_BASE + '/api/auth/request-link', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email })
       });
@@ -899,35 +917,52 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-// ═══ Auth flow on page load ═══
+// ═══ Auth flow on page load (Phase 2.4d: cookie-based) ═══
 (async function bootAuth() {
   const url = new URL(location.href);
   const loginToken = url.searchParams.get('login_token');
+
+  // Пришли из magic-link callback — обмениваем login_token на session cookie.
   if (loginToken) {
     try {
       const r = await fetch(API_BASE + '/api/auth/verify', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: loginToken })
       });
       const j = await r.json();
-      if (j.success && j.token) {
-        setJWT(j.token);
-        url.searchParams.delete('login_token');
-        history.replaceState({}, '', url.pathname + url.search + url.hash);
-      } else {
+      if (!j.success) {
         showLogin();
         return;
       }
+      if (j.email) USER_EMAIL = j.email;
+      // Cookie установился через Set-Cookie. Убираем login_token из URL.
+      url.searchParams.delete('login_token');
+      history.replaceState({}, '', url.pathname + url.search + url.hash);
     } catch (e) {
       showLogin();
       return;
     }
   }
-  if (!getJWT()) {
+
+  // HttpOnly cookie не виден из JS, поэтому спрашиваем у сервера.
+  // /api/auth/me → 200 = залогинен, 401 = нет.
+  try {
+    const r = await fetch(API_BASE + '/api/auth/me', {
+      credentials: 'include'
+    });
+    if (r.ok) {
+      try {
+        const data = await r.json();
+        if (data && data.email) USER_EMAIL = data.email;
+      } catch (e) { /* non-JSON 200 не ожидается, но не падаем */ }
+      hideLogin();
+    } else {
+      showLogin();
+    }
+  } catch (e) {
     showLogin();
-  } else {
-    hideLogin();
   }
 })();
 
@@ -1049,7 +1084,9 @@ function showLoader(msg) {
 function hideLoader() { const el=document.getElementById('ck-loader'); if(el) el.remove(); }
 
 async function init() {
-  if (!getJWT()) { showLogin(); return; }
+  // Phase 2.4d: guard !getJWT() убран — HttpOnly cookie невидима для JS.
+  // bootAuth уже показал login-экран если сессии нет. Если всё же сюда
+  // попали без сессии, первый apiGet вернёт 401 → showLogin → throw.
   showLoader('Подключение к данным...');
   try {
     showLoader('Загрузка истории с 2024 года...');
@@ -1292,13 +1329,11 @@ async function loadNetworkBenchmarks(startDate, endDate) {
 // Клиент теперь просто забирает готовые агрегированные профили.
 async function loadDowProfiles(restaurantId) {
   try {
-    const jwt = getJWT();
-    if (!jwt) { showLogin(); return; }
     const qs = restaurantId ? ('?restaurant_id=' + restaurantId) : '';
     const r = await fetch(API_BASE + '/api/dow-profiles' + qs, {
-      headers: { 'Authorization': 'Bearer ' + jwt }
+      credentials: 'include'
     });
-    if (r.status === 401) { clearJWT(); showLogin(); return; }
+    if (r.status === 401) { showLogin(); return; }
     if (!r.ok) { console.error('[dow-profiles] HTTP ' + r.status); NET_DOW = {}; MY_DOW = {}; MY_DOW_DAYS = 0; return; }
     const j = await r.json();
     // Нормализация: ключи приходят строками, приводим профили к нужному виду.
@@ -1387,15 +1422,12 @@ async function fetchForecast(restOrNull, networkMode) {
   if (!key) return null;
   if (FORECAST_CACHE[key]) return FORECAST_CACHE[key];
 
-  const jwt = getJWT();
-  if (!jwt) { showLogin(); return null; }
-
   const qs = networkMode ? '?network=1' : ('?restaurant_id=' + restOrNull.id);
   try {
     const r = await fetch(API_BASE + '/api/forecast' + qs, {
-      headers: { 'Authorization': 'Bearer ' + jwt }
+      credentials: 'include'
     });
-    if (r.status === 401) { clearJWT(); showLogin(); return null; }
+    if (r.status === 401) { showLogin(); return null; }
     if (!r.ok) { console.error('[forecast] HTTP ' + r.status); return null; }
     const j = await r.json();
     FORECAST_CACHE[key] = j;
@@ -3115,9 +3147,7 @@ function calcPL(){
 }
 
 // ═══ FEEDBACK WIDGET ═══
-function fbGetEmail(){
-  try{const jwt=getJWT();if(!jwt)return'';const p=JSON.parse(atob(jwt.split('.')[1]));return p.email||'';}catch{return'';}
-}
+function fbGetEmail(){ return USER_EMAIL; }
 let fbCat='';
 function fbOpen(){
   document.getElementById('fbOverlay').classList.add('open');
@@ -3141,10 +3171,10 @@ async function fbSend(){
   const btn=document.getElementById('fbSend');
   btn.disabled=true;btn.textContent='Отправка…';
   try{
-    const jwt=getJWT();
     const r=await fetch(API_BASE+'/api/feedback',{
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+jwt},
+      credentials:'include',
+      headers:{'Content-Type':'application/json'},
       body:JSON.stringify({category:fbCat,text:text,restaurant:R?R.name:'—'})
     });
     if(!r.ok) throw new Error('HTTP '+r.status);
