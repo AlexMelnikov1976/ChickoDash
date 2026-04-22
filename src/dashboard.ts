@@ -161,6 +161,16 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-
 .score-tip-wrap{position:relative;display:inline-block}
 .score-tip{cursor:help;color:var(--text3);font-size:10px;border-bottom:1px dashed var(--text3)}
 .score-tip:hover{color:var(--gold)}
+.ai-block{background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px}
+.ai-block-title{font-size:11px;font-weight:600;color:var(--gold);margin-bottom:4px}
+.ai-block-text{font-size:12px;color:var(--text);line-height:1.6}
+.ai-actions{background:linear-gradient(135deg,rgba(212,168,75,.08),rgba(212,168,75,.03));border:1px solid var(--gold);border-radius:10px;padding:14px}
+.ai-actions-title{font-size:11px;font-weight:600;color:var(--gold);margin-bottom:8px}
+.ai-action-item{font-size:12px;color:var(--text);padding:4px 0;display:flex;gap:8px}
+.ai-action-item::before{content:'→';color:var(--gold);flex-shrink:0}
+.ai-loading{display:flex;align-items:center;gap:10px;color:var(--text3);font-size:12px}
+.ai-spinner{width:16px;height:16px;border:2px solid var(--border2);border-top-color:var(--gold);border-radius:50%;animation:aispin .8s linear infinite}
+@keyframes aispin{to{transform:rotate(360deg)}}
 .score-tooltip{display:none;position:absolute;background:var(--card2);border:1px solid var(--border2);border-radius:10px;padding:12px 14px;font-size:10px;color:var(--text2);line-height:1.6;z-index:300;width:300px;box-shadow:0 8px 24px rgba(0,0,0,.5);right:0;top:24px}
 .score-tip-wrap:hover .score-tooltip{display:block}
 .sbr-group{font-size:9px;color:var(--text3);margin:6px 0 2px;text-transform:uppercase;letter-spacing:.5px}
@@ -520,6 +530,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
   <div class="card">
     <div class="ctitle">🔔 На что обратить внимание</div>
     <div id="insBox" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px"></div>
+  </div>
+  <div class="card" id="aiCard">
+    <div class="ctitle" style="display:flex;justify-content:space-between;align-items:center">🤖 AI-анализ
+      <button class="cal-btn" onclick="requestAiInsight()" id="aiBtn" style="font-size:10px;padding:5px 12px">Запросить анализ</button>
+    </div>
+    <div id="aiResult" style="font-size:12px;color:var(--text2);min-height:40px">
+      <span style="color:var(--text3)">Нажмите кнопку — AI проанализирует KPI ресторана за выбранный период как совет директоров</span>
+    </div>
   </div>
 </div>
 
@@ -969,6 +987,89 @@ function handleLoginSubmit(e) {
     btn.textContent = 'Получить ссылку';
   });
   return false;
+}
+
+// ═══ AI Insight (Phase 2.6) ═══
+function requestAiInsight() {
+  var btn = document.getElementById('aiBtn');
+  var box = document.getElementById('aiResult');
+  if (!btn || !box || !R) return;
+  btn.disabled = true;
+  btn.textContent = 'Анализирую...';
+  box.innerHTML = '<div class="ai-loading"><div class="ai-spinner"></div>AI анализирует KPI — 5-10 секунд...</div>';
+  trackUI('ai_insight', { restaurant_id: R.id });
+
+  var ts = getGlobalTs();
+  var rev = safeAvg(ts,'revenue') || 0;
+  var fc = safeAvg(ts,'foodcost') || 0;
+  var cnt = safeAvg(ts,'checks') || 0;
+  var chk = safeAvg(ts,'avgCheck') || 0;
+  var disc = safeAvg(ts,'discount') || 0;
+  var dp = safeAvg(ts,'deliveryPct') || 0;
+
+  // YoY growth
+  var yoyStart = (parseInt(S.globalStart.slice(0,4))-1) + S.globalStart.slice(4);
+  var yoyEnd = (parseInt(S.globalEnd.slice(0,4))-1) + S.globalEnd.slice(4);
+  var tsYoy = R.ts.filter(function(t){ return t.date>=yoyStart && t.date<=yoyEnd && t.revenue>0; });
+  var yoyRev = tsYoy.length>=7 ? safeAvg(tsYoy,'revenue') : rev;
+  var yoyCnt = tsYoy.length>=7 ? safeAvg(tsYoy,'checks') : cnt;
+  var yoyChk = tsYoy.length>=7 ? safeAvg(tsYoy,'avgCheck') : chk;
+
+  var detail = _calcRestScoreDetail(R);
+  var allScores = RESTS.map(function(r2){ return _calcRestScore(r2); }).filter(function(s){ return s>0; }).sort(function(a,b){ return b-a; });
+  var myScore = detail ? detail.score : 0;
+  var myRank = allScores.indexOf(myScore) + 1 || 1;
+
+  var payload = {
+    restaurant: R.name,
+    city: R.city || '',
+    period: S.globalStart + ' — ' + S.globalEnd,
+    kpi: {
+      revenue: rev, avgCheck: chk, checks: cnt,
+      foodcost: fc, discount: disc, deliveryPct: dp,
+      score: myScore, rank: myRank, rankTotal: allScores.length
+    },
+    growth: {
+      revVsYoy: yoyRev > 0 ? (rev/yoyRev - 1) * 100 : 0,
+      checksVsYoy: yoyCnt > 0 ? (cnt/yoyCnt - 1) * 100 : 0,
+      checkVsYoy: yoyChk > 0 ? (chk/yoyChk - 1) * 100 : 0
+    },
+    net: {
+      revenue: NET.revenue || 0, avgCheck: NET.avgCheck || 0,
+      checks: NET.checks || 0, foodcost: NET.foodcost || 0,
+      discount: NET.discount || 0
+    }
+  };
+
+  fetch(API_BASE + '/api/ai-insight', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(data) {
+    if (data.error) {
+      box.innerHTML = '<span style="color:var(--red)">Ошибка: ' + data.error + '</span>';
+      return;
+    }
+    var html = '';
+    if (data.operations) html += '<div class="ai-block"><div class="ai-block-title">' + (data.operations.emoji||'') + ' ' + (data.operations.title||'') + '</div><div class="ai-block-text">' + data.operations.text + '</div></div>';
+    if (data.finance) html += '<div class="ai-block"><div class="ai-block-title">' + (data.finance.emoji||'') + ' ' + (data.finance.title||'') + '</div><div class="ai-block-text">' + data.finance.text + '</div></div>';
+    if (data.commercial) html += '<div class="ai-block"><div class="ai-block-title">' + (data.commercial.emoji||'') + ' ' + (data.commercial.title||'') + '</div><div class="ai-block-text">' + data.commercial.text + '</div></div>';
+    if (data.actions && data.actions.length) {
+      html += '<div class="ai-actions"><div class="ai-actions-title">\u{1F3AF} Действия на неделю</div>';
+      data.actions.forEach(function(a) { html += '<div class="ai-action-item">' + a + '</div>'; });
+      html += '</div>';
+    }
+    box.innerHTML = html || '<span style="color:var(--text3)">AI не вернул структурированный ответ</span>';
+  }).catch(function(err) {
+    box.innerHTML = '<span style="color:var(--red)">Ошибка: ' + err.message + '</span>';
+  }).finally(function() {
+    btn.disabled = false;
+    btn.textContent = 'Запросить анализ';
+  });
 }
 
 // ═══ UI Activity tracker (Phase 2.5) ═══

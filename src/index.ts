@@ -19,6 +19,7 @@ import { handleDowProfiles } from './dow_profiles';
 import { handleForecast } from './forecast';
 import { handleRestaurantsList, handleBenchmarks, handleRestaurantMeta } from './data_endpoints';
 import { handleCspReport } from './csp_report';
+import { handleAiInsight } from './ai_insight';
 import {
   requireJwtSecret,
   rateLimitOrResponse,
@@ -35,6 +36,7 @@ export interface Env {
   RESEND_API_KEY: string;
   USERS: KVNamespace;
   MAGIC_LINKS: KVNamespace;
+  ANTHROPIC_API_KEY?: string;
   FEEDBACK_WEBHOOK?: string; // n8n webhook URL for feedback → Notion + Telegram
 }
 
@@ -254,6 +256,13 @@ export default {
 
     if (url.pathname === '/api/forecast' && request.method === 'GET') {
       { const _r = await handleForecast(request, env); _logReq(request, env, ctx, _r, _t0); return _r; }
+    }
+
+    // --- AI Insight (Phase 2.6) ---
+    if (url.pathname === "/api/ai-insight" && request.method === "POST") {
+      const _r = await handleAiInsight(request, env, ctx);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
     }
 
     // --- Client-side activity tracking (Phase 2.5) ---
