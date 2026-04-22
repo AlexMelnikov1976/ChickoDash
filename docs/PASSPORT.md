@@ -2,8 +2,8 @@
 
 > **Живой документ.** Обновляется после каждой значимой сессии работы.
 
-**Последнее обновление:** 21.04.2026, ~17:50 MSK — Phase 2.4d HttpOnly cookie auth задеплоена в прод (audit #3 закрыт). 6 файлов: `auth.ts` (cookie helpers + `SESSION_TTL_SEC` константа), `security.ts` (`authFromCookie`, `checkOrigin`, CORS Allow-Credentials), `index.ts` (новые `/api/auth/me` и `/api/auth/logout`, verify ставит Set-Cookie), три endpoint-файла на `authFromCookie`, `dashboard.ts` (JWT/localStorage удалены, fetch на credentials:'include'). Hotfix в той же сессии: CSP Report-Only временно отключён из-за KV write flood (40+ violations на загрузку), вернём 28.04 с unsafe-inline. Smoke-test end-to-end в проде: cookie HttpOnly ✓ Secure ✓ SameSite=Lax ✓, `document.cookie` пустой, `localStorage.chicko_jwt` = null, дашборд работает поверх cookie-auth.
-**Версия паспорта:** 3.31
+**Последнее обновление:** 22.04.2026, ~10:35 MSK — Phase 2.5 user activity log + fix #77 login form. Баг #77 закрыт: `DOMContentLoaded` не срабатывал в template literal, заменён на inline `onsubmit="handleLoginSubmit(event)"`. User activity log: таблица `chicko.user_activity_log` в ClickHouse, серверный трекинг 6 protected endpoints через `waitUntil`, клиентский `trackUI()` для UI-событий (tab, login, select_restaurant), endpoint `POST /api/activity`. Данные по блюдам загружены в `dish_sales` (939К строк). Следующие задачи в сессии: динамический скор на главную с привязкой к календарю, вкладка «Меню» с Kasavana-Smith анализом.
+**Версия паспорта:** 3.32
 
 ---
 
@@ -25,9 +25,9 @@
 | **GitHub** | github.com/AlexMelnikov1976/chicko-api-proxy |
 | **Общий прогресс** | ~97% MVP; **Фаза 2 защиты IP + Phase 2.4a/b/c/d security hardening завершены** |
 | **Закрыто P0-пунктов** | **19/22** (86%) |
-| **Последний коммит** | Phase 2.4d hotfix: CSP Report-Only временно off (KV flood). Перед ним — Phase 2.4d HttpOnly cookie auth (audit #3 закрыт), 6 файлов, миграция с `Authorization: Bearer` + localStorage на `chicko_session` cookie |
+| **Последний коммит** | Phase 2.5: user activity log + fix #77 login form. Трекинг API + UI событий в ClickHouse, `trackUI()` на клиенте |
 | **Безопасность** | 11 из 14 пунктов независимого аудита закрыто. CSP Report-Only временно off (вернём 28.04). Остаток перед пилотом: RLS (#4) — отложен по бизнесу, magic-link через cookie (#2) — низкоприоритетно |
-| **Следующий фокус** | 28.04 — анализ CSP violations (накоплено за ~7 часов до hotfix) → enforce-политика с unsafe-inline или nonces → пилот с 3-5 франчайзи → товарный знак. Технические хвосты: #77 login form click broken (обходится консольным submit), UI logout button (сейчас только `window.logout()` из консоли) |
+| **Следующий фокус** | 22.04: динамический скор на главную (привязка к календарю) + вкладка «Меню» (Kasavana-Smith). 28.04: CSP enforce. Май: пилот с 3-5 франчайзи. Хвосты: UI logout button, select_restaurant tracking |
 
 ---
 
@@ -398,6 +398,52 @@ chicko.mart_menu_daily (агрегат по дням и блюдам — для 
 ---
 
 ## 10. Changelog
+
+### 22.04.2026, день-6 (~1.5 часа работы) — fix #77 + Phase 2.5 user activity log
+
+**Контекст:** Презентация франчайзи назначена на сегодня. Два блокера: (1) пилотные пользователи не могут войти — кнопка логина не работает (баг #77 с 21.04); (2) нет истории работы пользователей для биллинга и аналитики вовлечённости. Также за ночь загружены данные по блюдам в `dish_sales` (939К строк).
+
+#### Fix #77 — login form click broken
+
+**Причина:** `document.addEventListener('DOMContentLoaded', ...)` внутри template literal (`dashboard.ts`). К моменту выполнения скрипта DOM уже ready, `DOMContentLoaded` отстрелил — listener на submit формы не ставился. Все остальные обработчики в дашборде через inline `onclick=""` — работали.
+
+**Фикс:** Замена на inline `onsubmit="return handleLoginSubmit(event)"` + глобальная функция `handleLoginSubmit()`. Паттерн: `.then()/.catch()/.finally()` вместо `async/await` для совместимости с inline handler.
+
+**Файлы:**
+- `src/dashboard.ts` — строка 380: `onsubmit` на форме, строка 880: `handleLoginSubmit()` вместо `DOMContentLoaded` блока
+
+**Smoke-test:** incognito → login screen → ввод email → «ссылка отправлена» → magic-link → callback → verify → cookie → дашборд. Полный цикл OK. В wrangler tail: `POST /api/auth/request-link` → `GET /auth/callback` → `POST /api/auth/verify` → `GET /api/auth/me`.
+
+#### Phase 2.5 — User activity log
+
+**Цель:** история работы пользователей для биллинга («вы заходили 47 раз за месяц»), аналитики вовлечённости и аргументации ценности продукта.
+
+**Архитектура:**
+- Таблица `chicko.user_activity_log` в ClickHouse (MergeTree, TTL 365 дней, partition по месяцам)
+- Серверный трекинг: 6 protected endpoints обёрнуты через `_logReq()` + `waitUntil` — запись не тормозит ответ
+- Клиентский трекинг: `trackUI(action, extra)` → `POST /api/activity` → ClickHouse
+- Endpoint `POST /api/activity` — принимает UI-события, fail-silent, 204 No Content
+
+**Что логируется:**
+- API: `/api/restaurants`, `/api/benchmarks`, `/api/restaurant-meta`, `/api/dow-profiles`, `/api/forecast`, `/api/feedback`
+- UI: `/ui/login`, `/ui/tab` (с названием вкладки)
+- Каждая запись: ts, user_id, email, endpoint, method, restaurant_id, response_status, response_ms, user_agent
+
+**Файлы:**
+- `src/activity_log.ts` — новый: `logActivity()` + `esc()`, INSERT в ClickHouse
+- `src/index.ts` — `_logReq()` standalone function, обёртка 6 returns, `/api/activity` endpoint
+- `src/dashboard.ts` — `trackUI()` function, вызовы в `goTab()` и `bootAuth` (login)
+
+**Известные хвосты:**
+- `selectRest()` tracking не применился (функция называется иначе) — починим в следующей правке
+- UI logout button — ещё нет
+
+#### Данные по блюдам
+
+- Таблица `chicko.dish_sales` загружена через n8n за ночь: 939К строк
+- Поля: report_date, dept_uuid, restaurant_name, city, dish_name, dish_code, dish_category, dish_group, qty, revenue, foodcost, avg_price, foodcost_pct, margin, revenue_rub, foodcost_rub
+- Достаточно для: топ блюд, ABC-анализ, Kasavana-Smith матрица, хвост меню
+- Реализация: следующие задачи в этой сессии
 
 ### 21.04.2026, день-4 (~1.5 часа работы) — фикс регрессии #11 + Phase 2.4c CSP Report-Only
 
@@ -1298,4 +1344,4 @@ Chicko Analytics — **vertical intelligence platform для multi-unit restaura
 ---
 
 **Авторы:** Aleksey Melnikov + Claude
-**Версии:** v3.3 → ... → v3.28 → v3.29 → v3.30 → **v3.31** (Phase 2.4d HttpOnly cookie auth — audit #3 закрыт; миграция с `Authorization: Bearer` + localStorage на `chicko_session` HttpOnly Secure SameSite=Lax cookie; новые `/api/auth/me` и `/api/auth/logout`; shared `authFromCookie` + `checkOrigin`; client `bootAuth` через `/me`, `USER_EMAIL` global, `window.logout`. Hotfix: CSP Report-Only временно off из-за KV write flood, вернём 28.04 уже с unsafe-inline. 21.04.2026, день-5)
+**Версии:** v3.3 → ... → v3.28 → v3.29 → v3.30 → v3.31 → **v3.32** (Fix #77 login form — inline onsubmit вместо DOMContentLoaded. Phase 2.5 user activity log — `chicko.user_activity_log` в CH, серверный + клиентский трекинг, `trackUI()`, `/api/activity`. Данные `dish_sales` 939К строк загружены. 22.04.2026, день-6)
