@@ -533,7 +533,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
   </div>
   <div class="card" id="aiCard">
     <div class="ctitle" style="display:flex;justify-content:space-between;align-items:center">🤖 AI-анализ
-      <button class="cal-btn" onclick="requestAiInsight()" id="aiBtn" style="font-size:10px;padding:5px 12px">Запросить анализ</button>
+      <button class="cal-btn" id="aiBtn" style="font-size:10px;padding:5px 12px;opacity:.5;cursor:not-allowed" disabled title="Скоро будет доступно">Скоро</button>
     </div>
     <div id="aiResult" style="font-size:12px;color:var(--text2);min-height:40px">
       <span style="color:var(--text3)">Нажмите кнопку — AI проанализирует KPI ресторана за выбранный период как совет директоров</span>
