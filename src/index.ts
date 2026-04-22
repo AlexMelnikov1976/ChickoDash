@@ -20,6 +20,7 @@ import { handleForecast } from './forecast';
 import { handleRestaurantsList, handleBenchmarks, handleRestaurantMeta } from './data_endpoints';
 import { handleCspReport } from './csp_report';
 import { handleAiInsight } from './ai_insight';
+import { handleMenuAnalysis } from './menu_analysis';
 import {
   requireJwtSecret,
   rateLimitOrResponse,
@@ -256,6 +257,13 @@ export default {
 
     if (url.pathname === '/api/forecast' && request.method === 'GET') {
       { const _r = await handleForecast(request, env); _logReq(request, env, ctx, _r, _t0); return _r; }
+    }
+
+    // --- Menu Analysis (Phase 2.7) ---
+    if (url.pathname === "/api/menu-analysis" && request.method === "GET") {
+      const _r = await handleMenuAnalysis(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
     }
 
     // --- AI Insight (Phase 2.6) ---
