@@ -1,3 +1,4 @@
+import { logActivity } from "./activity_log";
 import {
   generateToken as generateJWT,
   extractTokenFromCookie,
@@ -133,6 +134,34 @@ const HTML_SECURITY_HEADERS: Record<string, string> = {
 // сам error page содержит inline <style>, будет шуметь собственным
 // мусором в отчётах. Базовые security headers — да.
 
+
+// ═══ Activity logging (Phase 2.5) ═══
+function _logReq(request: Request, env: Env, ctx: ExecutionContext, response: Response, t0: number): void {
+  const url = new URL(request.url);
+  const path = url.pathname;
+  try {
+    const token = extractTokenFromCookie(request.headers.get('Cookie'));
+    if (!token) return;
+    const secret = requireJwtSecret(env);
+    ctx.waitUntil(
+      validateToken(token, secret).then(payload => {
+        if (!payload) return;
+        const restId = url.searchParams.get('restaurant_id');
+        return logActivity(env, {
+          user_id: payload.user_id,
+          email: payload.email,
+          endpoint: path,
+          method: request.method,
+          restaurant_id: restId ? parseInt(restId, 10) || null : null,
+          response_status: response.status,
+          response_ms: Date.now() - t0,
+          user_agent: (request.headers.get('User-Agent') || '').slice(0, 256),
+        });
+      }).catch(() => {})
+    );
+  } catch (_e) { /* fail-silent */ }
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {
@@ -140,6 +169,7 @@ export default {
     }
 
     const url = new URL(request.url);
+    const _t0 = Date.now();
     console.log(`[request] ${request.method} ${url.pathname}`);
 
     // --- Frontend (dashboard HTML) ---
@@ -203,33 +233,59 @@ export default {
     // Any remaining client code pointing at /api/query will fail with 404.
 
     if (url.pathname === '/api/restaurants' && request.method === 'GET') {
-      return handleRestaurantsList(request, env);
+      { const _r = await handleRestaurantsList(request, env); _logReq(request, env, ctx, _r, _t0); return _r; }
     }
 
     if (url.pathname === '/api/benchmarks' && request.method === 'GET') {
-      return handleBenchmarks(request, env);
+      { const _r = await handleBenchmarks(request, env); _logReq(request, env, ctx, _r, _t0); return _r; }
     }
 
     if (url.pathname === '/api/restaurant-meta' && request.method === 'GET') {
-      return handleRestaurantMeta(request, env);
+      { const _r = await handleRestaurantMeta(request, env); _logReq(request, env, ctx, _r, _t0); return _r; }
     }
 
     if (url.pathname === '/api/feedback' && request.method === 'POST') {
-      return handleFeedback(request, env, ctx);
+      { const _r = await handleFeedback(request, env, ctx); _logReq(request, env, ctx, _r, _t0); return _r; }
     }
 
     if (url.pathname === '/api/dow-profiles' && request.method === 'GET') {
-      return handleDowProfiles(request, env);
+      { const _r = await handleDowProfiles(request, env); _logReq(request, env, ctx, _r, _t0); return _r; }
     }
 
     if (url.pathname === '/api/forecast' && request.method === 'GET') {
-      return handleForecast(request, env);
+      { const _r = await handleForecast(request, env); _logReq(request, env, ctx, _r, _t0); return _r; }
+    }
+
+    // --- Client-side activity tracking (Phase 2.5) ---
+    if (url.pathname === '/api/activity' && request.method === 'POST') {
+      const a = await authFromCookie(request, env);
+      if (a instanceof Response) return new Response(null, { status: 204 });
+      try {
+        const body = await request.json() as { action?: string; tab?: string; restaurant_id?: number; meta?: string };
+        const action = String(body.action || '').slice(0, 50);
+        if (!action) return new Response(null, { status: 204 });
+        ctx.waitUntil(
+          logActivity(env, {
+            user_id: a.user_id,
+            email: a.email,
+            endpoint: '/ui/' + action,
+            method: 'POST',
+            restaurant_id: body.restaurant_id ?? null,
+            response_status: 200,
+            response_ms: 0,
+            user_agent: (body.tab || '') + '|' + (body.meta || ''),
+          })
+        );
+      } catch (_e) { /* fail-silent */ }
+      return new Response(null, { status: 204 });
     }
 
     console.log(`[404] No route for ${request.method} ${url.pathname}`);
     return new Response('Not Found', { status: 404 });
   },
+
 };
+
 
 /**
  * POST /api/auth/request-link

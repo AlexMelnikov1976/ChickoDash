@@ -377,7 +377,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
     <div class="login-logo">CHICKO<small>ANALYTICS</small></div>
     <div class="login-title">Вход в дашборд</div>
     <div class="login-sub">Введите ваш email — мы отправим ссылку для входа.<br>Ссылка действительна 15 минут.</div>
-    <form class="login-form" id="loginForm">
+    <form class="login-form" id="loginForm" onsubmit="return handleLoginSubmit(event)">
       <input type="email" class="login-input" id="loginEmail" placeholder="email@example.com" required autocomplete="email">
       <button type="submit" class="login-btn" id="loginBtn">Получить ссылку</button>
       <div class="login-msg" id="loginMsg"></div>
@@ -876,46 +876,54 @@ async function apiRestaurantMeta(restId) {
   return await apiGet('/api/restaurant-meta?restaurant_id=' + restId);
 }
 
-// ═══ Login form handler ═══
-document.addEventListener('DOMContentLoaded', () => {
-  const form = document.getElementById('loginForm');
-  if (!form) return;
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const email = document.getElementById('loginEmail').value.trim().toLowerCase();
-    const btn = document.getElementById('loginBtn');
-    const msg = document.getElementById('loginMsg');
-    if (!email || !email.includes('@')) {
-      msg.textContent = 'Введите корректный email';
+// ═══ Login form handler (Phase 2.4d fix #77) ═══
+function handleLoginSubmit(e) {
+  e.preventDefault();
+  var email = document.getElementById('loginEmail').value.trim().toLowerCase();
+  var btn = document.getElementById('loginBtn');
+  var msg = document.getElementById('loginMsg');
+  if (!email || !email.includes('@')) {
+    msg.textContent = 'Введите корректный email';
+    msg.className = 'login-msg error';
+    return false;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Отправляем...';
+  msg.textContent = '';
+  fetch(API_BASE + '/api/auth/request-link', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email })
+  }).then(function(r) {
+    if (r.status === 429) {
+      msg.textContent = 'Слишком часто. Попробуйте через минуту.';
       msg.className = 'login-msg error';
-      return;
+    } else {
+      msg.textContent = 'Если email зарегистрирован — ссылка отправлена. Проверьте почту.';
+      msg.className = 'login-msg success';
     }
-    btn.disabled = true;
-    btn.textContent = 'Отправляем...';
-    msg.textContent = '';
-    try {
-      const r = await fetch(API_BASE + '/api/auth/request-link', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
-      if (r.status === 429) {
-        msg.textContent = 'Слишком часто. Попробуйте через минуту.';
-        msg.className = 'login-msg error';
-      } else {
-        msg.textContent = 'Если email зарегистрирован — ссылка отправлена. Проверьте почту.';
-        msg.className = 'login-msg success';
-      }
-    } catch (err) {
-      msg.textContent = 'Ошибка: ' + err.message;
-      msg.className = 'login-msg error';
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Получить ссылку';
-    }
+  }).catch(function(err) {
+    msg.textContent = 'Ошибка: ' + err.message;
+    msg.className = 'login-msg error';
+  }).finally(function() {
+    btn.disabled = false;
+    btn.textContent = 'Получить ссылку';
   });
-});
+  return false;
+}
+
+// ═══ UI Activity tracker (Phase 2.5) ═══
+function trackUI(action, extra) {
+  try {
+    fetch(API_BASE + '/api/activity', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ action: action }, extra || {}))
+    }).catch(function(){});
+  } catch(_e) {}
+}
 
 // ═══ Auth flow on page load (Phase 2.4d: cookie-based) ═══
 (async function bootAuth() {
@@ -938,6 +946,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       if (j.email) USER_EMAIL = j.email;
       // Cookie установился через Set-Cookie. Убираем login_token из URL.
+      trackUI('login');
       url.searchParams.delete('login_token');
       history.replaceState({}, '', url.pathname + url.search + url.hash);
     } catch (e) {
@@ -1396,6 +1405,7 @@ function dowBenchmarks(ts) {
 }
 
 function goTab(el) {
+  trackUI('tab', { tab: el.dataset.tab });
   document.querySelectorAll('.ntab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   el.classList.add('active');
