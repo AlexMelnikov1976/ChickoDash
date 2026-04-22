@@ -386,3 +386,122 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 .fc-chart-bar{flex:1;border-radius:2px 2px 0 0;min-width:2px;transition:height .3s}
 .fc-chart-lbl{display:flex;justify-content:space-between;margin-top:3px;font-size:9px;color:var(--text3)}
 .fc-method{font-size:9px;color:var(--text3);margin-top:6px;font-style:italic}
+
+/* ═══ MENU TAB (Phase 2.8.2) ═══════════════════════════════════════════════════ */
+
+/* Баннер про ротацию меню 1 сентября — показывается если период его захватывает */
+.menu-rotation-banner{
+  background:linear-gradient(90deg, rgba(243,156,18,.12), rgba(243,156,18,.04));
+  border:1px solid rgba(243,156,18,.35);
+  border-radius:10px;
+  padding:10px 14px;
+  margin-bottom:14px;
+  font-size:11px;
+  color:var(--text);
+  line-height:1.5;
+  display:flex;
+  gap:10px;
+  align-items:flex-start;
+}
+.menu-rotation-banner .icon{font-size:14px;flex-shrink:0;line-height:1}
+.menu-rotation-banner b{color:var(--amber)}
+
+/* Ряд KPI-карточек — 5 в строку, сжимаются на узких экранах */
+.menu-kpi-row{
+  display:grid;
+  grid-template-columns:repeat(5, 1fr);
+  gap:10px;
+  margin-bottom:12px;
+}
+.menu-kpi{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px 14px 12px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.menu-kpi .lbl{
+  font-size:9px;
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:1.2px;
+  font-weight:500;
+}
+.menu-kpi .val{
+  font-family:'Cormorant Garamond',serif;
+  font-size:26px;
+  font-weight:700;
+  line-height:1.1;
+  color:var(--text);
+}
+.menu-kpi .sub{
+  font-size:10px;
+  color:var(--text2);
+  margin-top:auto;
+}
+.menu-kpi.accent-gold .val{color:var(--gold2)}
+.menu-kpi.accent-amber .val{color:var(--amber)}
+
+/* Breakdown по 8 классам — горизонтальная полоса с цифрами */
+.menu-classes{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:12px 14px;
+  margin-bottom:14px;
+}
+.menu-classes-title{
+  font-size:9px;
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:1.2px;
+  font-weight:500;
+  margin-bottom:10px;
+}
+.menu-classes-grid{
+  display:grid;
+  grid-template-columns:repeat(8, 1fr);
+  gap:6px;
+}
+.menu-class{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:3px;
+  padding:8px 4px;
+  background:var(--bg2);
+  border-radius:8px;
+  border:1px solid var(--border);
+  text-align:center;
+}
+.menu-class .ico{font-size:14px;line-height:1}
+.menu-class .n{
+  font-family:'Cormorant Garamond',serif;
+  font-size:18px;
+  font-weight:700;
+  line-height:1;
+}
+.menu-class .name{
+  font-size:9px;
+  color:var(--text2);
+  text-transform:uppercase;
+  letter-spacing:.8px;
+}
+
+/* Цветовая кодировка классов (та же палитра используется в chip'ах классов в таблице 5d) */
+.menu-class.cls-star      .n{color:var(--gold2)}
+.menu-class.cls-plowhorse .n{color:var(--blue)}
+.menu-class.cls-puzzle    .n{color:var(--purple)}
+.menu-class.cls-dog       .n{color:var(--text2)}
+.menu-class.cls-dormant   .n{color:var(--amber)}
+.menu-class.cls-new       .n{color:var(--teal)}
+.menu-class.cls-event     .n{color:var(--text2)}
+.menu-class.cls-too_small .n{color:var(--text3)}
+
+/* Mobile: на узких экранах KPI в 2 колонки, классы в 4 */
+@media (max-width: 900px) {
+  .menu-kpi-row{grid-template-columns:repeat(2, 1fr)}
+  .menu-classes-grid{grid-template-columns:repeat(4, 1fr)}
+}

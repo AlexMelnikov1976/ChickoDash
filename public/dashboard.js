@@ -2609,7 +2609,8 @@ async function renderMenu() {
     return;
   }
 
-  // Phase 5a: пока только лог + заглушка. UI добавим в 5b-5d.
+  // Phase 5b: KPI-ряд + breakdown классов + rotation baner.
+  // Таблица блюд, KS-матрица, drawer — в 5c и 5d.
   console.log('[menu] data loaded:', {
     restaurant: R.name,
     period: CAL_STATE.global.start + '..' + CAL_STATE.global.end,
@@ -2619,23 +2620,145 @@ async function renderMenu() {
     network_covered: data.summary.network_covered,
   });
 
-  const s = data.summary;
-  root.innerHTML =
-    '<div style="padding:40px 20px;max-width:620px;margin:0 auto">' +
-      '<div style="font-family:Cormorant Garamond,serif;font-size:24px;color:var(--gold);margin-bottom:16px">Меню: данные загружены</div>' +
-      '<div style="font-size:12px;color:var(--text2);line-height:1.7">' +
-        'Ресторан: <b style="color:var(--text)">' + (R.name || '—') + '</b><br>' +
-        'Период: <b style="color:var(--text)">' + CAL_STATE.global.start + ' — ' + CAL_STATE.global.end + '</b><br>' +
-        'Всего блюд: <b style="color:var(--text)">' + s.total_dishes + '</b><br>' +
-        'Выручка меню: <b style="color:var(--text)">' + Math.round(s.total_revenue / 1e6 * 10) / 10 + ' M ₽</b><br>' +
-        'Средняя маржа: <b style="color:var(--text)">' + s.avg_margin_pct + '%</b><br>' +
-        'Сетевое покрытие: <b style="color:var(--text)">' + s.network_covered + ' / ' + s.total_dishes + '</b><br><br>' +
-        '<span style="color:var(--text3);font-style:italic">' +
-          'Интерфейс в разработке (5a из 5a-5d). KPI-ряд, KS-матрица и таблица блюд появятся в следующих деплоях. ' +
-          'Данные уже в консоли (F12) для проверки.' +
-        '</span>' +
+  const html = [];
+  html.push(renderRotationBanner(CAL_STATE.global.start, CAL_STATE.global.end));
+  html.push(renderMenuKPIs(data.summary));
+  html.push(renderClassesBreakdown(data.summary.ks_counts, data.summary.dormant_reasons));
+  html.push(
+    '<div style="padding:30px 20px;text-align:center;color:var(--text3);font-size:11px;font-style:italic;' +
+    'background:var(--card);border:1px dashed var(--border);border-radius:10px">' +
+      'KS-матрица (5c) и таблица блюд с фильтрами (5d) появятся в следующих деплоях. ' +
+      'KPI-ряд выше уже работает на реальных данных.' +
+    '</div>'
+  );
+  root.innerHTML = html.join('');
+}
+
+// --- Banner о ротации меню 1 сентября 2025 --------------------------------
+
+function renderRotationBanner(start, end) {
+  // Если выбранный период пересекает 2025-09-01 — это системная ротация
+  // меню Chicko: часть блюд старого меню прекратила продаваться, новое
+  // меню стартовало. Франчайзи надо об этом знать, чтобы не пугаться
+  // высокого процента dormant.
+  const ROTATION = '2025-09-01';
+  if (!start || !end) return '';
+  if (start > ROTATION || end < ROTATION) return '';
+  return (
+    '<div class="menu-rotation-banner">' +
+      '<span class="icon">⚠</span>' +
+      '<div>' +
+        'Выбранный период охватывает <b>сетевую ротацию меню 1 сентября 2025</b>. ' +
+        'Вы видите смешанное меню (старое + новое) — это естественно объясняет ' +
+        'высокий процент класса <b>dormant</b>. Для более чистой KS-аналитики ' +
+        'выберите период только до или только после 1 сентября 2025.' +
       '</div>' +
-    '</div>';
+    '</div>'
+  );
+}
+
+// --- KPI-ряд: 5 карточек сверху -------------------------------------------
+
+function renderMenuKPIs(summary) {
+  if (!summary) return '';
+  const ks = summary.ks_counts || {};
+  const leaders = (ks.star || 0) + (ks.plowhorse || 0);
+  // "Требуют внимания" = блюда, где у франчайзи есть рычаг воздействия:
+  // puzzle (надо продвигать), dog (возможно убрать), dormant (надо разобраться).
+  // too_small/event/new сюда не входим — это либо методологические ограничения,
+  // либо временные промо, либо слишком молодые для выводов.
+  const focus = (ks.puzzle || 0) + (ks.dog || 0) + (ks.dormant || 0);
+
+  const revM = (summary.total_revenue || 0) / 1e6;
+  const revFmt = revM >= 10
+    ? revM.toFixed(1) + ' M ₽'
+    : (revM >= 1 ? revM.toFixed(2) + ' M ₽' : Math.round(summary.total_revenue).toLocaleString('ru') + ' ₽');
+
+  return (
+    '<div class="menu-kpi-row">' +
+      kpi('Всего блюд', summary.total_dishes, 'в KS-анализе') +
+      kpi('Выручка меню', revFmt, 'за выбранный период') +
+      kpi('Средняя маржа', (summary.avg_margin_pct || 0).toFixed(1) + '%', 'по всему меню', 'accent-gold') +
+      kpi('⭐ Лидеры', leaders, 'Stars + Plowhorses', 'accent-gold') +
+      kpi('⚠ Требуют внимания', focus, 'Puzzles + Dogs + Dormant', 'accent-amber') +
+    '</div>'
+  );
+}
+
+function kpi(label, value, sub, extraClass) {
+  const cls = 'menu-kpi' + (extraClass ? ' ' + extraClass : '');
+  return (
+    '<div class="' + cls + '">' +
+      '<div class="lbl">' + escapeHtml(label) + '</div>' +
+      '<div class="val">' + escapeHtml(String(value)) + '</div>' +
+      '<div class="sub">' + escapeHtml(sub) + '</div>' +
+    '</div>'
+  );
+}
+
+// --- Breakdown по 8 классам KS -------------------------------------------
+
+function renderClassesBreakdown(counts, dormantReasons) {
+  counts = counts || {};
+  dormantReasons = dormantReasons || {};
+
+  // Порядок: сначала классические KS (4), потом методологические (too_small),
+  // потом временные (event, new), потом dormant (самый большой пул проблем).
+  // Это не алфавит и не по убыванию — это визуальная группировка по смыслу.
+  const CLASSES = [
+    { key: 'star',      ico: '⭐', name: 'Star' },
+    { key: 'plowhorse', ico: '🐎', name: 'Plowhorse' },
+    { key: 'puzzle',    ico: '❓', name: 'Puzzle' },
+    { key: 'dog',       ico: '🐶', name: 'Dog' },
+    { key: 'too_small', ico: '⚙',  name: 'Too small' },
+    { key: 'event',     ico: '🎉', name: 'Event' },
+    { key: 'new',       ico: '🆕', name: 'New' },
+    { key: 'dormant',   ico: '🔁', name: 'Dormant' },
+  ];
+
+  const cells = CLASSES.map(c => {
+    const n = counts[c.key] || 0;
+    return (
+      '<div class="menu-class cls-' + c.key + '" title="' + escapeAttr(c.name) + '">' +
+        '<div class="ico">' + c.ico + '</div>' +
+        '<div class="n">' + n + '</div>' +
+        '<div class="name">' + escapeHtml(c.name) + '</div>' +
+      '</div>'
+    );
+  }).join('');
+
+  // Дополнительная подпись под dormant — разбивка replaced/seasonal/retired.
+  // Полезно понимать, сколько "настоящих" проблемных блюд среди dormant.
+  let dormantNote = '';
+  const dr = dormantReasons;
+  const drTotal = (dr.replaced || 0) + (dr.seasonal || 0) + (dr.retired || 0);
+  if (drTotal > 0) {
+    const parts = [];
+    if (dr.replaced) parts.push(dr.replaced + ' заменённых');
+    if (dr.seasonal) parts.push(dr.seasonal + ' сезонных');
+    if (dr.retired)  parts.push(dr.retired  + ' снятых');
+    dormantNote =
+      '<div style="font-size:10px;color:var(--text3);margin-top:8px;text-align:right">' +
+        'Из <b style="color:var(--amber)">' + drTotal + '</b> dormant: ' + parts.join(' · ') +
+      '</div>';
+  }
+
+  return (
+    '<div class="menu-classes">' +
+      '<div class="menu-classes-title">Структура меню по классам Kasavana-Smith</div>' +
+      '<div class="menu-classes-grid">' + cells + '</div>' +
+      dormantNote +
+    '</div>'
+  );
+}
+
+// --- Мелкие хелперы ---
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function escapeAttr(s) {
+  return escapeHtml(s).replace(/"/g, '&quot;');
 }
 
 // Инвалидация кэша меню при смене ресторана и периода.
