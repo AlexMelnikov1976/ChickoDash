@@ -1,22 +1,26 @@
-// Chicko Analytics — Menu Analysis endpoint (Phase 2.7)
+// Chicko Analytics — Menu Analysis endpoint (Phase 2.7.2)
 // © 2026 System360 by Alex Melnikov. All rights reserved.
 //
 // GET /api/menu-analysis?restaurant_id=N&start=YYYY-MM-DD&end=YYYY-MM-DD
 //
-// Kasavana-Smith menu engineering matrix с 5 улучшениями относительно v1:
-//   1. Классификация ВНУТРИ dish_group (а не по всему меню)
-//      → правильнее сравнивать "Корейский чикен" внутри себя, а не с напитками
-//   2. Класс 'too_small' для групп с n < 3 блюд
-//      → KS на 1-2 блюдах вырождается
-//   3. Фильтр аномалий через INNER JOIN с mart_restaurant_daily_base
-//      → консистентно с forecast.ts / benchmarks.ts
-//   4. Три ранга: rank (в меню), rank_in_class (в своём KS), rank_in_group
-//      → UI сможет показывать "топ-5 dog по выручке" и т.п.
-//   5. Сетевой бенчмарк по dish_code (порог n_rests >= 3)
-//      → инсайт "у тебя это puzzle, а по сети — star в N ресторанах"
+// Kasavana-Smith menu engineering matrix v3 со следующей логикой классификации.
 //
-// Matching между ресторанами — по dish_code (стабильный SKU), не по dish_name.
-// Блюда с пустым dish_code исключаются из основного анализа.
+// 8 возможных классов, проверяются в порядке приоритета:
+//   1. event     — dish_category начинается с 'ивент' (временные промо-меню)
+//   2. dormant   — не продавалось 14+ дней на конец периода
+//   3. new       — появилось в данных < 30 дней назад от конца периода
+//   4. too_small — в dish_group < 3 KS-кандидатов (KS вырождается)
+//   5-8. star / plowhorse / puzzle / dog — классическая матрица KS внутри dish_group
+//
+// Блюда из dish_group = 'Архив' исключаются на SQL-уровне (снятые с меню).
+//
+// Возвращает в каждом блюде:
+//   - метрики периода (qty, revenue, margin и производные)
+//   - ks_class + рейтинги (общий, внутри класса, внутри группы)
+//   - first_sold_at, last_sold_at, days_in_menu, days_since_last_sale
+//     (по всей истории блюда в этом ресторане до конца периода)
+//   - network: сетевая медиана margin_per_unit и menu_mix_pct по dish_code
+//     (только если блюдо продаётся минимум в 3 других ресторанах)
 
 import { ClickHouseClient } from './clickhouse';
 import {
@@ -38,6 +42,11 @@ function jsonResponse(body: unknown, request: Request, status: number = 200): Re
   });
 }
 
+// --- Пороги классификации ---
+const NEW_THRESHOLD_DAYS = 30;      // блюдо младше N дней → new
+const DORMANT_THRESHOLD_DAYS = 14;  // не продаётся M+ дней → dormant
+const EVENT_CATEGORY_PREFIX = 'ивент'; // lowerUTF8(dish_category).startsWith(...)
+
 interface DishRow {
   dish_code: string;
   dish_name: string;
@@ -50,9 +59,21 @@ interface DishRow {
   margin_per_unit: number;
   avg_price: number;
   avg_foodcost_pct: number;
+  first_sold_at: string;
+  last_sold_at: string;
+  days_in_menu: number;
+  days_since_last_sale: number;
 }
 
-type KSClass = 'star' | 'plowhorse' | 'puzzle' | 'dog' | 'too_small';
+type KSClass =
+  | 'star'
+  | 'plowhorse'
+  | 'puzzle'
+  | 'dog'
+  | 'too_small'
+  | 'event'
+  | 'dormant'
+  | 'new';
 
 interface NetworkBenchmark {
   margin_p50_net: number;
@@ -62,19 +83,29 @@ interface NetworkBenchmark {
 
 interface ClassifiedDish extends DishRow {
   menu_mix_pct: number;        // % от общего qty всего меню
-  menu_mix_pct_group: number;  // % от qty внутри dish_group
+  menu_mix_pct_group: number;  // % от qty всей dish_group (включая event/dormant/new)
   ks_class: KSClass;
   rank: number;                // по revenue во всём меню
-  rank_in_class: number;       // по revenue внутри своего KS-класса
+  rank_in_class: number;       // по revenue внутри своего класса
   rank_in_group: number;       // по revenue внутри своей dish_group
   network: NetworkBenchmark | null;
 }
 
 /**
- * Классификация блюд по Касаване-Смиту внутри dish_group.
- * Популярность: menu_mix_pct_group >= (1/n_group) * 0.70 * 100
- * Прибыльность: margin_per_unit >= средняя margin_per_unit внутри группы
- * Группы с n < 3 → all → 'too_small'
+ * Классификация блюд.
+ *
+ * Логика в два прохода:
+ *   1. Для каждого блюда определяем fixed-класс (event/dormant/new) или
+ *      что оно кандидат на KS-классификацию. Приоритет: event > dormant > new.
+ *   2. KS-кандидаты группируем по dish_group. Внутри каждой группы считаем
+ *      пороги популярности и прибыльности ТОЛЬКО среди KS-кандидатов
+ *      (event/dormant/new не участвуют в порогах — они "вне игры").
+ *      Если KS-кандидатов в группе < 3 → все получают too_small.
+ *
+ * menu_mix_pct_group в ответе считается по ВСЕЙ группе (включая fixed-классы) —
+ * так интуитивнее для UI: "это блюдо занимает X% продаж в группе Десерты".
+ * Для расчёта KS-популярности используется отдельная внутренняя доля —
+ * только среди KS-кандидатов группы.
  */
 function classifyKS(dishes: DishRow[]): ClassifiedDish[] {
   const n = dishes.length;
@@ -83,58 +114,107 @@ function classifyKS(dishes: DishRow[]): ClassifiedDish[] {
   const totalQty = dishes.reduce((s, d) => s + d.total_qty, 0);
   if (totalQty === 0) return [];
 
-  // Группируем по dish_group
-  const byGroup = new Map<string, DishRow[]>();
+  // 1. Разделяем на fixed и ks-кандидатов
+  const fixed: Array<{ dish: DishRow; ksClass: KSClass }> = [];
+  const ksCandidates: DishRow[] = [];
+
+  for (const d of dishes) {
+    const category = (d.dish_category || '').toLowerCase();
+    if (category.startsWith(EVENT_CATEGORY_PREFIX)) {
+      fixed.push({ dish: d, ksClass: 'event' });
+    } else if (d.days_since_last_sale > DORMANT_THRESHOLD_DAYS) {
+      fixed.push({ dish: d, ksClass: 'dormant' });
+    } else if (d.days_in_menu < NEW_THRESHOLD_DAYS) {
+      fixed.push({ dish: d, ksClass: 'new' });
+    } else {
+      ksCandidates.push(d);
+    }
+  }
+
+  // 2. Групповые агрегаты по ВСЕЙ группе (для menu_mix_pct_group в ответе)
+  const groupTotals = new Map<string, { totalQty: number }>();
   for (const d of dishes) {
     const key = d.dish_group || '(без группы)';
-    if (!byGroup.has(key)) byGroup.set(key, []);
-    byGroup.get(key)!.push(d);
+    const g = groupTotals.get(key) || { totalQty: 0 };
+    g.totalQty += d.total_qty;
+    groupTotals.set(key, g);
+  }
+
+  // 3. Групповые агрегаты ТОЛЬКО по KS-кандидатам (для порогов популярности/прибыльности)
+  const ksGroupTotals = new Map<string, { totalQty: number; totalMargin: number; n: number }>();
+  for (const d of ksCandidates) {
+    const key = d.dish_group || '(без группы)';
+    const g = ksGroupTotals.get(key) || { totalQty: 0, totalMargin: 0, n: 0 };
+    g.totalQty += d.total_qty;
+    g.totalMargin += d.total_margin;
+    g.n++;
+    ksGroupTotals.set(key, g);
   }
 
   const result: ClassifiedDish[] = [];
 
-  for (const [, groupDishes] of byGroup) {
-    const groupTotalQty = groupDishes.reduce((s, d) => s + d.total_qty, 0);
-    const groupTotalMargin = groupDishes.reduce((s, d) => s + d.total_margin, 0);
-    const nGroup = groupDishes.length;
+  // 4a. Fixed-классы (event/dormant/new)
+  for (const { dish, ksClass } of fixed) {
+    const groupKey = dish.dish_group || '(без группы)';
+    const gt = groupTotals.get(groupKey)!;
+    const menuMixPct = (dish.total_qty / totalQty) * 100;
+    const menuMixPctGroup = gt.totalQty > 0 ? (dish.total_qty / gt.totalQty) * 100 : 0;
 
-    const popularityThreshold = nGroup > 0 ? (1 / nGroup) * 0.70 * 100 : 0;
-    const avgMarginPerUnit = groupTotalQty > 0 ? groupTotalMargin / groupTotalQty : 0;
-
-    for (const d of groupDishes) {
-      const menuMixPct = (d.total_qty / totalQty) * 100;
-      const menuMixPctGroup = groupTotalQty > 0 ? (d.total_qty / groupTotalQty) * 100 : 0;
-
-      let ksClass: KSClass;
-      if (nGroup < 3) {
-        ksClass = 'too_small';
-      } else {
-        const isPopular = menuMixPctGroup >= popularityThreshold;
-        const isProfitable = d.margin_per_unit >= avgMarginPerUnit;
-        if (isPopular && isProfitable) ksClass = 'star';
-        else if (isPopular && !isProfitable) ksClass = 'plowhorse';
-        else if (!isPopular && isProfitable) ksClass = 'puzzle';
-        else ksClass = 'dog';
-      }
-
-      result.push({
-        ...d,
-        menu_mix_pct: +menuMixPct.toFixed(2),
-        menu_mix_pct_group: +menuMixPctGroup.toFixed(2),
-        ks_class: ksClass,
-        rank: 0,
-        rank_in_class: 0,
-        rank_in_group: 0,
-        network: null,
-      });
-    }
+    result.push({
+      ...dish,
+      menu_mix_pct: +menuMixPct.toFixed(2),
+      menu_mix_pct_group: +menuMixPctGroup.toFixed(2),
+      ks_class: ksClass,
+      rank: 0,
+      rank_in_class: 0,
+      rank_in_group: 0,
+      network: null,
+    });
   }
 
-  // Global rank by revenue
+  // 4b. KS-классификация среди кандидатов
+  for (const d of ksCandidates) {
+    const groupKey = d.dish_group || '(без группы)';
+    const gt = groupTotals.get(groupKey)!;
+    const ksg = ksGroupTotals.get(groupKey)!;
+
+    const menuMixPct = (d.total_qty / totalQty) * 100;
+    const menuMixPctGroup = gt.totalQty > 0 ? (d.total_qty / gt.totalQty) * 100 : 0;
+
+    let ksClass: KSClass;
+    if (ksg.n < 3) {
+      ksClass = 'too_small';
+    } else {
+      const popularityThreshold = (1 / ksg.n) * 0.70 * 100;
+      const avgMarginPerUnit = ksg.totalQty > 0 ? ksg.totalMargin / ksg.totalQty : 0;
+      // Популярность внутри KS-подгруппы (не по всей группе)
+      const mixPctWithinKs = ksg.totalQty > 0 ? (d.total_qty / ksg.totalQty) * 100 : 0;
+      const isPopular = mixPctWithinKs >= popularityThreshold;
+      const isProfitable = d.margin_per_unit >= avgMarginPerUnit;
+      if (isPopular && isProfitable) ksClass = 'star';
+      else if (isPopular && !isProfitable) ksClass = 'plowhorse';
+      else if (!isPopular && isProfitable) ksClass = 'puzzle';
+      else ksClass = 'dog';
+    }
+
+    result.push({
+      ...d,
+      menu_mix_pct: +menuMixPct.toFixed(2),
+      menu_mix_pct_group: +menuMixPctGroup.toFixed(2),
+      ks_class: ksClass,
+      rank: 0,
+      rank_in_class: 0,
+      rank_in_group: 0,
+      network: null,
+    });
+  }
+
+  // 5. Ранги
+  // 5a. Global rank by revenue
   result.sort((a, b) => b.total_revenue - a.total_revenue);
   result.forEach((d, i) => { d.rank = i + 1; });
 
-  // Rank in class
+  // 5b. Rank in class
   const byClass = new Map<KSClass, ClassifiedDish[]>();
   for (const d of result) {
     if (!byClass.has(d.ks_class)) byClass.set(d.ks_class, []);
@@ -145,7 +225,7 @@ function classifyKS(dishes: DishRow[]): ClassifiedDish[] {
     arr.forEach((d, i) => { d.rank_in_class = i + 1; });
   }
 
-  // Rank in group
+  // 5c. Rank in group
   const byGroupFinal = new Map<string, ClassifiedDish[]>();
   for (const d of result) {
     const key = d.dish_group || '(без группы)';
@@ -157,7 +237,6 @@ function classifyKS(dishes: DishRow[]): ClassifiedDish[] {
     arr.forEach((d, i) => { d.rank_in_group = i + 1; });
   }
 
-  // Возвращаем в порядке глобального rank (по revenue DESC)
   result.sort((a, b) => a.rank - b.rank);
   return result;
 }
@@ -193,11 +272,32 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
     if (!uuidRows.length) return jsonResponse({ error: 'Restaurant not found' }, request, 404);
     const deptUuid = uuidRows[0].dept_uuid;
 
-    // --- SQL #1: per-dish aggregates for the selected restaurant ---
-    // GROUP BY dish_code (стабильный SKU). any(dish_name) — у одного кода
-    // теоретически может быть несколько названий (~44 случаев из 1515 в тестовой базе).
-    // INNER JOIN отсекает дни с is_anomaly_day = 1.
+    // --- SQL #1: per-dish aggregates + история продаж ---
+    // history CTE берёт ВСЮ историю блюда (до end) для расчёта first_sold / last_sold.
+    // Основной SELECT фильтрует BETWEEN start AND end — только период анализа.
+    // dish_group != 'Архив' — снятые с меню блюда не участвуют.
     const sqlMain = `
+      WITH
+        valid_days AS (
+          SELECT dept_uuid, report_date
+          FROM chicko.mart_restaurant_daily_base
+          WHERE is_anomaly_day = 0
+            AND dept_uuid = '${deptUuid}'
+        ),
+        history AS (
+          SELECT
+            d.dish_code,
+            min(d.report_date) AS first_sold_at,
+            max(d.report_date) AS last_sold_at
+          FROM chicko.dish_sales d
+          INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
+          WHERE d.dept_uuid = '${deptUuid}'
+            AND d.report_date <= '${end}'
+            AND d.qty > 0
+            AND d.dish_code != ''
+            AND d.dish_group != 'Архив'
+          GROUP BY d.dish_code
+        )
       SELECT
         d.dish_code AS dish_code,
         any(d.dish_name) AS dish_name,
@@ -209,26 +309,27 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
         round(SUM(d.revenue_rub) - SUM(d.foodcost_rub), 2) AS total_margin,
         round((SUM(d.revenue_rub) - SUM(d.foodcost_rub)) / nullIf(SUM(d.qty), 0), 2) AS margin_per_unit,
         round(SUM(d.revenue_rub) / nullIf(SUM(d.qty), 0), 2) AS avg_price,
-        round(SUM(d.foodcost_rub) / nullIf(SUM(d.revenue_rub), 0) * 100, 1) AS avg_foodcost_pct
+        round(SUM(d.foodcost_rub) / nullIf(SUM(d.revenue_rub), 0) * 100, 1) AS avg_foodcost_pct,
+        toString(h.first_sold_at) AS first_sold_at,
+        toString(h.last_sold_at) AS last_sold_at,
+        dateDiff('day', h.first_sold_at, toDate('${end}')) AS days_in_menu,
+        dateDiff('day', h.last_sold_at, toDate('${end}')) AS days_since_last_sale
       FROM chicko.dish_sales d
-      INNER JOIN chicko.mart_restaurant_daily_base b
-        ON d.dept_uuid = b.dept_uuid AND d.report_date = b.report_date
+      INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
+      INNER JOIN history h ON d.dish_code = h.dish_code
       WHERE d.dept_uuid = '${deptUuid}'
         AND d.report_date BETWEEN '${start}' AND '${end}'
-        AND b.is_anomaly_day = 0
         AND d.qty > 0
         AND d.dish_code != ''
-      GROUP BY d.dish_code
+        AND d.dish_group != 'Архив'
+      GROUP BY d.dish_code, h.first_sold_at, h.last_sold_at
       HAVING total_revenue > 0
       ORDER BY total_revenue DESC`;
 
     // --- SQL #2: network benchmark ---
-    // Для каждого dish_code из моего меню считаем:
-    //   - median margin_per_unit по другим ресторанам (агрегат за период)
-    //   - median menu_mix_pct по другим ресторанам (доля блюда в их меню)
-    //   - n_rests (в скольких других ресторанах продавалось, порог >= 3)
-    // per_rest_total считает весь qty ресторана (не только блюда из моего
-    // меню), чтобы mix_pct был честной долей в меню того ресторана.
+    // Добавлен фильтр revenue_rub > 0 в mine — fix бага v2, где network_covered мог
+    // содержать блюда с qty>0 но revenue=0 (бесплатные/комплименты), которых нет в
+    // основной выборке. Также добавлен фильтр Архива — консистентно с main query.
     const sqlNet = `
       WITH
         valid_days AS (
@@ -243,7 +344,9 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
           INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
           WHERE d.dept_uuid = '${deptUuid}'
             AND d.qty > 0
+            AND d.revenue_rub > 0
             AND d.dish_code != ''
+            AND d.dish_group != 'Архив'
         ),
         per_rest_dish AS (
           SELECT
@@ -278,7 +381,6 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
       GROUP BY prd.dish_code
       HAVING n_rests >= 3`;
 
-    // Запускаем параллельно. Network query не блокирует основной ответ.
     const [mainResult, netResult] = await Promise.all([
       ch.query(sqlMain),
       ch.query(sqlNet).catch(e => {
@@ -299,9 +401,12 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
       margin_per_unit: +(r.margin_per_unit as number | string) || 0,
       avg_price: +(r.avg_price as number | string) || 0,
       avg_foodcost_pct: +(r.avg_foodcost_pct as number | string) || 0,
+      first_sold_at: String(r.first_sold_at),
+      last_sold_at: String(r.last_sold_at),
+      days_in_menu: +(r.days_in_menu as number | string),
+      days_since_last_sale: +(r.days_since_last_sale as number | string),
     }));
 
-    // Map сетевых бенчмарков по dish_code
     const netMap = new Map<string, NetworkBenchmark>();
     for (const r of netResult.data as Array<Record<string, unknown>>) {
       netMap.set(String(r.dish_code), {
@@ -312,12 +417,19 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
     }
 
     const classified = classifyKS(rows);
-    // Привязываем сетевые бенчмарки к классифицированным блюдам
+    let networkCovered = 0;
     for (const d of classified) {
-      d.network = netMap.get(d.dish_code) || null;
+      const nb = netMap.get(d.dish_code);
+      if (nb) {
+        d.network = nb;
+        networkCovered++;
+      }
     }
 
-    const counts = { star: 0, plowhorse: 0, puzzle: 0, dog: 0, too_small: 0 };
+    const counts = {
+      star: 0, plowhorse: 0, puzzle: 0, dog: 0,
+      too_small: 0, event: 0, dormant: 0, new: 0,
+    };
     classified.forEach(d => counts[d.ks_class]++);
     const totalRev = rows.reduce((s, d) => s + d.total_revenue, 0);
     const totalMargin = rows.reduce((s, d) => s + d.total_margin, 0);
@@ -331,7 +443,11 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
         total_margin: Math.round(totalMargin),
         avg_margin_pct: totalRev > 0 ? +(totalMargin / totalRev * 100).toFixed(1) : 0,
         ks_counts: counts,
-        network_covered: netMap.size,
+        network_covered: networkCovered,
+      },
+      thresholds: {
+        new_threshold_days: NEW_THRESHOLD_DAYS,
+        dormant_threshold_days: DORMANT_THRESHOLD_DAYS,
       },
     }, request);
   } catch (error) {
