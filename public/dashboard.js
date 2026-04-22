@@ -465,6 +465,7 @@ async function selectRest(idx) {
   if (inp && R) inp.value = R.city;
   buildSelList(RESTS);
   RESTAURANT_SCORE = null; RESTAURANT_RECS = [];
+  if (typeof invalidateMenuCache === 'function') invalidateMenuCache();
   renderAll();
   // Загружаем DOW-профили для like-for-like сравнений (сеть + мой ресторан, 90 дней).
   // Делаем это в фоне — первый renderAll уже прошёл с NET/TOP10 из loadNetworkBenchmarks,
@@ -685,6 +686,7 @@ function goTab(el) {
   if(tab==='dynamics') renderDynamics();
   if(tab==='compare') renderCompare();
   if(tab==='analysis') renderAnalysis();
+  if(tab==='menu') renderMenu();
 }
 
 // ═══ FORECAST BLOCK (Phase 1.4 #71, Phase 2.2 2026-04-21) ═══
@@ -1139,6 +1141,7 @@ function calApply(key,ev){
     S.dynEnd   = S.cmpEnd   = S.globalEnd;
     loadNetworkBenchmarks(S.globalStart, S.globalEnd).then(()=>{
       try {
+        if (typeof invalidateMenuCache === 'function') invalidateMenuCache();
         renderAll();
         // Перерисовываем всё, даже если сейчас видна другая вкладка
         if (typeof renderDynamics === 'function') renderDynamics();
@@ -2512,6 +2515,140 @@ async function fbSend(){
   }catch(e){
     alert('Ошибка отправки: '+e.message);
     btn.disabled=false;btn.textContent='Отправить';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MENU ANALYSIS (Phase 2.8.2) — Kasavana-Smith menu engineering UI
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Backend: GET /api/menu-analysis?restaurant_id=N&start=YYYY-MM-DD&end=...
+// Возвращает { dishes[], summary, filters, thresholds }.
+// Полная спецификация в src/menu_analysis.ts и Приложении А паспорта.
+//
+// UI строится в 4 этапа (commits 5a..5d):
+//   5a — scaffold: кнопка вкладки, fetch, лог в консоль (этот этап)
+//   5b — KPI-ряд сверху
+//   5c — 2×2 KS-матрица + action sidebar
+//   5d — таблица блюд с фильтрами + drawer с деталями
+
+const MENU_STATE = {
+  raw: null,           // последний ответ API
+  loading: false,      // идёт ли запрос
+  loadedFor: null,     // ключ "restId|start|end" последней успешной загрузки
+  filters: {
+    classes: new Set(),       // пустой = показываем всё
+    groups: new Set(),
+    dormantReasons: new Set(),
+    search: '',
+    withNetworkOnly: false,
+  },
+  sortBy: 'rank',
+  sortDir: 'asc',
+  selectedDishCode: null,     // для drawer (фаза 5d)
+};
+
+// Ключ кэша: restId + период. Если ресторан или период сменились —
+// сбросим MENU_STATE.raw и перезагрузим.
+function menuCacheKey() {
+  if (!R || !R.id) return null;
+  const st = CAL_STATE && CAL_STATE.global;
+  if (!st || !st.start || !st.end) return null;
+  return R.id + '|' + st.start + '|' + st.end;
+}
+
+async function loadMenuAnalysis() {
+  const key = menuCacheKey();
+  if (!key) {
+    console.warn('[menu] cannot load: no restaurant or date range');
+    return null;
+  }
+  if (MENU_STATE.loadedFor === key && MENU_STATE.raw) {
+    return MENU_STATE.raw; // используем кэш
+  }
+  if (MENU_STATE.loading) return null; // защита от двойных запросов
+
+  MENU_STATE.loading = true;
+  try {
+    const st = CAL_STATE.global;
+    const qs = '?restaurant_id=' + R.id +
+               '&start=' + encodeURIComponent(st.start) +
+               '&end=' + encodeURIComponent(st.end);
+    const data = await apiGet('/api/menu-analysis' + qs);
+    MENU_STATE.raw = data;
+    MENU_STATE.loadedFor = key;
+    return data;
+  } catch (e) {
+    console.error('[menu] load failed:', e.message);
+    return null;
+  } finally {
+    MENU_STATE.loading = false;
+  }
+}
+
+async function renderMenu() {
+  trackUI('menu_open', { restaurant_id: R && R.id });
+  const root = document.getElementById('menuRoot');
+  if (!root) return;
+
+  // Если кликнули на вкладку без выбранного ресторана — сообщение
+  if (!R || !R.id) {
+    root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">Выберите ресторан для анализа меню.</div>';
+    return;
+  }
+  if (NETWORK_MODE) {
+    root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">Анализ меню доступен только для конкретного ресторана. Снимите галку «Вся сеть».</div>';
+    return;
+  }
+
+  root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">Загрузка анализа меню…</div>';
+
+  const data = await loadMenuAnalysis();
+  if (!data) {
+    root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red);font-size:12px">Не удалось загрузить данные. Попробуйте обновить страницу.</div>';
+    return;
+  }
+
+  // Phase 5a: пока только лог + заглушка. UI добавим в 5b-5d.
+  console.log('[menu] data loaded:', {
+    restaurant: R.name,
+    period: CAL_STATE.global.start + '..' + CAL_STATE.global.end,
+    total_dishes: data.summary.total_dishes,
+    ks_counts: data.summary.ks_counts,
+    dormant_reasons: data.summary.dormant_reasons,
+    network_covered: data.summary.network_covered,
+  });
+
+  const s = data.summary;
+  root.innerHTML =
+    '<div style="padding:40px 20px;max-width:620px;margin:0 auto">' +
+      '<div style="font-family:Cormorant Garamond,serif;font-size:24px;color:var(--gold);margin-bottom:16px">Меню: данные загружены</div>' +
+      '<div style="font-size:12px;color:var(--text2);line-height:1.7">' +
+        'Ресторан: <b style="color:var(--text)">' + (R.name || '—') + '</b><br>' +
+        'Период: <b style="color:var(--text)">' + CAL_STATE.global.start + ' — ' + CAL_STATE.global.end + '</b><br>' +
+        'Всего блюд: <b style="color:var(--text)">' + s.total_dishes + '</b><br>' +
+        'Выручка меню: <b style="color:var(--text)">' + Math.round(s.total_revenue / 1e6 * 10) / 10 + ' M ₽</b><br>' +
+        'Средняя маржа: <b style="color:var(--text)">' + s.avg_margin_pct + '%</b><br>' +
+        'Сетевое покрытие: <b style="color:var(--text)">' + s.network_covered + ' / ' + s.total_dishes + '</b><br><br>' +
+        '<span style="color:var(--text3);font-style:italic">' +
+          'Интерфейс в разработке (5a из 5a-5d). KPI-ряд, KS-матрица и таблица блюд появятся в следующих деплоях. ' +
+          'Данные уже в консоли (F12) для проверки.' +
+        '</span>' +
+      '</div>' +
+    '</div>';
+}
+
+// Инвалидация кэша меню при смене ресторана и периода.
+// Хуки аккуратные: мы не меняем pickRest/pickPeriod напрямую — просто
+// сбрасываем loadedFor в вспомогательных местах.
+function invalidateMenuCache() {
+  MENU_STATE.raw = null;
+  MENU_STATE.loadedFor = null;
+  MENU_STATE.selectedDishCode = null;
+  // Если сейчас открыта вкладка меню — перерисуем
+  const menuPanel = document.getElementById('p-menu');
+  if (menuPanel && menuPanel.classList.contains('active')) {
+    renderMenu();
   }
 }
 
