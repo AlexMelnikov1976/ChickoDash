@@ -14,7 +14,7 @@ import {
   checkRateLimit,
   sendMagicLinkEmail,
 } from './magic_link';
-import { DASHBOARD_HTML } from './dashboard';
+import { handleDashboard } from './dashboard';
 import { handleDowProfiles } from './dow_profiles';
 import { handleForecast } from './forecast';
 import { handleRestaurantsList, handleBenchmarks, handleRestaurantMeta } from './data_endpoints';
@@ -186,14 +186,7 @@ export default {
     }
 
     if ((url.pathname === '/' || url.pathname === '/index.html') && request.method === 'GET') {
-      return new Response(DASHBOARD_HTML, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-store',
-          ...HTML_SECURITY_HEADERS,
-        },
-      });
+      return handleDashboard(request, env.ASSETS, HTML_SECURITY_HEADERS);
     }
 
     // --- Public API endpoints ---

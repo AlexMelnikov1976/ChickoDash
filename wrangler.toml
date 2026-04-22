@@ -32,3 +32,4 @@ id = "5519cb41b5554c51bf248dbecee1aa6a"
 directory = "./public"
 binding = "ASSETS"
 run_worker_first = true
+html_handling = "none"
