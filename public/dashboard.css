@@ -505,3 +505,232 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
   .menu-kpi-row{grid-template-columns:repeat(2, 1fr)}
   .menu-classes-grid{grid-template-columns:repeat(4, 1fr)}
 }
+
+/* ═══ MENU: KS-матрица + Action panel (Phase 2.8.2 / 5c) ═════════════════ */
+
+.menu-ks-wrap{
+  display:grid;
+  grid-template-columns:minmax(360px, 1fr) minmax(300px, 1.2fr);
+  gap:14px;
+  margin-bottom:14px;
+}
+
+/* Левая колонка: матрица */
+.menu-ks-matrix{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:16px;
+  display:flex;
+  flex-direction:column;
+}
+.menu-ks-title{
+  font-size:9px;
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:1.2px;
+  font-weight:500;
+  margin-bottom:14px;
+}
+
+/* Grid 2x2 с подписями осей */
+.menu-ks-frame{
+  display:grid;
+  grid-template-columns:20px 1fr;
+  grid-template-rows:1fr 20px;
+  gap:6px;
+  flex:1;
+  min-height:260px;
+}
+.menu-ks-y-axis{
+  writing-mode:vertical-rl;
+  transform:rotate(180deg);
+  font-size:9px;
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:1.5px;
+  font-weight:500;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.menu-ks-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  grid-template-rows:1fr 1fr;
+  gap:4px;
+  border:1px solid var(--border2);
+  border-radius:8px;
+  padding:4px;
+  background:var(--bg2);
+}
+.menu-ks-x-axis{
+  grid-column:2;
+  grid-row:2;
+  font-size:9px;
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:1.5px;
+  font-weight:500;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+}
+
+/* Квадрант */
+.menu-ks-quad{
+  border-radius:6px;
+  padding:14px 10px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:4px;
+  cursor:pointer;
+  transition:all .15s ease;
+  border:2px solid transparent;
+  position:relative;
+}
+.menu-ks-quad:hover{border-color:var(--border2)}
+.menu-ks-quad.active{border-color:var(--gold);box-shadow:0 0 0 2px rgba(212,168,75,.15)}
+.menu-ks-quad .ico{font-size:22px;line-height:1}
+.menu-ks-quad .n{
+  font-family:'Cormorant Garamond',serif;
+  font-size:28px;
+  font-weight:700;
+  line-height:1;
+  margin-top:2px;
+}
+.menu-ks-quad .name{
+  font-size:10px;
+  text-transform:uppercase;
+  letter-spacing:1px;
+  font-weight:500;
+}
+
+/* Цветовые фоны квадрантов — тонкий accent, не кричащий */
+.menu-ks-quad.q-star     {background:rgba(212,168,75,.08)}
+.menu-ks-quad.q-star     .n{color:var(--gold2)}
+.menu-ks-quad.q-plowhorse{background:rgba(74,158,245,.08)}
+.menu-ks-quad.q-plowhorse .n{color:var(--blue)}
+.menu-ks-quad.q-puzzle   {background:rgba(155,89,182,.10)}
+.menu-ks-quad.q-puzzle   .n{color:var(--purple)}
+.menu-ks-quad.q-dog      {background:rgba(138,170,206,.05)}
+.menu-ks-quad.q-dog      .n{color:var(--text2)}
+
+/* Вне матрицы — 4 остальных класса мелкой строкой под матрицей */
+.menu-ks-outside{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:12px;
+  padding-top:10px;
+  border-top:1px solid var(--border);
+  font-size:10px;
+  color:var(--text3);
+}
+.menu-ks-outside-lbl{
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:1px;
+  font-size:9px;
+  align-self:center;
+  margin-right:4px;
+}
+.menu-ks-outside-chip{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:5px;
+  padding:3px 8px;
+  font-size:10px;
+  color:var(--text2);
+  cursor:pointer;
+  transition:border-color .15s;
+  display:inline-flex;
+  gap:4px;
+  align-items:center;
+}
+.menu-ks-outside-chip:hover{border-color:var(--border2);color:var(--text)}
+.menu-ks-outside-chip.active{border-color:var(--gold);color:var(--gold2)}
+.menu-ks-outside-chip b{font-weight:600}
+
+/* Правая колонка: action-панель */
+.menu-action{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:16px 18px;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  min-height:360px;
+}
+.menu-action-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.menu-action-ico{font-size:20px;line-height:1}
+.menu-action-name{
+  font-family:'Cormorant Garamond',serif;
+  font-size:22px;
+  font-weight:700;
+  line-height:1;
+}
+.menu-action-count{
+  font-size:11px;
+  color:var(--text2);
+  margin-left:auto;
+}
+.menu-action-sub{
+  font-size:11px;
+  color:var(--text2);
+  line-height:1.5;
+  border-left:2px solid var(--border);
+  padding-left:10px;
+}
+.menu-action-list-title{
+  font-size:9px;
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:1.2px;
+  font-weight:500;
+  margin-top:2px;
+}
+.menu-action-list{
+  display:flex;
+  flex-direction:column;
+  gap:7px;
+}
+.menu-action-item{
+  font-size:11px;
+  color:var(--text);
+  line-height:1.5;
+  padding-left:16px;
+  position:relative;
+}
+.menu-action-item::before{
+  content:'→';
+  position:absolute;
+  left:0;
+  top:0;
+  color:var(--gold);
+  font-weight:600;
+}
+.menu-action-dormant-breakdown{
+  margin-top:4px;
+  padding:10px 12px;
+  background:var(--bg2);
+  border-radius:6px;
+  font-size:11px;
+  color:var(--text2);
+  line-height:1.5;
+}
+.menu-action-dormant-breakdown b{color:var(--amber)}
+
+/* Клик на класс в breakdown-row тоже работает */
+.menu-class{cursor:pointer;transition:border-color .15s;}
+.menu-class:hover{border-color:var(--border2)}
+.menu-class.active{border-color:var(--gold)}
+
+/* Mobile: матрица и action друг под другом */
+@media (max-width: 900px) {
+  .menu-ks-wrap{grid-template-columns:1fr}
+  .menu-action{min-height:auto}
+}

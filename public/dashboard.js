@@ -2536,6 +2536,7 @@ const MENU_STATE = {
   raw: null,           // последний ответ API
   loading: false,      // идёт ли запрос
   loadedFor: null,     // ключ "restId|start|end" последней успешной загрузки
+  activeClass: 'star', // активный класс в KS-матрице/action-панели (5c)
   filters: {
     classes: new Set(),       // пустой = показываем всё
     groups: new Set(),
@@ -2624,14 +2625,17 @@ async function renderMenu() {
   html.push(renderRotationBanner(CAL_STATE.global.start, CAL_STATE.global.end));
   html.push(renderMenuKPIs(data.summary));
   html.push(renderClassesBreakdown(data.summary.ks_counts, data.summary.dormant_reasons));
+  html.push(renderKsMatrixAndAction(data.summary));
   html.push(
     '<div style="padding:30px 20px;text-align:center;color:var(--text3);font-size:11px;font-style:italic;' +
     'background:var(--card);border:1px dashed var(--border);border-radius:10px">' +
-      'KS-матрица (5c) и таблица блюд с фильтрами (5d) появятся в следующих деплоях. ' +
-      'KPI-ряд выше уже работает на реальных данных.' +
+      'Таблица блюд с фильтрами и детальная карточка блюда (5d) появится в следующем деплое.' +
     '</div>'
   );
   root.innerHTML = html.join('');
+
+  // Инициализация: активируем default-класс (star) в action-панели
+  setMenuActiveClass(MENU_STATE.activeClass || 'star');
 }
 
 // --- Banner о ротации меню 1 сентября 2025 --------------------------------
@@ -2719,7 +2723,8 @@ function renderClassesBreakdown(counts, dormantReasons) {
   const cells = CLASSES.map(c => {
     const n = counts[c.key] || 0;
     return (
-      '<div class="menu-class cls-' + c.key + '" title="' + escapeAttr(c.name) + '">' +
+      '<div class="menu-class cls-' + c.key + '" title="' + escapeAttr(c.name) + '" ' +
+           'onclick="setMenuActiveClass(\'' + c.key + '\')">' +
         '<div class="ico">' + c.ico + '</div>' +
         '<div class="n">' + n + '</div>' +
         '<div class="name">' + escapeHtml(c.name) + '</div>' +
@@ -2772,6 +2777,228 @@ function invalidateMenuCache() {
   const menuPanel = document.getElementById('p-menu');
   if (menuPanel && menuPanel.classList.contains('active')) {
     renderMenu();
+  }
+}
+
+// --- KS-матрица + Action-панель (Phase 5c) --------------------------------
+
+// Справочник классов с метаданными для action-панели.
+// Для каждого: иконка, имя, краткое описание, список рекомендаций.
+// Источник — канонический Kasavana-Smith 1982 + практика meneu-engineering-блогов.
+const MENU_CLASS_META = {
+  star: {
+    ico: '⭐',
+    name: 'Stars',
+    sub: 'Популярные и прибыльные. Ядро меню — именно они делают выручку и формируют восприятие бренда у гостей.',
+    actions: [
+      'Не менять рецептуру и размер порции без крайней нужды — стабильность главное',
+      'Располагать в верхней части меню / на видных местах (eye-tracking зоны)',
+      'Обучать персонал проактивно предлагать их как фирменные',
+      'При росте цен на ингредиенты — поднимать цену раньше, чем для других блюд',
+    ],
+  },
+  plowhorse: {
+    ico: '🐎',
+    name: 'Plowhorses',
+    sub: 'Популярные, но с низкой маржой. Гости их любят, но ваш бизнес на них не зарабатывает столько, сколько мог бы.',
+    actions: [
+      'Поднять цену на 5–10% — обычно проходит незаметно на лояльных блюдах',
+      'Проверить порцию — часто можно уменьшить на 10–15% без заметной реакции',
+      'Заменить 1 дорогой ингредиент на аналог подешевле (с сохранением вкуса)',
+      'Предлагать в паре с высокомаржинальным дополнением (соус, напиток, десерт)',
+    ],
+  },
+  puzzle: {
+    ico: '❓',
+    name: 'Puzzles',
+    sub: 'Высокомаржинальные, но не очень популярные. «Спрятанные алмазы» — при росте популярности дадут больше всего прибыли.',
+    actions: [
+      'Перенести в «eye-tracking» зону меню (верх правой колонки)',
+      'Добавить сенсорное описание: «хрустящий», «томлёный», «домашний»',
+      'Обучить персонал предлагать как рекомендацию шеф-повара',
+      'Задействовать в соцсетях / фото — возможно, проблема в узнаваемости',
+    ],
+  },
+  dog: {
+    ico: '🐶',
+    name: 'Dogs',
+    sub: 'Непопулярные и с низкой маржой. Кандидаты на удаление из меню — они забирают место, внимание и ингредиенты.',
+    actions: [
+      'Проверить: не портятся ли ингредиенты из-за низких продаж (риск списаний)',
+      'Рассмотреть замену на новое блюдо из свободных ингредиентов кухни',
+      'Если убирать — снимать вместе с запасом, в момент пересмотра меню',
+      'Перед удалением: не является ли блюдо «эмоциональным якорем» постоянных гостей',
+    ],
+  },
+  too_small: {
+    ico: '⚙',
+    name: 'Too small',
+    sub: 'В группе (dish_group) меньше 3-х KS-кандидатов. Матрица требует минимум 3 блюда для честного сравнения внутри группы, поэтому классификация вырождается.',
+    actions: [
+      'Это методологическое ограничение, а не проблема блюд',
+      'Пересмотреть: может стоит добавить блюд в эту группу, чтобы была конкуренция',
+      'Либо объединить группу с близкой (если группа искусственно дробится)',
+    ],
+  },
+  event: {
+    ico: '🎉',
+    name: 'Events',
+    sub: 'Временные блюда (промо, коллаборации, сезонные ивенты). Их нет смысла сравнивать с постоянным меню по KS — у них короткое окно и специальная ценовая стратегия.',
+    actions: [
+      'Ивенты анализируйте отдельно — по ROI кампании, а не по KS',
+      'Обращайте внимание на маржу ивентовых блюд в абсолюте — дают ли прибыль',
+      'Учитывайте halo-эффект: ивенты привлекают гостей и они заказывают обычное меню',
+    ],
+  },
+  new: {
+    ico: '🆕',
+    name: 'New',
+    sub: 'Блюдо появилось в данных меньше 30 дней назад. KS несправедлив: не набрано достаточно статистики, классификация может быть случайной.',
+    actions: [
+      'Наблюдайте ещё 30–60 дней до принятия решений',
+      'Следите за ростом доли продаж — если не растёт, подскажите персоналу',
+      'В начале жизни блюда проверьте фудкост — он часто выше нормы из-за отсутствия оптимизации',
+    ],
+  },
+  dormant: {
+    ico: '🔁',
+    name: 'Dormant',
+    sub: 'Блюдо 14+ дней не продаётся. Попало в период, но фактически выведено. Для каждого dormant backend определил причину: replaced / seasonal / retired.',
+    actions: [
+      'replaced — в той же группе появилось новое блюдо-замена, можно зачищать',
+      'seasonal — продавалось ±30 дней год назад, вернётся в сезон',
+      'retired — снятое без явной замены, вычистить из POS и меню-карты',
+      'Проверьте: нет ли dormant из-за отсутствия ингредиентов / отказа поставщика',
+    ],
+  },
+};
+
+function renderKsMatrixAndAction(summary) {
+  const counts = (summary && summary.ks_counts) || {};
+  return (
+    '<div class="menu-ks-wrap">' +
+      renderKsMatrix(counts) +
+      '<div id="menuActionPanel" class="menu-action"></div>' +
+    '</div>'
+  );
+}
+
+function renderKsMatrix(counts) {
+  // Квадранты располагаем так, чтобы Y↑ = прибыльность (вверху — высокая),
+  // X→ = популярность (справа — высокая). Канон Kasavana-Smith:
+  //   top-left    = Puzzle   (прибыльно, непопулярно)
+  //   top-right   = Star     (прибыльно, популярно)
+  //   bottom-left = Dog      (не прибыльно, не популярно)
+  //   bottom-right= Plowhorse(не прибыльно, популярно)
+  const quad = (cls, ico, name) =>
+    '<div class="menu-ks-quad q-' + cls + '" data-cls="' + cls + '" onclick="setMenuActiveClass(\'' + cls + '\')">' +
+      '<div class="ico">' + ico + '</div>' +
+      '<div class="n">' + (counts[cls] || 0) + '</div>' +
+      '<div class="name">' + name + '</div>' +
+    '</div>';
+
+  // Outside-матрицы: 4 класса, не укладывающиеся в 2×2
+  const outsideChip = (cls, ico, name) =>
+    '<span class="menu-ks-outside-chip" data-cls="' + cls + '" onclick="setMenuActiveClass(\'' + cls + '\')">' +
+      ico + ' <b>' + (counts[cls] || 0) + '</b> ' + escapeHtml(name) +
+    '</span>';
+
+  return (
+    '<div class="menu-ks-matrix">' +
+      '<div class="menu-ks-title">Kasavana-Smith — матрица меню</div>' +
+      '<div class="menu-ks-frame">' +
+        '<div class="menu-ks-y-axis">Прибыльность →</div>' +
+        '<div class="menu-ks-grid">' +
+          quad('puzzle',    '❓', 'Puzzle') +
+          quad('star',      '⭐', 'Star') +
+          quad('dog',       '🐶', 'Dog') +
+          quad('plowhorse', '🐎', 'Plowhorse') +
+        '</div>' +
+        '<div class="menu-ks-x-axis">Популярность →</div>' +
+      '</div>' +
+      '<div class="menu-ks-outside">' +
+        '<span class="menu-ks-outside-lbl">Вне матрицы:</span>' +
+        outsideChip('too_small', '⚙',  'too_small') +
+        outsideChip('event',     '🎉', 'event') +
+        outsideChip('new',       '🆕', 'new') +
+        outsideChip('dormant',   '🔁', 'dormant') +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function renderMenuAction(cls, summary) {
+  const meta = MENU_CLASS_META[cls];
+  if (!meta) return '<div style="color:var(--text3);font-size:11px">Класс не найден.</div>';
+  const counts = (summary && summary.ks_counts) || {};
+  const count = counts[cls] || 0;
+
+  const itemsHtml = meta.actions.map(a =>
+    '<div class="menu-action-item">' + escapeHtml(a) + '</div>'
+  ).join('');
+
+  // Для dormant добавляем разбивку replaced/seasonal/retired
+  let dormantBlock = '';
+  if (cls === 'dormant') {
+    const dr = (summary && summary.dormant_reasons) || {};
+    const r = dr.replaced || 0;
+    const s = dr.seasonal || 0;
+    const t = dr.retired || 0;
+    if (r + s + t > 0) {
+      dormantBlock =
+        '<div class="menu-action-dormant-breakdown">' +
+          '<b>Разбивка dormant по причинам:</b><br>' +
+          '• replaced (есть замена в группе): <b>' + r + '</b><br>' +
+          '• seasonal (был в том же периоде год назад): <b>' + s + '</b><br>' +
+          '• retired (снято без замены): <b>' + t + '</b>' +
+        '</div>';
+    }
+  }
+
+  return (
+    '<div class="menu-action-head">' +
+      '<div class="menu-action-ico">' + meta.ico + '</div>' +
+      '<div class="menu-action-name">' + escapeHtml(meta.name) + '</div>' +
+      '<div class="menu-action-count">' + count + ' блюд в классе</div>' +
+    '</div>' +
+    '<div class="menu-action-sub">' + escapeHtml(meta.sub) + '</div>' +
+    dormantBlock +
+    '<div class="menu-action-list-title">Что делать</div>' +
+    '<div class="menu-action-list">' + itemsHtml + '</div>'
+  );
+}
+
+/**
+ * Установить активный класс — синхронизирует:
+ *  - подсветку квадранта / chip'а
+ *  - содержимое action-панели справа
+ *  - подсветку соответствующего quadrant в breakdown-ряду (5b)
+ * В 5d сюда же добавим: применение фильтра к таблице блюд.
+ */
+function setMenuActiveClass(cls) {
+  if (!MENU_CLASS_META[cls]) return;
+  MENU_STATE.activeClass = cls;
+  trackUI('menu_class', { class: cls });
+
+  // Подсветка квадранта
+  document.querySelectorAll('.menu-ks-quad').forEach(el => {
+    el.classList.toggle('active', el.dataset.cls === cls);
+  });
+  // Подсветка chip'а вне матрицы
+  document.querySelectorAll('.menu-ks-outside-chip').forEach(el => {
+    el.classList.toggle('active', el.dataset.cls === cls);
+  });
+  // Подсветка класса в breakdown-ряду (из 5b)
+  document.querySelectorAll('.menu-class').forEach(el => {
+    // .menu-class имеет класс "cls-<name>", берём после "cls-"
+    const m = (el.className || '').match(/cls-([a-z_]+)/);
+    el.classList.toggle('active', m && m[1] === cls);
+  });
+
+  // Заполняем правую панель
+  const panel = document.getElementById('menuActionPanel');
+  if (panel && MENU_STATE.raw && MENU_STATE.raw.summary) {
+    panel.innerHTML = renderMenuAction(cls, MENU_STATE.raw.summary);
   }
 }
 
