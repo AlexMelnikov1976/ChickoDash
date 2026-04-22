@@ -138,6 +138,33 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-
 .score-g{font-size:12px;font-weight:600;text-align:center;margin-top:2px}
 .score-p{font-size:10px;color:var(--text2);text-align:center}
 .sbr-row{display:flex;align-items:center;gap:8px;font-size:10px}
+.rank-tbl{width:100%;border-collapse:collapse;font-size:11px;margin-top:8px}
+.rank-tbl th{text-align:left;color:var(--text3);font-weight:500;font-size:10px;padding:6px 8px;border-bottom:1px solid var(--border)}
+.rank-tbl td{padding:5px 8px;border-bottom:1px solid rgba(46,64,104,.3)}
+.rank-tbl tr:hover{background:rgba(212,168,75,.06)}
+.rank-tbl tr.rank-me{background:rgba(212,168,75,.12);font-weight:600}
+.rank-tbl .rank-n{color:var(--text3);font-size:10px;width:28px;text-align:center}
+.rank-tbl .rank-score{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;width:48px;text-align:center}
+.rank-tbl .rank-bar{width:60px}
+.rank-bar-fill{height:6px;border-radius:3px;transition:width .3s}
+.score-section{display:grid;grid-template-columns:170px 1fr;gap:12px}
+.score-left{display:flex;flex-direction:column;align-items:center;gap:6px}
+.score-right{max-height:300px;overflow-y:auto}
+.score-right::-webkit-scrollbar{width:4px}
+.score-right::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.overview-top{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px}
+.overview-top>*{min-height:0}
+.overview-top .card{margin:0;height:100%}
+.overview-top #forecastBox{display:grid}
+.overview-top #forecastBox .card{margin:0}
+.overview-top #scoreCard{overflow:hidden}
+.score-tip-wrap{position:relative;display:inline-block}
+.score-tip{cursor:help;color:var(--text3);font-size:10px;border-bottom:1px dashed var(--text3)}
+.score-tip:hover{color:var(--gold)}
+.score-tooltip{display:none;position:absolute;background:var(--card2);border:1px solid var(--border2);border-radius:10px;padding:12px 14px;font-size:10px;color:var(--text2);line-height:1.6;z-index:300;width:300px;box-shadow:0 8px 24px rgba(0,0,0,.5);right:0;top:24px}
+.score-tip-wrap:hover .score-tooltip{display:block}
+.sbr-group{font-size:9px;color:var(--text3);margin:6px 0 2px;text-transform:uppercase;letter-spacing:.5px}
+@media(max-width:900px){.overview-top{grid-template-columns:1fr}.score-section{grid-template-columns:1fr}.score-right{max-height:220px}}
 .sbr-lbl{color:var(--text2);flex:1}
 .sbr-t{flex:2;height:4px;background:var(--border);border-radius:2px;overflow:hidden}
 .sbr-f{height:100%;border-radius:2px;transition:width .8s}
@@ -438,7 +465,37 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 <!-- ══ OVERVIEW ══ -->
 <div class="panel active" id="p-overview">
 
-  <div id="forecastBox"></div>
+  <div class="overview-top">
+    <div id="forecastBox"></div>
+    <div class="card" id="scoreCard">
+      <div class="ctitle" style="display:flex;justify-content:space-between;align-items:center">\u{1F3C6} Рейтинг
+        <div class="score-tip-wrap"><span class="score-tip">Как считается?</span>
+          <div class="score-tooltip">
+            <b>Скор 0\u{2013}100 за выбранный период</b><br><br>
+            <b>\u{1F4C8} Рост (40%) \u{2014} vs прошлый год</b><br>
+            Выручка (20%) \u{2014} динамика к себе YoY<br>
+            Чеки (10%) \u{2014} трафик vs свой YoY<br>
+            Ср. чек (10%) \u{2014} чек vs свой YoY<br><br>
+            <b>\u{1F3E5} Здоровье (60%) \u{2014} абсолютные KPI</b><br>
+            Фудкост (25%) \u{2014} норма 18-21%, штраф выше<br>
+            Скидки (20%) \u{2014} штраф за высокие скидки<br>
+            Доставка (15%) \u{2014} оптимум ~20%<br><br>
+            <span style="color:var(--gold)">Пересчитывается при смене периода</span>
+          </div>
+        </div>
+      </div>
+      <div class="score-section">
+        <div class="score-left">
+          <div class="score-ring"><canvas id="scoreRing" width="144" height="144"></canvas><div class="score-ctr"><div class="score-n" id="scoreN">\u{2014}</div><div class="score-g" id="scoreG"></div></div></div>
+          <div id="scoreP" style="font-size:11px;color:var(--text2);text-align:center"></div>
+          <div id="scoreBr" style="width:100%"></div>
+        </div>
+        <div class="score-right">
+          <table class="rank-tbl" id="rankTable"><tbody id="rankBody"></tbody></table>
+        </div>
+      </div>
+    </div>
+  </div>
   <div id="alertsBox"></div>
   <div>
     <div>
@@ -459,6 +516,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
       </div>
     </div>
   </div>
+  
   <div class="card">
     <div class="ctitle">🔔 На что обратить внимание</div>
     <div id="insBox" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px"></div>
@@ -1564,6 +1622,7 @@ function renderAll() {
   renderForecast();
   renderKPIs();
   renderMiniTrend();
+  renderScore();
   renderInsights();
   renderAlerts();
   // Пересчитываем все вкладки при смене ресторана / «Вся сеть»
@@ -2152,92 +2211,138 @@ function setKPI(id,raw,fmt,unit,prevRaw,netBench,lb,benchLbl,barPct,barCls){
 }
 
 // ═══ SCORE ═══
+// ═══ Score v2 — Methodology 2.0 (22.04.2026) ═══
+// Performance (40%) + Efficiency (60%). All components capped 0-100.
+// See docs/SCORE_METHODOLOGY_v2.md for rationale.
+function _clamp(v){ return Math.max(0, Math.min(100, v)); }
+
+function _fcScore(fc) {
+  // Piecewise-linear: norm corridor 18-21%, progressive penalty above
+  if (fc <= 18) return 100;
+  if (fc <= 21) return _clamp(100 - (fc - 18) * 5);
+  if (fc <= 25) return _clamp(85 - (fc - 21) * 10);
+  return _clamp(45 - (fc - 25) * 15);
+}
+
+// YoY date helper: shift YYYY-MM-DD by -1 year
+function _yoyDate(d) {
+  return (parseInt(d.slice(0,4)) - 1) + d.slice(4);
+}
+
+function _calcRestScoreDetail(r2) {
+  var ts2 = r2.ts.filter(function(t){ return t.date>=S.globalStart && t.date<=S.globalEnd && t.revenue>0; });
+  if (!ts2.length) return null;
+  var rev = safeAvg(ts2,'revenue') || 0;
+  var fc  = safeAvg(ts2,'foodcost') || NET.foodcost;
+  var cnt = safeAvg(ts2,'checks') || 0;
+  var chk = safeAvg(ts2,'avgCheck') || 0;
+  var disc = safeAvg(ts2,'discount') || 0;
+  var dp  = safeAvg(ts2,'deliveryPct') || (rev>0 ? (safeAvg(ts2,'delivery')||0)/rev*100 : 0) || 0;
+
+  // --- Growth block (40%) — YoY comparison ---
+  // Base: same period last year. Fallback: 90-day median if <7 YoY days.
+  var yoyStart = _yoyDate(S.globalStart);
+  var yoyEnd = _yoyDate(S.globalEnd);
+  var tsYoy = r2.ts.filter(function(t){ return t.date>=yoyStart && t.date<=yoyEnd && t.revenue>0; });
+  var useYoy = tsYoy.length >= 7;
+  // Fallback: 90-day median for this restaurant
+  var ts90 = useYoy ? null : r2.ts.filter(function(t){
+    var d90 = new Date(); d90.setDate(d90.getDate()-90);
+    var d90s = d90.toISOString().slice(0,10);
+    return t.date >= d90s && t.revenue > 0;
+  });
+  var baseRev = useYoy ? (safeAvg(tsYoy,'revenue')||1) : (ts90 && ts90.length>=7 ? (safeAvg(ts90,'revenue')||1) : (NET.revenue||1));
+  var baseCnt = useYoy ? (safeAvg(tsYoy,'checks')||1) : (ts90 && ts90.length>=7 ? (safeAvg(ts90,'checks')||1) : (NET.checks||1));
+  var baseChk = useYoy ? (safeAvg(tsYoy,'avgCheck')||1) : (ts90 && ts90.length>=7 ? (safeAvg(ts90,'avgCheck')||1) : (NET.avgCheck||1));
+
+  // score = current/base * 80 → at base level = 80 (good), +25% = 100, -20% = 64
+  var sRev  = _clamp(rev / baseRev * 80);
+  var sCnt  = _clamp(cnt / baseCnt * 80);
+  var sChk  = _clamp(chk / baseChk * 80);
+
+  // --- Health block (60%) — absolute KPIs ---
+  var sFc   = _fcScore(fc);
+  var sDisc = _clamp(100 - disc * 5);
+  var sDel  = _clamp(100 - Math.abs(dp - 20) * 3);
+
+  var total = Math.round(
+    sRev * 0.20 + sCnt * 0.10 + sChk * 0.10 +
+    sFc * 0.25 + sDisc * 0.20 + sDel * 0.15
+  );
+  return {
+    score: _clamp(total),
+    growth: { rev: Math.round(sRev), cnt: Math.round(sCnt), chk: Math.round(sChk), yoy: useYoy },
+    health: { fc: Math.round(sFc), disc: Math.round(sDisc), del: Math.round(sDel) }
+  };
+}
+
+function _calcRestScore(r2) {
+  var d = _calcRestScoreDetail(r2);
+  return d ? d.score : 0;
+}
+
 function renderScore(){
-  // Функция сохранена для возможного возврата. Если DOM-элементов нет — выходим.
   if (!document.getElementById('scoreRing')) return;
-  // Recalculate score dynamically from selected period's data
-  const ts = getGlobalTs();
-  let score, dispRank, rankN;
-  if(ts.length>0) {
-    // Calc score from period ts for current restaurant
-    const rev=safeAvg(ts,'revenue')||0;
-    const fc=safeAvg(ts,'foodcost')||NET.foodcost;
-    const chk=safeAvg(ts,'avgCheck')||NET.avgCheck;
-    const cnt=safeAvg(ts,'checks')||NET.checks;
-    const disc=safeAvg(ts,'discount')||NET.discount;
-    const dp=safeAvg(ts,'deliveryPct')||(rev>0?safeAvg(ts,'delivery')/rev*100:0)||0;
-    score = Math.min(100,Math.round(
-      Math.min(100,rev/(TOP10.revenue||1)*100)*0.25+
-      Math.max(0,100-(fc-19)*5)*0.20+
-      Math.min(100,cnt/(NET.checks||1)*100)*0.15+
-      Math.min(100,chk/(NET.avgCheck||1)*100)*0.10+
-      Math.max(0,100-disc*4)*0.10+
-      Math.min(100,dp/30*100)*0.10+
-      Math.min(100,Math.max(0,((rev*(1-disc/100)*(1-fc/100)-rev*(1-disc/100)*0.40)/(rev*(1-disc/100)||1))*100))*0.10
-    ));
-    // Rank among all rests for same period
-    const allScores=RESTS.map(r2=>{
-      const ts2=r2.ts.filter(t=>t.date>=S.globalStart&&t.date<=S.globalEnd);
-      if(!ts2.length) return {name:r2.name,score:0};
-      const rev2=safeAvg(ts2,'revenue')||0;
-      const fc2=safeAvg(ts2,'foodcost')||NET.foodcost;
-      const cnt2=safeAvg(ts2,'checks')||NET.checks;
-      const chk2=safeAvg(ts2,'avgCheck')||NET.avgCheck;
-      const disc2=safeAvg(ts2,'discount')||NET.discount;
-      const dp2=safeAvg(ts2,'deliveryPct')||(rev2>0?(safeAvg(ts2,'delivery')||0)/rev2*100:0)||0;
-      return {name:r2.name,score:Math.min(100,Math.round(
-        Math.min(100,rev2/(TOP10.revenue||1)*100)*0.25+
-        Math.max(0,100-(fc2-19)*5)*0.20+
-        Math.min(100,cnt2/(NET.checks||1)*100)*0.15+
-        Math.min(100,chk2/(NET.avgCheck||1)*100)*0.10+
-        Math.max(0,100-disc2*4)*0.10+
-        Math.min(100,dp2/30*100)*0.10+0.10
-      ))};
-    }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score);
-    dispRank=(allScores.findIndex(x=>x.name===R.name)+1)||1;
-    rankN=allScores.length;
-  } else {
-    score = RESTAURANT_SCORE ? Math.round(+RESTAURANT_SCORE.score_total) : calcScore(R);
-    rankN = RESTAURANT_SCORE ? +RESTAURANT_SCORE.restaurants_in_rank : RESTS.filter(r=>r.revenue>0).length;
-    dispRank = RESTAURANT_SCORE ? +RESTAURANT_SCORE.rank_network : 1;
-  }
-  const g=gradeInfo(score);
-  document.getElementById('scoreN').textContent=score;
-  document.getElementById('scoreN').style.color=g.c;
-  document.getElementById('scoreG').textContent=g.lbl;
-  document.getElementById('scoreG').style.color=g.c;
-  document.getElementById('chipScore').textContent=score;
-  document.getElementById('chipGrade').textContent=g.lbl;
-  document.getElementById('chipGrade').style.color=g.c;
-  document.getElementById('scoreP').textContent=\`#\${dispRank} из \${rankN} точек\`;
-  document.getElementById('rankBadge').textContent=dispRank;
-  document.getElementById('rankTot').textContent=rankN;
-  document.getElementById('rankPct').textContent='Топ '+Math.round(dispRank/rankN*100)+'% сети';
-  const c=document.getElementById('scoreRing').getContext('2d');
+  var allScores = RESTS.map(function(r2,idx){
+    var d = _calcRestScoreDetail(r2);
+    return { name:r2.name, city:r2.city||'', score:d?d.score:0, detail:d, idx:idx };
+  }).filter(function(x){ return x.score>0; }).sort(function(a,b){ return b.score-a.score; });
+
+  var myName = R ? R.name : '';
+  var myEntry = allScores.find(function(x){ return x.name===myName; });
+  var score = myEntry ? myEntry.score : 0;
+  var detail = myEntry ? myEntry.detail : null;
+  var dispRank = myEntry ? (allScores.indexOf(myEntry)+1) : 1;
+  var rankN = allScores.length;
+  var g = gradeInfo(score);
+
+  document.getElementById('scoreN').textContent = score;
+  document.getElementById('scoreN').style.color = g.c;
+  document.getElementById('scoreG').textContent = g.lbl;
+  document.getElementById('scoreG').style.color = g.c;
+  document.getElementById('scoreP').textContent = '#' + dispRank + ' из ' + rankN;
+
+  var c = document.getElementById('scoreRing').getContext('2d');
   c.clearRect(0,0,144,144);
-  const cx=72,cy=72,rad=60,lw=9;
-  c.beginPath();c.arc(cx,cy,rad,-Math.PI*.8,Math.PI*.8);c.strokeStyle='#2E4068';c.lineWidth=lw;c.lineCap='round';c.stroke();
-  const end=-Math.PI*.8+(score/100)*Math.PI*1.6;
-  const grd=c.createLinearGradient(0,0,144,144);grd.addColorStop(0,g.c);grd.addColorStop(1,'#F0C96A');
-  c.beginPath();c.arc(cx,cy,rad,-Math.PI*.8,end);c.strokeStyle=grd;c.lineWidth=lw;c.lineCap='round';c.stroke();
-  const ck=RESTAURANT_SCORE;
-  const fc=R.foodcost!==null?R.foodcost:NET.foodcost;
-  const dp=R.revenue>0?R.delivery/R.revenue*100:0;
-  const parts=ck?[
-    {l:'Выручка',s:Math.round(+ck.score_revenue*.25),m:25,c:'#D4A84B'},
-    {l:'Фудкост',s:Math.round(+ck.score_foodcost*.20),m:20,c:'#2ECC71'},
-    {l:'Трафик',s:Math.round(+ck.score_traffic*.15),m:15,c:'#4A9EF5'},
-    {l:'Ср. чек',s:Math.round(+ck.score_avg_check*.10),m:10,c:'#9B59B6'},
-    {l:'Скидки',s:Math.round(+ck.score_discount*.10),m:10,c:'#F39C12'},
-    {l:'Доставка',s:Math.round(+ck.score_delivery*.10),m:10,c:'#1ABC9C'},
-  ]:[
-    {l:'Выручка',s:Math.round(Math.min(100,R.revenue/TOP10.revenue*100)*.30),m:30,c:'#D4A84B'},
-    {l:'Фудкост',s:Math.round(Math.max(0,100-(fc-19)*4)*.25),m:25,c:'#2ECC71'},
-    {l:'Скидки',s:Math.round(Math.max(0,100-R.discount*5)*.20),m:20,c:'#4A9EF5'},
-    {l:'Доставка',s:Math.round(Math.min(100,dp/30*100)*.15),m:15,c:'#1ABC9C'},
-    {l:'Ср. чек',s:Math.round(Math.min(100,R.avgCheck/1800*100)*.10),m:10,c:'#9B59B6'},
-  ];
-  document.getElementById('scoreBr').innerHTML=parts.map(p=>\`<div class="sbr-row"><span class="sbr-lbl">\${p.l}</span><div class="sbr-t"><div class="sbr-f" style="width:\${p.m?p.s/p.m*100:0}%;background:\${p.c}"></div></div><span class="sbr-v" style="color:var(--text2);font-size:10px">\${p.m?Math.round(p.s/p.m*100):0}%</span></div>\`).join('');
+  var cx=72,cy=72,rad=60,lw=9;
+  c.beginPath(); c.arc(cx,cy,rad,-Math.PI*.8,Math.PI*.8); c.strokeStyle='#2E4068'; c.lineWidth=lw; c.lineCap='round'; c.stroke();
+  var endA = -Math.PI*.8 + (score/100)*Math.PI*1.6;
+  var grd = c.createLinearGradient(0,0,144,144); grd.addColorStop(0,g.c); grd.addColorStop(1,'#F0C96A');
+  c.beginPath(); c.arc(cx,cy,rad,-Math.PI*.8,endA); c.strokeStyle=grd; c.lineWidth=lw; c.lineCap='round'; c.stroke();
+
+  var brHtml = '';
+  if (detail) {
+    var yoyLabel = detail.growth.yoy ? ' (vs прошлый год)' : ' (vs 90д)';
+    brHtml += '<div class="sbr-group">Рост' + yoyLabel + ' (40%)</div>';
+    [{l:'Выручка',v:detail.growth.rev,c:'#D4A84B'},
+     {l:'Чеки',v:detail.growth.cnt,c:'#4A9EF5'},
+     {l:'Ср. чек',v:detail.growth.chk,c:'#9B59B6'}].forEach(function(p){
+      brHtml += '<div class="sbr-row"><span class="sbr-lbl">'+p.l+'</span><div class="sbr-t"><div class="sbr-f" style="width:'+p.v+'%;background:'+p.c+'"></div></div><span class="sbr-v" style="color:var(--text2);font-size:10px">'+p.v+'%</span></div>';
+    });
+    brHtml += '<div class="sbr-group">Здоровье (60%)</div>';
+    [{l:'Фудкост',v:detail.health.fc,c:'#2ECC71'},
+     {l:'Скидки',v:detail.health.disc,c:'#F39C12'},
+     {l:'Доставка',v:detail.health.del,c:'#E67E22'}].forEach(function(p){
+      brHtml += '<div class="sbr-row"><span class="sbr-lbl">'+p.l+'</span><div class="sbr-t"><div class="sbr-f" style="width:'+p.v+'%;background:'+p.c+'"></div></div><span class="sbr-v" style="color:var(--text2);font-size:10px">'+p.v+'%</span></div>';
+    });
+  }
+  document.getElementById('scoreBr').innerHTML = brHtml;
+
+  var tbody = document.getElementById('rankBody');
+  if (!tbody) return;
+  var html = '<tr><th class="rank-n">#</th><th>Ресторан</th><th class="rank-score">Балл</th><th class="rank-bar"></th></tr>';
+  allScores.forEach(function(item, i){
+    var gi = gradeInfo(item.score);
+    var isMe = item.name === myName;
+    var label = item.city || item.name;
+    html += '<tr class="' + (isMe?'rank-me':'') + '" style="cursor:pointer" onclick="selectRest('+item.idx+')">'
+      + '<td class="rank-n">' + (i+1) + '</td>'
+      + '<td style="color:' + (isMe?'var(--gold)':'var(--text)') + '">' + label + '</td>'
+      + '<td class="rank-score" style="color:'+gi.c+'">' + item.score + '</td>'
+      + '<td class="rank-bar"><div class="rank-bar-fill" style="width:'+item.score+'%;background:'+gi.c+'"></div></td>'
+      + '</tr>';
+  });
+  tbody.innerHTML = html;
 }
 
 
