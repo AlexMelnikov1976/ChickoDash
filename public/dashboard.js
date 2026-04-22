@@ -2536,6 +2536,7 @@ const MENU_STATE = {
   raw: null,           // последний ответ API
   loading: false,      // идёт ли запрос
   loadedFor: null,     // ключ "restId|start|end" последней успешной загрузки
+  filtered: [],        // отфильтрованные блюда для таблицы (5d)
   activeClass: 'star', // активный класс в KS-матрице/action-панели (5c)
   filters: {
     classes: new Set(),       // пустой = показываем всё
@@ -2626,16 +2627,13 @@ async function renderMenu() {
   html.push(renderMenuKPIs(data.summary));
   html.push(renderClassesBreakdown(data.summary.ks_counts, data.summary.dormant_reasons));
   html.push(renderKsMatrixAndAction(data.summary));
-  html.push(
-    '<div style="padding:30px 20px;text-align:center;color:var(--text3);font-size:11px;font-style:italic;' +
-    'background:var(--card);border:1px dashed var(--border);border-radius:10px">' +
-      'Таблица блюд с фильтрами и детальная карточка блюда (5d) появится в следующем деплое.' +
-    '</div>'
-  );
+  html.push(renderMenuTable());
   root.innerHTML = html.join('');
 
   // Инициализация: активируем default-класс (star) в action-панели
   setMenuActiveClass(MENU_STATE.activeClass || 'star');
+  // И сразу применяем фильтры к таблице
+  applyMenuFilters();
 }
 
 // --- Banner о ротации меню 1 сентября 2025 --------------------------------
@@ -2772,6 +2770,7 @@ function escapeAttr(s) {
 function invalidateMenuCache() {
   MENU_STATE.raw = null;
   MENU_STATE.loadedFor = null;
+  MENU_STATE.filtered = [];
   MENU_STATE.selectedDishCode = null;
   // Если сейчас открыта вкладка меню — перерисуем
   const menuPanel = document.getElementById('p-menu');
@@ -3000,6 +2999,432 @@ function setMenuActiveClass(cls) {
   if (panel && MENU_STATE.raw && MENU_STATE.raw.summary) {
     panel.innerHTML = renderMenuAction(cls, MENU_STATE.raw.summary);
   }
+
+  // 5d: применяем фильтр к таблице блюд
+  MENU_STATE.filters.classes.clear();
+  MENU_STATE.filters.classes.add(cls);
+  if (typeof applyMenuFilters === 'function') applyMenuFilters();
+}
+
+
+// --- Таблица блюд с фильтрами и drawer (Phase 5d) -------------------------
+
+function renderMenuTable() {
+  return (
+    '<div>' +
+      renderMenuToolbar() +
+      '<div class="menu-table-wrap">' +
+        '<div class="menu-table-scroll">' +
+          '<table class="menu-table" id="menuTable">' +
+            renderMenuTableHeader() +
+            '<tbody id="menuTableBody"></tbody>' +
+          '</table>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="menu-drawer-overlay" id="menuDrawerOverlay">' +
+      '<div class="menu-drawer">' +
+        '<div class="menu-drawer-head">' +
+          '<div>' +
+            '<div style="font-family:Cormorant Garamond,serif;font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px" id="drawerDishName">—</div>' +
+            '<div style="font-size:11px;color:var(--text2)" id="drawerDishMeta">—</div>' +
+          '</div>' +
+          '<div class="menu-drawer-close" onclick="closeMenuDrawer()">×</div>' +
+        '</div>' +
+        '<div class="menu-drawer-body" id="drawerBody">—</div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function renderMenuToolbar() {
+  const f = MENU_STATE.filters;
+  const activeClassChip = (f.classes.size === 1)
+    ? '<div class="menu-active-filter-chip">' +
+        MENU_CLASS_META[Array.from(f.classes)[0]]?.ico + ' ' +
+        Array.from(f.classes)[0] +
+        ' <span class="close" onclick="clearMenuClassFilter()">×</span>' +
+      '</div>'
+    : '';
+  
+  return (
+    '<div class="menu-toolbar">' +
+      '<input class="menu-toolbar-search" id="menuSearch" placeholder="🔍 Поиск по названию блюда..." ' +
+             'value="' + escapeAttr(f.search) + '" oninput="onMenuSearchInput(this.value)">' +
+      '<select class="menu-toolbar-group" id="menuGroupFilter" onchange="onMenuGroupFilter(this.value)">' +
+        '<option value="">Все группы</option>' +
+      '</select>' +
+      '<label class="menu-toolbar-check">' +
+        '<input type="checkbox" ' + (f.withNetworkOnly ? 'checked' : '') + ' onchange="onMenuNetworkFilter(this.checked)">' +
+        'Только с сетевым сравнением' +
+      '</label>' +
+      '<button class="menu-toolbar-reset" onclick="resetMenuFilters()">Сброс</button>' +
+      activeClassChip +
+      '<div class="menu-toolbar-count" id="menuCount">—</div>' +
+    '</div>'
+  );
+}
+
+function renderMenuTableHeader() {
+  const sortIcon = (col) => {
+    if (MENU_STATE.sortBy !== col) return '';
+    return '<span class="sort-ind">' + (MENU_STATE.sortDir === 'asc' ? '↑' : '↓') + '</span>';
+  };
+  const thClass = (col) => MENU_STATE.sortBy === col ? ' class="sorted"' : '';
+
+  return (
+    '<thead>' +
+      '<tr>' +
+        '<th' + thClass('rank') + ' onclick="sortMenuTable(\'rank\')">#' + sortIcon('rank') + '</th>' +
+        '<th' + thClass('dish_name') + ' onclick="sortMenuTable(\'dish_name\')">Блюдо' + sortIcon('dish_name') + '</th>' +
+        '<th' + thClass('dish_group') + ' onclick="sortMenuTable(\'dish_group\')">Группа' + sortIcon('dish_group') + '</th>' +
+        '<th' + thClass('ks_class') + ' onclick="sortMenuTable(\'ks_class\')">Класс' + sortIcon('ks_class') + '</th>' +
+        '<th' + thClass('total_qty') + ' onclick="sortMenuTable(\'total_qty\')">Количество' + sortIcon('total_qty') + '</th>' +
+        '<th' + thClass('total_revenue') + ' onclick="sortMenuTable(\'total_revenue\')">Выручка' + sortIcon('total_revenue') + '</th>' +
+        '<th' + thClass('margin_per_unit') + ' onclick="sortMenuTable(\'margin_per_unit\')">Маржа ₽/шт' + sortIcon('margin_per_unit') + '</th>' +
+        '<th' + thClass('mix_pct_group') + ' onclick="sortMenuTable(\'mix_pct_group\')">Доля %' + sortIcon('mix_pct_group') + '</th>' +
+        '<th>vs сеть</th>' +
+      '</tr>' +
+    '</thead>'
+  );
+}
+
+function applyMenuFilters() {
+  if (!MENU_STATE.raw || !MENU_STATE.raw.dishes) {
+    MENU_STATE.filtered = [];
+    renderMenuTableBody();
+    updateMenuCount();
+    return;
+  }
+
+  const f = MENU_STATE.filters;
+  let dishes = MENU_STATE.raw.dishes.filter(d => {
+    // Фильтр по классам
+    if (f.classes.size > 0 && !f.classes.has(d.ks_class)) return false;
+    // Фильтр по группам
+    if (f.groups.size > 0 && !f.groups.has(d.dish_group)) return false;
+    // Фильтр по dormant причинам
+    if (f.dormantReasons.size > 0 && d.ks_class === 'dormant' && !f.dormantReasons.has(d.dormant_reason)) return false;
+    // Поиск по имени
+    if (f.search && !d.dish_name.toLowerCase().includes(f.search.toLowerCase())) return false;
+    // Только с сетевым сравнением
+    if (f.withNetworkOnly && (!d.network || d.network.n_rests < 3)) return false;
+    return true;
+  });
+
+  // Сортировка
+  dishes = sortDishes(dishes, MENU_STATE.sortBy, MENU_STATE.sortDir);
+  MENU_STATE.filtered = dishes;
+  
+  renderMenuTableBody();
+  updateMenuCount();
+  populateGroupFilter();
+}
+
+function sortDishes(dishes, sortBy, dir) {
+  const mult = dir === 'asc' ? 1 : -1;
+  return dishes.slice().sort((a, b) => {
+    let va = a[sortBy], vb = b[sortBy];
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return -1 * mult;
+    if (va > vb) return 1 * mult;
+    return 0;
+  });
+}
+
+function renderMenuTableBody() {
+  const tbody = document.getElementById('menuTableBody');
+  if (!tbody) return;
+  
+  if (MENU_STATE.filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="menu-table-empty">Нет блюд, соответствующих фильтрам</td></tr>';
+    return;
+  }
+  
+  const rows = MENU_STATE.filtered.map((dish, idx) => {
+    // Null-safe значения
+    const revenue = dish.total_revenue || 0;
+    const qty = dish.total_qty || 0;
+    const margin = dish.margin_per_unit || 0;
+    const mixPct = dish.mix_pct_group || 0;
+    
+    const revStr = (revenue >= 1e6)
+      ? (revenue / 1e6).toFixed(1) + 'M'
+      : Math.round(revenue).toLocaleString('ru');
+    
+    // vs сеть
+    let vsNetStr = '—';
+    let vsNetClass = 'menu-vs-net-na';
+    if (dish.network && dish.network.n_rests >= 3) {
+      const myMargin = margin;
+      const netMargin = dish.network.margin_per_unit_median || 0;
+      if (netMargin > 0) {
+        const diff = ((myMargin - netMargin) / netMargin * 100);
+        if (diff > 5) {
+          vsNetStr = '+' + diff.toFixed(0) + '%';
+          vsNetClass = 'menu-vs-net-up';
+        } else if (diff < -5) {
+          vsNetStr = diff.toFixed(0) + '%';
+          vsNetClass = 'menu-vs-net-down';
+        } else {
+          vsNetStr = '~' + diff.toFixed(0) + '%';
+        }
+      }
+    }
+
+    return (
+      '<tr onclick="openMenuDrawer(\'' + escapeAttr(dish.dish_code || '') + '\')">' +
+        '<td class="rank-cell">' + (idx + 1) + '</td>' +
+        '<td class="name-cell" title="' + escapeAttr(dish.dish_name || '') + '">' + escapeHtml(dish.dish_name || '—') + '</td>' +
+        '<td class="group-cell" title="' + escapeAttr(dish.dish_group || '') + '">' + escapeHtml(dish.dish_group || '—') + '</td>' +
+        '<td><span class="menu-cls-chip cls-' + (dish.ks_class || 'unknown') + '">' + (dish.ks_class || '—') + '</span></td>' +
+        '<td style="text-align:right">' + Math.round(qty).toLocaleString('ru') + '</td>' +
+        '<td style="text-align:right">' + revStr + ' ₽</td>' +
+        '<td style="text-align:right">' + Math.round(margin) + ' ₽</td>' +
+        '<td style="text-align:right">' + mixPct.toFixed(1) + '%</td>' +
+        '<td class="' + vsNetClass + '" style="text-align:center">' + vsNetStr + '</td>' +
+      '</tr>'
+    );
+  }).join('');
+  
+  tbody.innerHTML = rows;
+}
+
+function updateMenuCount() {
+  const el = document.getElementById('menuCount');
+  if (el) {
+    const total = MENU_STATE.raw ? MENU_STATE.raw.dishes.length : 0;
+    el.textContent = MENU_STATE.filtered.length + ' из ' + total + ' блюд';
+  }
+}
+
+function populateGroupFilter() {
+  const sel = document.getElementById('menuGroupFilter');
+  if (!sel || !MENU_STATE.raw) return;
+  
+  const groups = new Set();
+  MENU_STATE.raw.dishes.forEach(d => groups.add(d.dish_group));
+  const sortedGroups = Array.from(groups).sort();
+  
+  const currentValue = sel.value;
+  sel.innerHTML = '<option value="">Все группы</option>' +
+    sortedGroups.map(g => '<option value="' + escapeAttr(g) + '">' + escapeHtml(g) + '</option>').join('');
+  sel.value = currentValue;
+}
+
+// --- События фильтрации и сортировки ---
+
+function onMenuSearchInput(value) {
+  MENU_STATE.filters.search = value;
+  applyMenuFilters();
+}
+
+function onMenuGroupFilter(value) {
+  MENU_STATE.filters.groups.clear();
+  if (value) MENU_STATE.filters.groups.add(value);
+  applyMenuFilters();
+}
+
+function onMenuNetworkFilter(checked) {
+  MENU_STATE.filters.withNetworkOnly = checked;
+  applyMenuFilters();
+}
+
+function resetMenuFilters() {
+  MENU_STATE.filters.classes.clear();
+  MENU_STATE.filters.groups.clear();
+  MENU_STATE.filters.dormantReasons.clear();
+  MENU_STATE.filters.search = '';
+  MENU_STATE.filters.withNetworkOnly = false;
+  
+  // Обновляем UI
+  const search = document.getElementById('menuSearch');
+  if (search) search.value = '';
+  const groupSel = document.getElementById('menuGroupFilter');
+  if (groupSel) groupSel.value = '';
+  const netCb = document.querySelector('.menu-toolbar-check input');
+  if (netCb) netCb.checked = false;
+  
+  applyMenuFilters();
+}
+
+function clearMenuClassFilter() {
+  MENU_STATE.filters.classes.clear();
+  applyMenuFilters();
+}
+
+function sortMenuTable(col) {
+  if (MENU_STATE.sortBy === col) {
+    MENU_STATE.sortDir = MENU_STATE.sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    MENU_STATE.sortBy = col;
+    MENU_STATE.sortDir = 'desc'; // обычно хотят видеть топ сначала
+  }
+  applyMenuFilters(); // пересортировать и перерисовать
+}
+
+// --- Drawer с деталями блюда ---
+
+function openMenuDrawer(dishCode) {
+  if (!MENU_STATE.raw) return;
+  const dish = MENU_STATE.raw.dishes.find(d => d.dish_code === dishCode);
+  if (!dish) return;
+  
+  MENU_STATE.selectedDishCode = dishCode;
+  renderMenuDrawer(dish);
+  
+  const overlay = document.getElementById('menuDrawerOverlay');
+  if (overlay) {
+    overlay.classList.add('open');
+    // Обработчик Escape
+    document.addEventListener('keydown', handleDrawerEscape);
+  }
+  trackUI('menu_dish_detail', { dish_code: dishCode, dish_class: dish.ks_class });
+}
+
+function closeMenuDrawer() {
+  const overlay = document.getElementById('menuDrawerOverlay');
+  if (overlay) overlay.classList.remove('open');
+  MENU_STATE.selectedDishCode = null;
+  document.removeEventListener('keydown', handleDrawerEscape);
+}
+
+function handleDrawerEscape(e) {
+  if (e.key === 'Escape') closeMenuDrawer();
+}
+
+function renderMenuDrawer(dish) {
+  const nameEl = document.getElementById('drawerDishName');
+  const metaEl = document.getElementById('drawerDishMeta');
+  const bodyEl = document.getElementById('drawerBody');
+  
+  if (nameEl) nameEl.textContent = dish.dish_name;
+  if (metaEl) {
+    const chip = '<span class="menu-cls-chip cls-' + dish.ks_class + '">' + dish.ks_class + '</span>';
+    metaEl.innerHTML = escapeHtml(dish.dish_group) + ' • ' + chip;
+  }
+  if (bodyEl) bodyEl.innerHTML = renderDrawerBody(dish);
+}
+
+function renderDrawerBody(dish) {
+  const meta = MENU_CLASS_META[dish.ks_class];
+  let sections = [];
+  
+  // KPI-сетка — null-safe значения
+  const revenue = dish.total_revenue || 0;
+  const qty = dish.total_qty || 0;
+  const margin = dish.margin_per_unit || 0;
+  
+  const revM = (revenue / 1e6).toFixed(2);
+  const qtyStr = Math.round(qty).toLocaleString('ru');
+  const marginPer = Math.round(margin);
+  const avgPrice = qty > 0 ? Math.round(revenue / qty) : 0;
+  
+  sections.push(
+    '<div class="menu-drawer-section">' +
+      '<h4>Финансовые показатели</h4>' +
+      '<div class="menu-drawer-kpi-grid">' +
+        '<div class="menu-drawer-kpi-card"><div class="lbl">Выручка</div><div class="val">' + revM + ' M</div><div class="sub">₽ за период</div></div>' +
+        '<div class="menu-drawer-kpi-card"><div class="lbl">Количество</div><div class="val">' + qtyStr + '</div><div class="sub">заказов</div></div>' +
+        '<div class="menu-drawer-kpi-card"><div class="lbl">Маржа ₽/шт</div><div class="val">' + marginPer + '</div><div class="sub">₽ за порцию</div></div>' +
+        '<div class="menu-drawer-kpi-card"><div class="lbl">Средняя цена</div><div class="val">' + avgPrice + '</div><div class="sub">₽ за блюдо</div></div>' +
+      '</div>' +
+    '</div>'
+  );
+  
+  // История блюда
+  if (dish.first_sold_at || dish.last_sold_at) {
+    const props = [
+      ['Первая продажа', dish.first_sold_at || '—'],
+      ['Последняя продажа', dish.last_sold_at || '—'],
+      ['Дней в меню', dish.days_in_menu || '—'],
+      ['С последней продажи', dish.days_since_last_sale ? dish.days_since_last_sale + ' дн.' : '—'],
+    ];
+    if (dish.foodcost_pct) props.push(['Фудкост', dish.foodcost_pct.toFixed(1) + '%']);
+    
+    sections.push(
+      '<div class="menu-drawer-section">' +
+        '<h4>История блюда</h4>' +
+        '<div class="menu-drawer-props">' +
+          '<table>' + props.map(([k, v]) => '<tr><td>' + escapeHtml(k) + '</td><td>' + escapeHtml(v) + '</td></tr>').join('') + '</table>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+  
+  // Сравнение с сетью
+  if (dish.network && dish.network.n_rests >= 3) {
+    const net = dish.network;
+    const myMargin = margin;
+    const netMargin = net.margin_per_unit_median || 0;
+    const marginDiff = netMargin > 0 ? ((myMargin - netMargin) / netMargin * 100) : 0;
+    
+    const myMix = dish.mix_pct_group || 0;
+    const netMix = net.mix_pct_group_median || 0;
+    const mixDiff = netMix > 0 ? ((myMix - netMix) / netMix * 100) : 0;
+    
+    sections.push(
+      '<div class="menu-drawer-section">' +
+        '<h4>Сравнение с сетью</h4>' +
+        '<div class="menu-drawer-net">' +
+          'Медиана по <b>' + net.n_rests + ' ресторанам</b> сети:<br><br>' +
+          'Маржа ₽/шт: <b>' + Math.round(netMargin) + ' ₽</b> ' +
+          '<span class="' + (marginDiff > 5 ? 'net-better' : marginDiff < -5 ? 'net-worse' : '') + '">' +
+            (marginDiff > 0 ? '+' : '') + marginDiff.toFixed(0) + '% у вас' +
+          '</span><br>' +
+          'Доля в группе: <b>' + netMix.toFixed(1) + '%</b> ' +
+          '<span class="' + (mixDiff > 5 ? 'net-better' : mixDiff < -5 ? 'net-worse' : '') + '">' +
+            (mixDiff > 0 ? '+' : '') + mixDiff.toFixed(0) + '% у вас' +
+          '</span>' +
+        '</div>' +
+      '</div>'
+    );
+  } else {
+    sections.push(
+      '<div class="menu-drawer-section">' +
+        '<h4>Сравнение с сетью</h4>' +
+        '<div class="menu-drawer-net">' +
+          '<div class="net-unavail">Недостаточно данных для сравнения (нужно ≥3 ресторана с этим блюдом)</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+  
+  // Dormant детали
+  if (dish.ks_class === 'dormant' && dish.dormant_reason) {
+    const reasonText = {
+      replaced: 'В той же группе появилось блюдо-замена. Можно зачищать из POS.',
+      seasonal: 'Продавалось в аналогичный период год назад. Скорее всего вернётся в сезон.',
+      retired: 'Снято без явной замены. Требует ручной проверки и очистки меню.'
+    }[dish.dormant_reason] || 'Неизвестная причина';
+    
+    sections.push(
+      '<div class="menu-drawer-section">' +
+        '<h4>Dormant статус</h4>' +
+        '<div class="menu-drawer-dormant">' +
+          '<b>Причина:</b> ' + dish.dormant_reason + '<br>' +
+          reasonText +
+        '</div>' +
+      '</div>'
+    );
+  }
+  
+  // Рекомендации по классу
+  if (meta) {
+    sections.push(
+      '<div class="menu-drawer-section">' +
+        '<h4>Рекомендации (' + meta.name + ')</h4>' +
+        '<div class="menu-drawer-actions">' +
+          '<div class="menu-action-list">' +
+            meta.actions.map(a => '<div class="menu-action-item">' + escapeHtml(a) + '</div>').join('') +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+  
+  return sections.join('');
 }
 
 init();

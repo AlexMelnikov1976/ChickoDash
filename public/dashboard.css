@@ -734,3 +734,410 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
   .menu-ks-wrap{grid-template-columns:1fr}
   .menu-action{min-height:auto}
 }
+
+/* ═══ MENU: таблица блюд + фильтры + drawer (Phase 2.8.2 / 5d) ═══════════ */
+
+/* Toolbar с фильтрами — горизонтальная полоса над таблицей */
+.menu-toolbar{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:12px 16px;
+  margin-bottom:12px;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.menu-toolbar-search{
+  flex:1;
+  min-width:200px;
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:6px 10px;
+  font-size:11px;
+  color:var(--text);
+  outline:none;
+  transition:border-color .15s;
+}
+.menu-toolbar-search:focus{border-color:var(--gold)}
+.menu-toolbar-search::placeholder{color:var(--text3)}
+.menu-toolbar-group{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:6px 8px;
+  font-size:11px;
+  color:var(--text);
+  min-width:120px;
+  cursor:pointer;
+}
+.menu-toolbar-check{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:11px;
+  color:var(--text2);
+  cursor:pointer;
+  user-select:none;
+}
+.menu-toolbar-check input{accent-color:var(--gold);cursor:pointer}
+.menu-toolbar-reset{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:6px 10px;
+  font-size:11px;
+  color:var(--text2);
+  cursor:pointer;
+  transition:all .15s;
+}
+.menu-toolbar-reset:hover{border-color:var(--border2);color:var(--text)}
+.menu-toolbar-count{
+  font-size:11px;
+  color:var(--text3);
+  margin-left:auto;
+  white-space:nowrap;
+}
+
+/* Активный фильтр-чип (показывается если class-фильтр применён из матрицы) */
+.menu-active-filter-chip{
+  background:var(--gold);
+  color:#000;
+  border-radius:5px;
+  padding:4px 8px;
+  font-size:10px;
+  font-weight:600;
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+}
+.menu-active-filter-chip .close{
+  cursor:pointer;
+  font-weight:700;
+  opacity:.7;
+}
+.menu-active-filter-chip .close:hover{opacity:1}
+
+/* Таблица блюд */
+.menu-table-wrap{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  overflow:hidden;
+  margin-bottom:14px;
+}
+.menu-table-scroll{
+  max-height:640px;
+  overflow:auto;
+}
+.menu-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:11px;
+}
+.menu-table thead{
+  position:sticky;
+  top:0;
+  background:var(--bg2);
+  border-bottom:1px solid var(--border);
+  z-index:1;
+}
+.menu-table th{
+  padding:10px 8px;
+  text-align:left;
+  font-weight:600;
+  color:var(--text2);
+  text-transform:uppercase;
+  letter-spacing:.5px;
+  cursor:pointer;
+  transition:background-color .15s;
+  position:relative;
+  white-space:nowrap;
+}
+.menu-table th:hover{background:var(--bg)}
+.menu-table th.sorted{color:var(--gold)}
+.menu-table th .sort-ind{
+  margin-left:4px;
+  font-size:9px;
+  opacity:.6;
+}
+.menu-table tbody tr{
+  border-bottom:1px solid var(--border);
+  cursor:pointer;
+  transition:background-color .15s;
+}
+.menu-table tbody tr:hover{background:var(--bg2)}
+.menu-table tbody tr:last-child{border-bottom:none}
+.menu-table td{
+  padding:12px 8px;
+  color:var(--text);
+  vertical-align:middle;
+}
+.menu-table .rank-cell{
+  color:var(--text3);
+  text-align:center;
+  font-family:'Cormorant Garamond',serif;
+  font-weight:700;
+  width:40px;
+}
+.menu-table .name-cell{
+  font-weight:500;
+  max-width:200px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.menu-table .group-cell{
+  color:var(--text2);
+  font-size:10px;
+  max-width:100px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+/* Chip'ы классов в таблице — та же цветовая схема что в breakdown */
+.menu-cls-chip{
+  display:inline-block;
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:4px;
+  padding:2px 6px;
+  font-size:9px;
+  font-weight:600;
+  text-transform:uppercase;
+  letter-spacing:.5px;
+}
+.menu-cls-chip.cls-star     {color:var(--gold2);border-color:var(--gold)}
+.menu-cls-chip.cls-plowhorse{color:var(--blue);border-color:var(--blue)}
+.menu-cls-chip.cls-puzzle   {color:var(--purple);border-color:var(--purple)}
+.menu-cls-chip.cls-dog      {color:var(--text2);border-color:var(--text3)}
+.menu-cls-chip.cls-dormant  {color:var(--amber);border-color:var(--amber)}
+.menu-cls-chip.cls-new      {color:var(--teal);border-color:var(--teal)}
+.menu-cls-chip.cls-event    {color:var(--text2);border-color:var(--text3)}
+.menu-cls-chip.cls-too_small{color:var(--text3);border-color:var(--text3)}
+
+/* vs сеть — цветовая кодировка */
+.menu-vs-net-up  {color:var(--green);font-weight:600}
+.menu-vs-net-down{color:var(--red);font-weight:600}
+.menu-vs-net-na  {color:var(--text3)}
+
+/* Empty state для таблицы */
+.menu-table-empty{
+  text-align:center;
+  padding:40px 20px;
+  color:var(--text3);
+  font-size:11px;
+  font-style:italic;
+}
+
+/* Drawer справа — выезжает поверх экрана */
+.menu-drawer-overlay{
+  position:fixed;
+  top:0;
+  left:0;
+  right:0;
+  bottom:0;
+  background:rgba(0,0,0,.4);
+  z-index:1000;
+  opacity:0;
+  visibility:hidden;
+  transition:all .3s ease;
+}
+.menu-drawer-overlay.open{
+  opacity:1;
+  visibility:visible;
+}
+.menu-drawer{
+  position:fixed;
+  top:0;
+  right:0;
+  bottom:0;
+  width:480px;
+  max-width:90vw;
+  background:var(--card);
+  border-left:1px solid var(--border);
+  transform:translateX(100%);
+  transition:transform .3s ease;
+  display:flex;
+  flex-direction:column;
+  box-shadow:-4px 0 20px rgba(0,0,0,.15);
+}
+.menu-drawer-overlay.open .menu-drawer{
+  transform:translateX(0);
+}
+.menu-drawer-head{
+  padding:20px 24px;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:16px;
+}
+.menu-drawer-close{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:6px;
+  width:32px;
+  height:32px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  transition:all .15s;
+  font-size:14px;
+  color:var(--text2);
+  flex-shrink:0;
+}
+.menu-drawer-close:hover{
+  border-color:var(--border2);
+  color:var(--text);
+}
+.menu-drawer-body{
+  flex:1;
+  overflow:auto;
+  padding:20px 24px;
+}
+.menu-drawer-section{
+  margin-bottom:20px;
+}
+.menu-drawer-section:last-child{
+  margin-bottom:0;
+}
+.menu-drawer-section h4{
+  font-size:9px;
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:1.2px;
+  font-weight:500;
+  margin:0 0 8px 0;
+}
+
+/* KPI-сетка в drawer */
+.menu-drawer-kpi-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  margin-bottom:16px;
+}
+.menu-drawer-kpi-card{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:12px;
+  text-align:center;
+}
+.menu-drawer-kpi-card .lbl{
+  font-size:9px;
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:1px;
+  margin-bottom:4px;
+}
+.menu-drawer-kpi-card .val{
+  font-family:'Cormorant Garamond',serif;
+  font-size:20px;
+  font-weight:700;
+  line-height:1.1;
+  color:var(--text);
+}
+.menu-drawer-kpi-card .sub{
+  font-size:10px;
+  color:var(--text2);
+  margin-top:2px;
+}
+
+/* Properties table в drawer */
+.menu-drawer-props{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:12px;
+}
+.menu-drawer-props table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:11px;
+}
+.menu-drawer-props td{
+  padding:6px 0;
+  border-bottom:1px solid var(--border);
+  vertical-align:top;
+}
+.menu-drawer-props td:first-child{
+  color:var(--text3);
+  padding-right:12px;
+  width:40%;
+}
+.menu-drawer-props td:last-child{
+  color:var(--text);
+  font-weight:500;
+}
+.menu-drawer-props tr:last-child td{
+  border-bottom:none;
+}
+
+/* Действия в drawer */
+.menu-drawer-actions{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:12px;
+}
+.menu-drawer-actions .menu-action-list{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.menu-drawer-actions .menu-action-item{
+  font-size:11px;
+  color:var(--text);
+  line-height:1.4;
+  padding-left:12px;
+  position:relative;
+}
+.menu-drawer-actions .menu-action-item::before{
+  content:'→';
+  position:absolute;
+  left:0;
+  top:0;
+  color:var(--gold);
+  font-weight:600;
+}
+
+/* Блок dormant в drawer */
+.menu-drawer-dormant{
+  background:rgba(243,156,18,.08);
+  border:1px solid rgba(243,156,18,.25);
+  border-radius:8px;
+  padding:12px;
+  font-size:11px;
+  line-height:1.4;
+  color:var(--text);
+}
+.menu-drawer-dormant b{color:var(--amber)}
+
+/* Сравнение с сетью в drawer */
+.menu-drawer-net{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:12px;
+  font-size:11px;
+  line-height:1.4;
+}
+.menu-drawer-net .net-unavail{
+  color:var(--text3);
+  font-style:italic;
+}
+.menu-drawer-net .net-better{color:var(--green)}
+.menu-drawer-net .net-worse {color:var(--red)}
+
+/* Mobile: drawer полная ширина */
+@media (max-width: 700px) {
+  .menu-drawer{width:100vw;max-width:none}
+  .menu-table-scroll{max-height:400px}
+  .menu-drawer-kpi-grid{grid-template-columns:1fr}
+}
