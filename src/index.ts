@@ -37,6 +37,7 @@ export interface Env {
   RESEND_API_KEY: string;
   USERS: KVNamespace;
   MAGIC_LINKS: KVNamespace;
+  ASSETS: Fetcher; // Phase 2.8: Workers Static Assets binding (public/)
   ANTHROPIC_API_KEY?: string;
   FEEDBACK_WEBHOOK?: string; // n8n webhook URL for feedback → Notion + Telegram
 }
@@ -177,6 +178,13 @@ export default {
 
     // --- Frontend (dashboard HTML) ---
 
+    // Защита: прямой доступ к /dashboard.html обошёл бы security headers
+    // (Cache-Control: no-store, Referrer-Policy, будущий CSP). С run_worker_first=true
+    // запрос всё равно приходит сюда, поэтому редиректим на /, где сработает handler.
+    if (url.pathname === '/dashboard.html' && request.method === 'GET') {
+      return Response.redirect(new URL('/', url).toString(), 301);
+    }
+
     if ((url.pathname === '/' || url.pathname === '/index.html') && request.method === 'GET') {
       return new Response(DASHBOARD_HTML, {
         status: 200,
@@ -295,6 +303,15 @@ export default {
         );
       } catch (_e) { /* fail-silent */ }
       return new Response(null, { status: 204 });
+    }
+
+    // --- Static asset fallthrough (Phase 2.8) ---
+    // С run_worker_first=true все GET-запросы приходят в Worker. Всё, что не было
+    // распознано выше, — это либо реальный статический файл из public/ (CSS, JS,
+    // в будущем favicon и т.п.), либо 404. Просим ASSETS попробовать — если
+    // файла нет, ASSETS сам вернёт 404 (через not_found_handling по умолчанию).
+    if (request.method === 'GET') {
+      return env.ASSETS.fetch(request);
     }
 
     console.log(`[404] No route for ${request.method} ${url.pathname}`);
