@@ -22,6 +22,14 @@ import { handleCspReport } from './csp_report';
 import { handleAiInsight } from './ai_insight';
 import { handleMenuAnalysis } from './menu_analysis';
 import {
+  handleStaffList,
+  handleStaffDetail,
+  handleStaffGroups,
+  handleStaffPerformance,
+  handleStaffManagers,
+  handleStaffLosses,
+} from './staff';
+import {
   requireJwtSecret,
   rateLimitOrResponse,
   RATE_LIMIT_FEEDBACK,
@@ -263,6 +271,38 @@ export default {
     // --- Menu Analysis (Phase 2.7) ---
     if (url.pathname === "/api/menu-analysis" && request.method === "GET") {
       const _r = await handleMenuAnalysis(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+
+    // --- Staff Analysis (Phase 2.9) ---
+    if (url.pathname === "/api/staff-list" && request.method === "GET") {
+      const _r = await handleStaffList(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+    if (url.pathname === "/api/staff-detail" && request.method === "GET") {
+      const _r = await handleStaffDetail(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+    if (url.pathname === "/api/staff-groups" && request.method === "GET") {
+      const _r = await handleStaffGroups(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+    if (url.pathname === "/api/staff-performance" && request.method === "GET") {
+      const _r = await handleStaffPerformance(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+    if (url.pathname === "/api/staff-managers" && request.method === "GET") {
+      const _r = await handleStaffManagers(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+    if (url.pathname === "/api/staff-losses" && request.method === "GET") {
+      const _r = await handleStaffLosses(request, env);
       _logReq(request, env, ctx, _r, _t0);
       return _r;
     }
