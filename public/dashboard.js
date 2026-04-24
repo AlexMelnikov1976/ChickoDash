@@ -863,6 +863,7 @@ function renderAll() {
   renderKPIs();
   renderMiniTrend();
   renderScore();
+  renderRankTableFull();
   renderInsights();
   renderAlerts();
   // Пересчитываем все вкладки при смене ресторана / «Вся сеть»
@@ -1585,6 +1586,119 @@ function renderScore(){
       + '</tr>';
   });
   tbody.innerHTML = html;
+}
+
+// ═══ FULL RANK TABLE (Phase 2.9.4) ═══
+// Сводная таблица ресторанов с сортировкой и подсветкой лучших показателей.
+// Динамически обновляется при смене ресторана, периода, режима «Вся сеть».
+
+const RANK_FULL_STATE = { sortCol: 'revenue', sortDir: 'desc' };
+
+const RANK_FULL_COLS = [
+  { key: 'revenue',  label: 'Выручка',    agg: 'sum', fmt: v => fmtR(v), better: 'high' },
+  { key: 'avgCheck', label: 'Ср.чек',     agg: 'avg', fmt: v => Math.round(v).toLocaleString('ru') + '\u00A0₽', better: 'high' },
+  { key: 'checks',   label: 'Чеки',       agg: 'sum', fmt: v => Math.round(v).toLocaleString('ru'), better: 'high' },
+  { key: 'foodcost', label: 'Фудкост%',    agg: 'avg', fmt: v => v !== null ? v.toFixed(1) : '—', better: 'low' },
+  { key: 'discount', label: 'Скидка%',     agg: 'avg', fmt: v => v !== null ? v.toFixed(1) : '—', better: 'low' },
+  { key: 'delivery', label: 'Доставка%',   agg: 'avg', fmt: v => v !== null ? v.toFixed(1) : '—', better: 'high' },
+];
+
+function renderRankTableFull() {
+  const thead = document.getElementById('rankFullHead');
+  const tbody = document.getElementById('rankFullBody');
+  if (!thead || !tbody) return;
+
+  const st = CAL_STATE && CAL_STATE.global;
+  if (!st || !st.start || !st.end) return;
+
+  // Агрегируем метрики по каждому ресторану за выбранный период
+  const rows = RESTS.map(function(r, idx) {
+    const ts = getTsRange(r, st.start, st.end);
+    if (!ts.length) return null;
+    const totalRev = ts.reduce(function(s, t) { return s + t.revenue; }, 0);
+    const totalChecks = ts.reduce(function(s, t) { return s + t.checks; }, 0);
+    const avgChk = safeAvg(ts, 'avgCheck');
+    const fc = safeAvg(ts, 'foodcost');
+    const disc = safeAvg(ts, 'discount');
+    const del = safeAvg(ts, 'deliveryPct');
+    return {
+      idx: idx,
+      name: r.name,
+      city: r.city || r.name,
+      revenue: totalRev,
+      avgCheck: avgChk || 0,
+      checks: totalChecks,
+      foodcost: fc,
+      discount: disc,
+      delivery: del,
+    };
+  }).filter(function(r) { return r !== null && r.revenue > 0; });
+
+  // Сортировка
+  var sc = RANK_FULL_STATE.sortCol;
+  var sd = RANK_FULL_STATE.sortDir;
+  rows.sort(function(a, b) {
+    var va = a[sc], vb = b[sc];
+    if (va === null) va = -Infinity;
+    if (vb === null) vb = -Infinity;
+    return sd === 'desc' ? vb - va : va - vb;
+  });
+
+  // Определяем лучшие И худшие значения по каждой метрике
+  var best = {}, worst = {};
+  RANK_FULL_COLS.forEach(function(col) {
+    var vals = rows.map(function(r) { return r[col.key]; }).filter(function(v) { return v !== null && v > 0; });
+    if (vals.length < 2) return;
+    if (col.better === 'low') {
+      best[col.key] = Math.min.apply(null, vals);
+      worst[col.key] = Math.max.apply(null, vals);
+    } else {
+      best[col.key] = Math.max.apply(null, vals);
+      worst[col.key] = Math.min.apply(null, vals);
+    }
+  });
+
+  // Заголовок
+  var hHtml = '<tr><th>#</th><th>Ресторан</th>';
+  RANK_FULL_COLS.forEach(function(col) {
+    var isSorted = sc === col.key;
+    var arrow = isSorted ? (sd === 'desc' ? '▼' : '▲') : '';
+    hHtml += '<th class="' + (isSorted ? 'rft-sorted' : '') + '" onclick="sortRankFull(\'' + col.key + '\')">'
+      + col.label + (arrow ? '<span class="rft-arrow">' + arrow + '</span>' : '') + '</th>';
+  });
+  hHtml += '</tr>';
+  thead.innerHTML = hHtml;
+
+  // Тело
+  var myName = R ? R.name : '';
+  var bHtml = '';
+  rows.forEach(function(row, i) {
+    var isMe = row.name === myName;
+    bHtml += '<tr class="' + (isMe ? 'rft-me' : '') + '" style="cursor:pointer" onclick="selectRest(' + row.idx + ')">';
+    bHtml += '<td>' + (i + 1) + '</td>';
+    bHtml += '<td>' + row.city + '</td>';
+    RANK_FULL_COLS.forEach(function(col) {
+      var v = row[col.key];
+      var cls = '';
+      if (best[col.key] !== undefined && v === best[col.key] && v > 0) cls = 'rft-best';
+      else if (worst[col.key] !== undefined && v === worst[col.key] && v > 0) cls = 'rft-worst';
+      bHtml += '<td class="' + cls + '">' + col.fmt(v) + '</td>';
+    });
+    bHtml += '</tr>';
+  });
+  tbody.innerHTML = bHtml;
+}
+
+function sortRankFull(colKey) {
+  if (RANK_FULL_STATE.sortCol === colKey) {
+    RANK_FULL_STATE.sortDir = RANK_FULL_STATE.sortDir === 'desc' ? 'asc' : 'desc';
+  } else {
+    RANK_FULL_STATE.sortCol = colKey;
+    // Для "low is better" метрик дефолтная сортировка — ascending
+    var col = RANK_FULL_COLS.find(function(c) { return c.key === colKey; });
+    RANK_FULL_STATE.sortDir = (col && col.better === 'low') ? 'asc' : 'desc';
+  }
+  renderRankTableFull();
 }
 
 
