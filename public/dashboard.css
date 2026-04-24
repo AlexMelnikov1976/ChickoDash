@@ -1141,3 +1141,793 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
   .menu-table-scroll{max-height:400px}
   .menu-drawer-kpi-grid{grid-template-columns:1fr}
 }
+
+/* ═══ STAFF: Phase 2.9.2 — раздел «Персонал», 6 блоков ════════════════════ */
+
+/* Mock-баннер (показывается, пока meta.mock=true) */
+.staff-mock-banner{
+  background:rgba(243,156,18,.08);
+  border:1px solid var(--amber);
+  border-radius:8px;
+  padding:10px 14px;
+  font-size:11px;
+  color:var(--text);
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:12px;
+}
+.staff-mock-banner .icon{font-size:14px;flex-shrink:0}
+.staff-mock-banner b{color:var(--amber)}
+
+/* Payroll validity warning */
+.staff-payroll-warning{
+  background:rgba(74,158,245,.05);
+  border:1px solid var(--blue);
+  border-radius:8px;
+  padding:8px 12px;
+  font-size:10px;
+  color:var(--text2);
+  margin-bottom:12px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+/* Блок 1 — 5 KPI (переиспользуем шаблон menu-kpi, но с другим префиксом
+   чтобы не конфликтовать если будем править их стили независимо) */
+.staff-kpi-row{
+  display:grid;
+  grid-template-columns:repeat(5, 1fr);
+  gap:10px;
+  margin-bottom:12px;
+}
+.staff-kpi{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px 14px 12px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.staff-kpi .lbl{
+  font-size:9px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:1.2px;font-weight:500;
+}
+.staff-kpi .val{
+  font-family:'Cormorant Garamond',serif;
+  font-size:26px;font-weight:700;line-height:1.1;color:var(--text);
+}
+.staff-kpi .sub{font-size:10px;color:var(--text2);margin-top:auto}
+.staff-kpi.accent-gold   .val{color:var(--gold2)}
+.staff-kpi.accent-amber  .val{color:var(--amber)}
+.staff-kpi.accent-green  .val{color:var(--green)}
+.staff-kpi.accent-red    .val{color:var(--red)}
+.staff-kpi.accent-blue   .val{color:var(--blue)}
+
+/* Заголовок секции */
+.staff-section-title{
+  font-family:'Cormorant Garamond',serif;
+  font-size:18px;
+  color:var(--gold);
+  margin:20px 0 10px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.staff-section-title .hint{
+  font-family:'Inter',sans-serif;
+  font-size:10px;
+  color:var(--text3);
+  text-transform:none;
+  letter-spacing:0;
+  font-weight:400;
+  margin-left:auto;
+}
+
+/* Блок 3 — 5 карточек групп (Кухня/Зал/Бар/Клининг/Менеджмент) */
+.staff-groups-row{
+  display:grid;
+  grid-template-columns:repeat(5, 1fr);
+  gap:10px;
+  margin-bottom:12px;
+}
+.staff-group-card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.staff-group-card .group-title{
+  font-size:11px;
+  color:var(--text);
+  text-transform:uppercase;
+  letter-spacing:1px;
+  font-weight:600;
+  margin-bottom:4px;
+}
+.staff-group-card.g-kitchen    .group-title{color:var(--amber)}
+.staff-group-card.g-hall       .group-title{color:var(--blue)}
+.staff-group-card.g-bar        .group-title{color:var(--purple)}
+.staff-group-card.g-cleaning   .group-title{color:var(--teal)}
+.staff-group-card.g-management .group-title{color:var(--gold2)}
+.staff-group-card .row{
+  display:flex;
+  justify-content:space-between;
+  font-size:10px;
+  color:var(--text2);
+}
+.staff-group-card .row .lbl{color:var(--text3)}
+.staff-group-card .row .v{color:var(--text);font-weight:500}
+
+/* Scatter placeholder */
+.staff-scatter{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px;
+  margin-bottom:14px;
+}
+.staff-scatter-title{
+  font-size:9px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:1.2px;margin-bottom:10px;font-weight:500;
+}
+.staff-scatter-viz{
+  min-height:180px;
+  background:var(--bg2);
+  border-radius:6px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:var(--text3);
+  font-size:11px;
+}
+.staff-scatter-viz .corr-val{
+  font-family:'Cormorant Garamond',serif;
+  font-size:32px;
+  color:var(--gold2);
+  font-weight:700;
+  margin-right:10px;
+}
+
+/* Блок 4 — KS-матрица производительности (переиспользуем menu-ks-* стили
+   через класс .staff-ks-wrap, применяя те же правила) */
+.staff-ks-wrap{
+  display:grid;
+  grid-template-columns:minmax(360px, 1fr) minmax(300px, 1fr);
+  gap:14px;
+  margin-bottom:14px;
+}
+.staff-ks-matrix{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:16px;
+  display:flex;
+  flex-direction:column;
+}
+.staff-ks-title{
+  font-size:9px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:1.2px;font-weight:500;margin-bottom:14px;
+}
+.staff-ks-frame{
+  display:grid;
+  grid-template-columns:20px 1fr;
+  grid-template-rows:1fr 20px;
+  gap:6px;flex:1;min-height:260px;
+}
+.staff-ks-y-axis{
+  writing-mode:vertical-rl;transform:rotate(180deg);
+  font-size:9px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:1.5px;font-weight:500;
+  display:flex;align-items:center;justify-content:center;
+}
+.staff-ks-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;
+  gap:4px;border:1px solid var(--border2);border-radius:8px;
+  padding:4px;background:var(--bg2);
+}
+.staff-ks-x-axis{
+  grid-column:2;grid-row:2;
+  font-size:9px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:1.5px;font-weight:500;
+  display:flex;justify-content:center;align-items:center;
+}
+.staff-ks-quad{
+  border-radius:6px;padding:14px 10px;
+  display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:4px;
+  transition:all .15s ease;border:2px solid transparent;
+  position:relative;cursor:default;
+}
+.staff-ks-quad .ico{font-size:22px;line-height:1}
+.staff-ks-quad .n{
+  font-family:'Cormorant Garamond',serif;
+  font-size:28px;font-weight:700;line-height:1;margin-top:2px;
+}
+.staff-ks-quad .name{
+  font-size:10px;text-transform:uppercase;
+  letter-spacing:1px;font-weight:500;
+}
+.staff-ks-quad.q-star     {background:rgba(212,168,75,.08)}
+.staff-ks-quad.q-star     .n{color:var(--gold2)}
+.staff-ks-quad.q-plowhorse{background:rgba(74,158,245,.08)}
+.staff-ks-quad.q-plowhorse .n{color:var(--blue)}
+.staff-ks-quad.q-puzzle   {background:rgba(155,89,182,.10)}
+.staff-ks-quad.q-puzzle   .n{color:var(--purple)}
+.staff-ks-quad.q-dog      {background:rgba(138,170,206,.05)}
+.staff-ks-quad.q-dog      .n{color:var(--text2)}
+.staff-ks-quad .names{
+  font-size:9px;color:var(--text2);
+  margin-top:6px;line-height:1.35;
+  max-height:36px;overflow:hidden;
+  text-align:center;
+}
+
+/* Shifts list (bad/good) */
+.staff-shifts-panel{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px;
+}
+.staff-shifts-title{
+  font-size:9px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:1.2px;margin-bottom:10px;font-weight:500;
+}
+.staff-shifts-section{margin-bottom:14px}
+.staff-shifts-section:last-child{margin-bottom:0}
+.staff-shifts-section-lbl{
+  font-size:10px;color:var(--text2);
+  margin-bottom:6px;font-weight:500;
+}
+.staff-shifts-section-lbl.good{color:var(--green)}
+.staff-shifts-section-lbl.bad{color:var(--red)}
+.staff-shift-row{
+  display:grid;
+  grid-template-columns:80px 1fr 60px;
+  gap:8px;
+  padding:6px 0;
+  border-bottom:1px dashed var(--border);
+  font-size:11px;
+  align-items:center;
+}
+.staff-shift-row:last-child{border-bottom:none}
+.staff-shift-row .date{color:var(--text2);font-family:'Inter',sans-serif}
+.staff-shift-row .info{color:var(--text);font-size:10px}
+.staff-shift-row .info .manager{color:var(--text2)}
+.staff-shift-row .metric{text-align:right;font-weight:600}
+.staff-shift-row .metric.pos{color:var(--green)}
+.staff-shift-row .metric.neg{color:var(--red)}
+
+/* Блок 2 + Блок 5 общая таблица (employees + managers) */
+.staff-table-wrap{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  overflow:hidden;
+  margin-bottom:14px;
+}
+.staff-table-scroll{max-height:520px;overflow:auto}
+.staff-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:11px;
+}
+.staff-table thead{
+  position:sticky;top:0;background:var(--bg2);
+  border-bottom:1px solid var(--border);z-index:1;
+}
+.staff-table th{
+  padding:10px 8px;text-align:left;
+  font-weight:600;color:var(--text2);
+  text-transform:uppercase;letter-spacing:.5px;
+  white-space:nowrap;font-size:10px;
+}
+.staff-table tbody tr{
+  border-bottom:1px solid var(--border);
+  cursor:pointer;transition:background-color .15s;
+}
+.staff-table tbody tr:hover{background:var(--bg2)}
+.staff-table tbody tr:last-child{border-bottom:none}
+.staff-table td{
+  padding:10px 8px;color:var(--text);
+  vertical-align:middle;
+}
+.staff-table .name-cell{font-weight:500}
+.staff-table .small{color:var(--text3);font-size:10px}
+.staff-table .num{text-align:right;font-family:'Inter',sans-serif;font-variant-numeric:tabular-nums}
+
+/* Статус-бейджи сотрудника */
+.staff-status-badge{
+  display:inline-block;
+  padding:2px 7px;
+  border-radius:4px;
+  font-size:9px;
+  text-transform:uppercase;
+  letter-spacing:.5px;
+  font-weight:600;
+  white-space:nowrap;
+}
+.staff-status-badge.st-core       {background:rgba(212,168,75,.15);color:var(--gold2)}
+.staff-status-badge.st-regular    {background:rgba(138,170,206,.10);color:var(--text2)}
+.staff-status-badge.st-new        {background:rgba(26,188,156,.15);color:var(--teal)}
+.staff-status-badge.st-occasional {background:rgba(74,158,245,.10);color:var(--blue)}
+.staff-status-badge.st-dormant    {background:rgba(243,156,18,.15);color:var(--amber)}
+
+/* Менеджер: классификация */
+.mgr-class-badge{
+  display:inline-block;
+  padding:2px 7px;
+  border-radius:4px;
+  font-size:9px;
+  text-transform:uppercase;
+  letter-spacing:.5px;
+  font-weight:600;
+}
+.mgr-class-badge.c-top{background:rgba(46,204,113,.15);color:var(--green)}
+.mgr-class-badge.c-reliable{background:rgba(138,170,206,.10);color:var(--text2)}
+.mgr-class-badge.c-concerning{background:rgba(243,156,18,.15);color:var(--amber)}
+.mgr-class-badge.c-problem{background:rgba(231,76,60,.15);color:var(--red)}
+.mgr-class-badge.c-insufficient_data{background:rgba(74,158,245,.08);color:var(--text3)}
+.mgr-class-badge.c-no_manager{background:rgba(231,76,60,.15);color:var(--red)}
+
+/* Блок 6 — потери */
+.staff-losses-kpi-row{
+  display:grid;
+  grid-template-columns:repeat(3, 1fr);
+  gap:10px;
+  margin-bottom:12px;
+}
+.staff-losses-alerts{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px;
+  margin-bottom:12px;
+}
+.staff-losses-alert{
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  padding:8px;
+  border-radius:6px;
+  margin-bottom:6px;
+  background:var(--bg2);
+  font-size:11px;
+  color:var(--text);
+}
+.staff-losses-alert:last-child{margin-bottom:0}
+.staff-losses-alert.sev-red{border-left:3px solid var(--red)}
+.staff-losses-alert.sev-yellow{border-left:3px solid var(--amber)}
+
+.staff-losses-breakdown{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px;
+  margin-bottom:12px;
+}
+.staff-losses-breakdown .bar-row{
+  display:grid;
+  grid-template-columns:160px 1fr 80px;
+  gap:10px;
+  align-items:center;
+  padding:6px 0;
+  font-size:11px;
+}
+.staff-losses-breakdown .bar-row .lbl{color:var(--text);font-size:11px}
+.staff-losses-breakdown .bar-row .bar-wrap{
+  background:var(--bg2);
+  border-radius:4px;
+  height:14px;
+  overflow:hidden;
+  position:relative;
+}
+.staff-losses-breakdown .bar-row .bar-fill{
+  height:100%;
+  background:linear-gradient(90deg, var(--amber), var(--red));
+  border-radius:4px;
+}
+.staff-losses-breakdown .bar-row .v{
+  text-align:right;
+  font-weight:600;
+  color:var(--text);
+  font-variant-numeric:tabular-nums;
+}
+
+.staff-losses-dow{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px;
+  margin-bottom:12px;
+}
+.staff-losses-dow-grid{
+  display:grid;
+  grid-template-columns:repeat(7, 1fr);
+  gap:8px;
+  margin-top:10px;
+}
+.staff-losses-dow-cell{
+  text-align:center;
+  padding:10px 4px;
+  background:var(--bg2);
+  border-radius:6px;
+  font-size:10px;
+}
+.staff-losses-dow-cell .day{
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:.5px;
+  margin-bottom:4px;
+}
+.staff-losses-dow-cell .v{
+  font-family:'Cormorant Garamond',serif;
+  font-size:16px;
+  font-weight:700;
+  color:var(--text);
+  line-height:1;
+}
+.staff-losses-dow-cell .pct{
+  color:var(--text2);
+  font-size:9px;
+  margin-top:3px;
+}
+.staff-losses-dow-cell.high .v{color:var(--red)}
+.staff-losses-dow-cell.low .v{color:var(--green)}
+
+/* Staff drawer (для Block 2 и Block 5) — переиспользуем menu-drawer стили
+   через добавление .staff-drawer-overlay с теми же правилами */
+.staff-drawer-overlay{
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  background:rgba(0,0,0,.4);z-index:1000;
+  opacity:0;visibility:hidden;
+  transition:all .3s ease;
+}
+.staff-drawer-overlay.open{opacity:1;visibility:visible}
+.staff-drawer{
+  position:fixed;top:0;right:0;bottom:0;
+  width:480px;max-width:90vw;
+  background:var(--card);
+  border-left:1px solid var(--border);
+  transform:translateX(100%);
+  transition:transform .3s ease;
+  display:flex;flex-direction:column;
+  box-shadow:-4px 0 20px rgba(0,0,0,.15);
+}
+.staff-drawer-overlay.open .staff-drawer{transform:translateX(0)}
+.staff-drawer-head{
+  padding:20px 24px;border-bottom:1px solid var(--border);
+  display:flex;justify-content:space-between;
+  align-items:flex-start;gap:16px;
+}
+.staff-drawer-name{
+  font-family:'Cormorant Garamond',serif;
+  font-size:22px;color:var(--text);
+  font-weight:700;line-height:1.2;
+}
+.staff-drawer-sub{
+  font-size:11px;color:var(--text2);
+  margin-top:4px;
+}
+.staff-drawer-close{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:6px;width:32px;height:32px;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:all .15s;
+  font-size:14px;color:var(--text2);flex-shrink:0;
+}
+.staff-drawer-close:hover{border-color:var(--border2);color:var(--text)}
+.staff-drawer-body{flex:1;overflow:auto;padding:20px 24px}
+.staff-drawer-kpi-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  margin-bottom:16px;
+}
+.staff-drawer-kpi{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:12px;
+}
+.staff-drawer-kpi .lbl{
+  font-size:9px;color:var(--text3);
+  text-transform:uppercase;letter-spacing:1px;
+  margin-bottom:4px;
+}
+.staff-drawer-kpi .val{
+  font-family:'Cormorant Garamond',serif;
+  font-size:22px;font-weight:700;color:var(--text);
+  line-height:1;
+}
+
+/* Mobile */
+@media (max-width: 900px) {
+  .staff-kpi-row{grid-template-columns:repeat(2, 1fr)}
+  .staff-groups-row{grid-template-columns:repeat(2, 1fr)}
+  .staff-ks-wrap{grid-template-columns:1fr}
+  .staff-losses-kpi-row{grid-template-columns:1fr}
+  .staff-losses-dow-grid{grid-template-columns:repeat(4, 1fr)}
+  .staff-drawer-kpi-grid{grid-template-columns:1fr}
+  .staff-table-scroll{max-height:400px}
+}
+
+/* ═══ STAFF Phase 2.9.2b — дополнения ════════════════════════════════════ */
+
+/* Блок «Период в цифрах» (абсолютные значения сверху страницы) */
+.staff-period-stats{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px;
+  margin-bottom:14px;
+}
+.staff-period-stats-title{
+  font-size:9px;
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:1.2px;
+  font-weight:500;
+  margin-bottom:10px;
+}
+.staff-period-stats-grid{
+  display:grid;
+  grid-template-columns:repeat(6, 1fr);
+  gap:10px;
+}
+.staff-period-stats-cell{
+  background:var(--bg2);
+  border-radius:8px;
+  padding:10px 12px;
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+}
+.staff-period-stats-cell .lbl{
+  font-size:9px;
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:1px;
+  font-weight:500;
+}
+.staff-period-stats-cell .v{
+  font-family:'Cormorant Garamond',serif;
+  font-size:18px;
+  font-weight:700;
+  color:var(--text);
+  line-height:1;
+}
+@media (max-width: 900px) {
+  .staff-period-stats-grid{grid-template-columns:repeat(3, 1fr)}
+}
+
+/* ═══ ADMIN: Phase 2.9.3 — аналитика активности ═══════════════════════════ */
+
+/* Переключатель окна 7/30 дней */
+.admin-toolbar{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:14px;
+  padding:10px 14px;
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+}
+.admin-toolbar-label{
+  font-size:9px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:1.2px;font-weight:500;
+}
+.admin-toolbar-switch{
+  display:inline-flex;background:var(--bg2);border-radius:6px;padding:2px;
+}
+.admin-toolbar-switch button{
+  background:transparent;border:none;color:var(--text2);
+  padding:5px 12px;font-size:11px;cursor:pointer;border-radius:4px;
+  transition:all .15s;font-family:'Inter',sans-serif;
+}
+.admin-toolbar-switch button.active{
+  background:var(--gold);color:var(--bg);font-weight:600;
+}
+.admin-toolbar-refresh{
+  margin-left:auto;background:var(--bg2);border:1px solid var(--border);
+  color:var(--text2);padding:6px 12px;font-size:11px;cursor:pointer;border-radius:6px;
+  transition:all .15s;
+}
+.admin-toolbar-refresh:hover{border-color:var(--border2);color:var(--text)}
+
+/* Сводка KPI сверху — 5 карточек */
+.admin-summary-row{
+  display:grid;
+  grid-template-columns:repeat(5, 1fr);
+  gap:10px;
+  margin-bottom:14px;
+}
+.admin-summary-card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.admin-summary-card .lbl{
+  font-size:9px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:1.2px;font-weight:500;
+}
+.admin-summary-card .val{
+  font-family:'Cormorant Garamond',serif;
+  font-size:28px;font-weight:700;line-height:1.1;color:var(--text);
+}
+.admin-summary-card .sub{font-size:10px;color:var(--text2);margin-top:auto}
+.admin-summary-card.accent-gold  .val{color:var(--gold2)}
+.admin-summary-card.accent-green .val{color:var(--green)}
+.admin-summary-card.accent-red   .val{color:var(--red)}
+.admin-summary-card.accent-blue  .val{color:var(--blue)}
+
+/* Sparkline DAU 14 дней */
+.admin-sparkline-wrap{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px;
+  margin-bottom:14px;
+}
+.admin-sparkline-title{
+  font-size:9px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:1.2px;font-weight:500;margin-bottom:10px;
+}
+.admin-sparkline{
+  display:grid;
+  grid-template-columns:repeat(14, 1fr);
+  gap:4px;
+  align-items:flex-end;
+  height:80px;
+}
+.admin-spark-bar{
+  background:linear-gradient(180deg, var(--gold2), var(--gold));
+  border-radius:3px 3px 0 0;
+  min-height:4px;
+  position:relative;
+  transition:opacity .15s;
+}
+.admin-spark-bar:hover{opacity:.7}
+.admin-spark-bar .tip{
+  position:absolute;bottom:100%;left:50%;transform:translateX(-50%);
+  background:var(--bg);border:1px solid var(--border2);
+  padding:4px 8px;border-radius:4px;
+  font-size:10px;color:var(--text);
+  white-space:nowrap;display:none;z-index:10;margin-bottom:6px;
+}
+.admin-spark-bar:hover .tip{display:block}
+.admin-spark-labels{
+  display:grid;
+  grid-template-columns:repeat(14, 1fr);
+  gap:4px;
+  margin-top:4px;
+}
+.admin-spark-labels div{
+  font-size:9px;color:var(--text3);text-align:center;
+  font-family:'Inter',sans-serif;
+}
+
+/* Две колонки: топ табов / топ endpoints */
+.admin-two-col{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:14px;
+  margin-bottom:14px;
+}
+.admin-col{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  overflow:hidden;
+}
+.admin-col-title{
+  font-size:9px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:1.2px;font-weight:500;
+  padding:12px 14px 10px;border-bottom:1px solid var(--border);
+}
+
+/* Rank list (топ табов) */
+.admin-rank-list{padding:8px 0}
+.admin-rank-row{
+  display:grid;
+  grid-template-columns:30px 1fr auto auto;
+  gap:10px;
+  padding:8px 14px;
+  align-items:center;
+  font-size:11px;
+  border-bottom:1px dashed var(--border);
+}
+.admin-rank-row:last-child{border-bottom:none}
+.admin-rank-row .rank{
+  color:var(--text3);font-variant-numeric:tabular-nums;text-align:right;
+}
+.admin-rank-row .name{color:var(--text);font-family:monospace;font-size:11px}
+.admin-rank-row .count{
+  font-family:'Cormorant Garamond',serif;font-size:16px;color:var(--gold2);
+  font-weight:700;min-width:40px;text-align:right;
+}
+.admin-rank-row .users{color:var(--text3);font-size:10px;min-width:60px;text-align:right}
+
+/* Таблица endpoints с avg_ms и errors */
+.admin-endpoint-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:11px;
+}
+.admin-endpoint-table th{
+  padding:8px;text-align:left;
+  font-weight:600;color:var(--text2);
+  text-transform:uppercase;letter-spacing:.5px;
+  font-size:9px;background:var(--bg2);
+  border-bottom:1px solid var(--border);
+}
+.admin-endpoint-table td{padding:8px;color:var(--text);border-bottom:1px dashed var(--border)}
+.admin-endpoint-table td.num{text-align:right;font-variant-numeric:tabular-nums}
+.admin-endpoint-table td.endpoint-cell{font-family:monospace;font-size:10px;color:var(--text2)}
+.admin-endpoint-table td.method-cell{font-size:9px;color:var(--text3);text-transform:uppercase}
+.admin-endpoint-table td.err-cell.has-errors{color:var(--red);font-weight:600}
+.admin-endpoint-table td.slow-cell.is-slow{color:var(--amber);font-weight:600}
+.admin-endpoint-table tbody tr:last-child td{border-bottom:none}
+
+/* Таблица пользователей */
+.admin-users-wrap{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  overflow:hidden;
+  margin-bottom:14px;
+}
+.admin-users-scroll{max-height:480px;overflow:auto}
+.admin-users-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:11px;
+}
+.admin-users-table thead{
+  position:sticky;top:0;background:var(--bg2);z-index:1;
+}
+.admin-users-table th{
+  padding:10px 8px;text-align:left;
+  font-weight:600;color:var(--text2);
+  text-transform:uppercase;letter-spacing:.5px;
+  white-space:nowrap;font-size:10px;
+  border-bottom:1px solid var(--border);
+}
+.admin-users-table tbody tr{
+  border-bottom:1px solid var(--border);
+}
+.admin-users-table tbody tr:last-child{border-bottom:none}
+.admin-users-table tbody tr:hover{background:var(--bg2)}
+.admin-users-table td{padding:8px;color:var(--text)}
+.admin-users-table td.email-cell{font-weight:500}
+.admin-users-table td.num{text-align:right;font-variant-numeric:tabular-nums}
+.admin-users-table td.small{color:var(--text3);font-size:10px}
+
+/* Lightweight activity indicator */
+.admin-activity-dot{
+  display:inline-block;width:8px;height:8px;border-radius:50%;
+  margin-right:6px;vertical-align:middle;
+}
+.admin-activity-dot.today{background:var(--green)}
+.admin-activity-dot.recent{background:var(--amber)}
+.admin-activity-dot.stale{background:var(--text3)}
+
+/* Mobile */
+@media (max-width: 900px) {
+  .admin-summary-row{grid-template-columns:repeat(2, 1fr)}
+  .admin-two-col{grid-template-columns:1fr}
+  .admin-sparkline{height:60px}
+  .admin-users-scroll{max-height:380px}
+}

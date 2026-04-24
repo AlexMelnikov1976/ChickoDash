@@ -68,6 +68,7 @@
     <div class="ntab"        data-tab="compare"   onclick="goTab(this)">⚡ Сравнение</div>
     <div class="ntab"        data-tab="analysis"  onclick="goTab(this)">🧮 Анализ</div>
     <div class="ntab"        data-tab="menu"      onclick="goTab(this)">📋 Меню</div>
+    <div class="ntab"        data-tab="staff"     onclick="goTab(this)">👥 Персонал</div>
     <!-- dev tab hidden for users -->
   </div>
 </div>
@@ -361,6 +362,27 @@
     <!-- Контент рисуется JS функциями renderMenu* из dashboard.js -->
     <div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">
       Загрузка анализа меню…
+    </div>
+  </div>
+</div>
+
+<!-- ══ STAFF ══ Phase 2.9.2 -->
+<div class="panel" id="p-staff">
+  <div id="staffRoot">
+    <!-- Контент рисуется JS функциями renderStaff* из dashboard.js -->
+    <div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">
+      Загрузка анализа персонала…
+    </div>
+  </div>
+</div>
+
+<!-- ══ ADMIN ══ Phase 2.9.3 -->
+<!-- Вкладка видна только если /api/admin/me вернул is_admin:true -->
+<!-- Иначе div существует, но в nav нет кнопки и никто сюда не попадёт -->
+<div class="panel" id="p-admin">
+  <div id="adminRoot">
+    <div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">
+      Загрузка аналитики активности…
     </div>
   </div>
 </div>

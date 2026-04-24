@@ -407,6 +407,8 @@ async function init() {
     selectRest(0);
     // Тихая фоновая загрузка истории с 2024 через 2 сек после старта
     setTimeout(()=>loadFullHistory(true), 2000);
+    // Phase 2.9.3: проверяем, админ ли пользователь. Если да — вставляем вкладку «Активность».
+    checkAdminAndShowTab();
   } catch(e) {
     hideLoader();
     document.body.innerHTML+='<div style="position:fixed;inset:0;background:#0D1420;display:flex;align-items:center;justify-content:center;color:#E74C3C;font-size:14px;font-family:Inter,sans-serif;z-index:9999">Ошибка: '+e.message+'</div>';
@@ -466,6 +468,7 @@ async function selectRest(idx) {
   buildSelList(RESTS);
   RESTAURANT_SCORE = null; RESTAURANT_RECS = [];
   if (typeof invalidateMenuCache === 'function') invalidateMenuCache();
+  if (typeof invalidateStaffCache === 'function') invalidateStaffCache();
   renderAll();
   // Загружаем DOW-профили для like-for-like сравнений (сеть + мой ресторан, 90 дней).
   // Делаем это в фоне — первый renderAll уже прошёл с NET/TOP10 из loadNetworkBenchmarks,
@@ -687,6 +690,8 @@ function goTab(el) {
   if(tab==='compare') renderCompare();
   if(tab==='analysis') renderAnalysis();
   if(tab==='menu') renderMenu();
+  if(tab==='staff') renderStaff();
+  if(tab==='admin') renderAdmin();
 }
 
 // ═══ FORECAST BLOCK (Phase 1.4 #71, Phase 2.2 2026-04-21) ═══
@@ -1142,6 +1147,7 @@ function calApply(key,ev){
     loadNetworkBenchmarks(S.globalStart, S.globalEnd).then(()=>{
       try {
         if (typeof invalidateMenuCache === 'function') invalidateMenuCache();
+        if (typeof invalidateStaffCache === 'function') invalidateStaffCache();
         renderAll();
         // Перерисовываем всё, даже если сейчас видна другая вкладка
         if (typeof renderDynamics === 'function') renderDynamics();
@@ -3427,4 +3433,1145 @@ function renderDrawerBody(dish) {
   return sections.join('');
 }
 
+// ═══ STAFF ANALYSIS (Phase 2.9.2 — UI на mock-данных) ════════════════════
+//
+// Раздел «Персонал». 6 блоков на одной длинной странице. Backend endpoints
+// уже в проде (Phase 2.9.0), возвращают mock с meta.mock=true до подключения
+// пайплайна в 2.9.1.
+//
+// Спецификация: STAFF_METRICS_PACT.md (раздел 17 — ASCII-схема 6 блоков).
+//
+// Парaллельно fetch-им все 4 endpoint-а (list/groups/performance/managers/losses)
+// и когда все ответы пришли — единый рендер. staff-detail — по клику на
+// строку таблицы.
+
+const STAFF_STATE = {
+  loading: false,
+  loadedFor: null,
+  raw: {
+    list: null,
+    groups: null,
+    performance: null,
+    managers: null,
+    losses: null,
+  },
+};
+
+function staffCacheKey() {
+  if (!R || !R.id) return null;
+  const st = CAL_STATE && CAL_STATE.global;
+  if (!st || !st.start || !st.end) return null;
+  return R.id + '|' + st.start + '|' + st.end;
+}
+
+function invalidateStaffCache() {
+  STAFF_STATE.raw = { list:null, groups:null, performance:null, managers:null, losses:null };
+  STAFF_STATE.loadedFor = null;
+  const panel = document.getElementById('p-staff');
+  if (panel && panel.classList.contains('active')) {
+    renderStaff();
+  }
+}
+
+async function loadStaffAll() {
+  const key = staffCacheKey();
+  if (!key) return null;
+  if (STAFF_STATE.loadedFor === key && STAFF_STATE.raw.list) return STAFF_STATE.raw;
+  if (STAFF_STATE.loading) return null;
+
+  STAFF_STATE.loading = true;
+  try {
+    const st = CAL_STATE.global;
+    const qs = '?restaurant_id=' + R.id +
+               '&start=' + encodeURIComponent(st.start) +
+               '&end=' + encodeURIComponent(st.end);
+
+    const [list, groups, performance, managers, losses] = await Promise.all([
+      apiGet('/api/staff-list' + qs).catch(e => { console.error('[staff-list]', e.message); return null; }),
+      apiGet('/api/staff-groups' + qs).catch(e => { console.error('[staff-groups]', e.message); return null; }),
+      apiGet('/api/staff-performance' + qs).catch(e => { console.error('[staff-perf]', e.message); return null; }),
+      apiGet('/api/staff-managers' + qs).catch(e => { console.error('[staff-mgrs]', e.message); return null; }),
+      apiGet('/api/staff-losses' + qs).catch(e => { console.error('[staff-loss]', e.message); return null; }),
+    ]);
+
+    STAFF_STATE.raw = { list, groups, performance, managers, losses };
+    STAFF_STATE.loadedFor = key;
+    return STAFF_STATE.raw;
+  } catch (e) {
+    console.error('[staff] load failed:', e.message);
+    return null;
+  } finally {
+    STAFF_STATE.loading = false;
+  }
+}
+
+async function renderStaff() {
+  trackUI('staff_open', { restaurant_id: R && R.id });
+  const root = document.getElementById('staffRoot');
+  if (!root) return;
+
+  if (!R || !R.id) {
+    root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">Выберите ресторан для анализа персонала.</div>';
+    return;
+  }
+  if (NETWORK_MODE) {
+    root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">Анализ персонала доступен только для конкретного ресторана. Сетевой режим будет добавлен в Phase 2.10.</div>';
+    return;
+  }
+
+  root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">Загрузка данных по персоналу…</div>';
+
+  const data = await loadStaffAll();
+  if (!data || !data.list) {
+    root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red);font-size:12px">Не удалось загрузить данные. Попробуйте обновить страницу.</div>';
+    return;
+  }
+
+  console.log('[staff] loaded for period', CAL_STATE.global.start + '..' + CAL_STATE.global.end, {
+    days: data.list.period && data.list.period.days,
+    active: data.list.kpi && data.list.kpi.active_headcount && data.list.kpi.active_headcount.value,
+    excluded_left: data.list.summary && data.list.summary.excluded_left_count,
+  });
+
+  const html = [];
+  html.push(renderStaffMockBanner(data.list));
+  html.push(renderStaffPayrollWarning(data.list));
+
+  // Новый блок «Период в цифрах» — абсолютные значения сверху
+  html.push(renderStaffPeriodStats(data.list));
+
+  // Block 1 — KPI с формулами + breakdown по статусам
+  html.push('<div class="staff-section-title">📊 Обзор<span class="hint">Ключевые показатели персонала</span></div>');
+  html.push(renderStaffKPIs(data.list));
+  html.push(renderStaffStatusBreakdown(data.list));
+
+  // Block 3 — Группы + корреляция
+  html.push('<div class="staff-section-title">💰 ФОТ и группы<span class="hint">Производственные группы + корреляция часы × выручка</span></div>');
+  html.push(renderStaffGroups(data.groups));
+  html.push(renderStaffCorrelation(data.groups));
+
+  // Block 4 — Производительность
+  html.push('<div class="staff-section-title">⚡ Производительность<span class="hint">Kasavana-Smith матрица для ролей с атрибуцией выручки</span></div>');
+  html.push(renderStaffPerformance(data.performance));
+
+  // Block 5 — Менеджеры (только за период)
+  html.push('<div class="staff-section-title">👔 Менеджеры дня<span class="hint">Рейтинг по выручке, ФОТ% и качеству смен — за выбранный период</span></div>');
+  html.push(renderStaffManagers(data.managers));
+
+  // Block 6 — Потери
+  html.push('<div class="staff-section-title">🚨 Потери и риск-профиль<span class="hint">Потери персонала в разрезе менеджеров и дней недели</span></div>');
+  html.push(renderStaffLosses(data.losses));
+
+  // Block 2 — Штат (таблица сотрудников) внизу
+  html.push('<div class="staff-section-title">👥 Штат и смены<span class="hint">Активные сотрудники (уволенные исключены)</span></div>');
+  html.push(renderStaffEmployeesTable(data.list));
+
+  root.innerHTML = html.join('');
+}
+
+// ——— Баннеры ————————————————————————————————————————————————————————
+
+function renderStaffMockBanner(list) {
+  if (!list || !list.meta || !list.meta.mock) return '';
+  return (
+    '<div class="staff-mock-banner">' +
+      '<span class="icon">🎭</span>' +
+      '<div>' +
+        '<b>Демо-данные.</b> Цифры реагируют на календарь пропорционально длине периода. ' +
+        'Реальные данные из iikoWeb → ClickHouse появятся в Phase 2.9.1.' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function renderStaffPayrollWarning(list) {
+  if (!list || !list.meta) return '';
+  const validFrom = list.meta.payroll_data_valid_from;
+  if (!validFrom) return '';
+  const st = CAL_STATE.global;
+  if (!st || !st.start) return '';
+  if (st.start >= validFrom) return '';
+
+  return (
+    '<div class="staff-payroll-warning">' +
+      '<span>ℹ</span>' +
+      '<div>Данные начислений валидны с <b>' + escapeHtml(validFrom) + '</b>. ' +
+      'Показатели ФОТ% и эффективной ставки за часть периода до этой даты могут быть неполны.</div>' +
+    '</div>'
+  );
+}
+
+// ——— Новый блок: Период в цифрах (абсолютные значения) ————————————————————
+
+function renderStaffPeriodStats(list) {
+  if (!list || !list.period_stats) return '';
+  const p = list.period_stats;
+  return (
+    '<div class="staff-period-stats">' +
+      '<div class="staff-period-stats-title">Период в цифрах</div>' +
+      '<div class="staff-period-stats-grid">' +
+        stat('Дней',      p.days_in_period) +
+        stat('Выручка',   formatBig(p.revenue_total_rub) + ' ₽') +
+        stat('Выручка/день', formatBig(p.revenue_per_day_avg_rub) + ' ₽') +
+        stat('Часов',     formatBig(p.hours_total)) +
+        stat('Смен',      formatBig(p.shifts_total)) +
+        stat('ФОТ',       formatBig(p.payroll_total_rub) + ' ₽') +
+      '</div>' +
+    '</div>'
+  );
+  function stat(lbl, v) {
+    return (
+      '<div class="staff-period-stats-cell">' +
+        '<div class="lbl">' + escapeHtml(lbl) + '</div>' +
+        '<div class="v">' + escapeHtml(String(v)) + '</div>' +
+      '</div>'
+    );
+  }
+}
+
+function formatBig(n) {
+  if (n === null || n === undefined) return '—';
+  const abs = Math.abs(n);
+  if (abs >= 1e6) return (n / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M';
+  if (abs >= 1e3) return Math.round(n / 1e3) + 'k';
+  return String(Math.round(n));
+}
+
+// ——— Block 1: 5 KPI-карточек с формулами ————————————————————————————————
+
+function renderStaffKPIs(list) {
+  if (!list || !list.kpi) return '';
+  const k = list.kpi;
+
+  return (
+    '<div class="staff-kpi-row">' +
+      staffKpiWithFormula(k.payroll_pct_of_revenue, 'ФОТ %', colorByNorm(k.payroll_pct_of_revenue)) +
+      staffKpiWithFormula(k.active_headcount,       'Сотрудников', null) +
+      staffKpiWithFormula(k.revenue_per_hour_rub,   'Выручка/час', 'accent-gold') +
+      staffKpiWithFormula(k.rotation_pct,           'Ротация', null) +
+      staffKpiWithFormula(k.days_without_manager,   'Без менеджера',
+        (k.days_without_manager && k.days_without_manager.value > 0) ? 'accent-red' : 'accent-green') +
+    '</div>'
+  );
+
+  function colorByNorm(kObj) {
+    if (!kObj || !kObj.norm) return null;
+    const v = kObj.value;
+    if (v < kObj.norm.min) return 'accent-green';
+    if (v > kObj.norm.max) return 'accent-red';
+    return 'accent-amber';
+  }
+}
+
+function staffKpiWithFormula(kObj, label, extraClass) {
+  if (!kObj) return '';
+  const cls = 'staff-kpi' + (extraClass ? ' ' + extraClass : '');
+  const val = formatKpiValue(kObj);
+  // Под каждой карточкой — что на что делится и с какими абсолютами
+  const formulaLine = renderKpiFormulaLine(kObj);
+  return (
+    '<div class="' + cls + '">' +
+      '<div class="lbl">' + escapeHtml(label) + '</div>' +
+      '<div class="val">' + escapeHtml(val) + '</div>' +
+      '<div class="sub">' + formulaLine + '</div>' +
+    '</div>'
+  );
+}
+
+function formatKpiValue(kObj) {
+  const v = kObj.value;
+  if (v === undefined || v === null) return '—';
+  if (kObj.unit === '%') return (typeof v === 'number' ? v.toFixed(1) : v) + '%';
+  if (kObj.unit === '₽/час') return Math.round(v).toLocaleString('ru') + ' ₽';
+  if (kObj.unit === 'дн') return v + ' дн';
+  if (kObj.unit === 'чел') return v;
+  return String(v);
+}
+
+function renderKpiFormulaLine(kObj) {
+  // Если есть числитель/знаменатель — показываем их в сокращённом виде
+  if (kObj.numerator !== undefined && kObj.denominator !== undefined) {
+    let num, den;
+    if (kObj.unit === '%' || kObj.unit === '₽/час') {
+      num = formatBig(kObj.numerator);
+      den = formatBig(kObj.denominator);
+      if (kObj.unit === '%') num += ' ₽', den += ' ₽';
+    } else {
+      num = kObj.numerator;
+      den = kObj.denominator;
+    }
+    return escapeHtml(num + ' / ' + den);
+  }
+  // Иначе — показываем сокращённую формулу из бэка
+  if (kObj.formula) return escapeHtml(truncate(kObj.formula, 60));
+  return '';
+}
+
+function truncate(s, n) {
+  if (!s) return '';
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+// ——— Breakdown по статусам ————————————————————————————————————————————
+
+function renderStaffStatusBreakdown(list) {
+  if (!list || !list.summary) return '';
+  const sc = list.summary.status_counts || {};
+  const excluded = list.summary.excluded_left_count || 0;
+
+  const STATUSES = [
+    { key:'core',       ico:'💎', name:'Ядро',        cls:'star' },
+    { key:'regular',    ico:'👤', name:'Постоянные',  cls:'plowhorse' },
+    { key:'new',        ico:'🆕', name:'Новые',       cls:'new' },
+    { key:'occasional', ico:'🎲', name:'Редкие',      cls:'plowhorse' },
+    { key:'dormant',    ico:'💤', name:'Dormant',     cls:'dormant' },
+  ];
+  const cells = STATUSES.map(s =>
+    '<div class="menu-class cls-' + s.cls + '" title="' + escapeAttr(s.name) + '">' +
+      '<div class="ico">' + s.ico + '</div>' +
+      '<div class="n">' + (sc[s.key] || 0) + '</div>' +
+      '<div class="name">' + escapeHtml(s.name) + '</div>' +
+    '</div>'
+  ).join('');
+
+  const excludedNote = excluded > 0
+    ? '<div style="font-size:10px;color:var(--text3);margin-top:8px;text-align:right">' +
+        'Исключено <b style="color:var(--red)">' + excluded + '</b> уволенных (> 21 дня без смены)' +
+      '</div>'
+    : '';
+
+  return (
+    '<div class="menu-classes">' +
+      '<div class="menu-classes-title">Структура активного штата</div>' +
+      '<div class="menu-classes-grid" style="grid-template-columns:repeat(5, 1fr)">' + cells + '</div>' +
+      excludedNote +
+    '</div>'
+  );
+}
+
+// ——— Block 3: Группы ————————————————————————————————————————————————
+
+function renderStaffGroups(groupsData) {
+  if (!groupsData || !groupsData.groups) return '';
+  const GROUP_ICONS = {
+    'Кухня':'🍳', 'Зал':'🍽', 'Бар':'🍸', 'Клининг':'🧹', 'Менеджмент':'👔',
+  };
+  const cards = groupsData.groups.map(g => {
+    const ico = GROUP_ICONS[g.group_name] || '•';
+    const revPerH = g.revenue_per_hour_group_rub
+      ? formatBig(g.revenue_per_hour_group_rub) + ' ₽'
+      : '—';
+    const payrollAbs = formatBig(g.payroll_total_rub) + ' ₽';
+    return (
+      '<div class="staff-group-card g-' + (g.group_code || 'management') + '">' +
+        '<div class="group-title">' + ico + ' ' + escapeHtml(g.group_name) + '</div>' +
+        row('Человек', g.headcount || 0) +
+        row('Часов', formatBig(g.hours_total || 0)) +
+        row('ФОТ', payrollAbs) +
+        row('ФОТ %', (g.payroll_pct_of_revenue || 0).toFixed(1) + '%') +
+        row('₽/час', Math.round(g.cost_per_hour_rub || 0).toLocaleString('ru')) +
+        row('Выр/час', revPerH) +
+      '</div>'
+    );
+  }).join('');
+  return '<div class="staff-groups-row">' + cards + '</div>';
+
+  function row(lbl, v) {
+    return '<div class="row"><span class="lbl">' + lbl + '</span><span class="v">' + escapeHtml(String(v)) + '</span></div>';
+  }
+}
+
+function renderStaffCorrelation(groupsData) {
+  if (!groupsData || !groupsData.restaurant) return '';
+  const r = groupsData.restaurant;
+  const corr = r.correlation_hours_revenue;
+  if (corr === undefined || corr === null) return '';
+  const corrTxt = corr.toFixed(2);
+  const diag = corr >= 0.7 ? 'сильная связь — персонал планируется адекватно спросу'
+             : corr >= 0.5 ? 'средняя связь — есть зазор для оптимизации графика'
+             : corr >= 0.3 ? 'слабая связь — график мало реагирует на спрос'
+             : 'корреляции почти нет — проверь график смен';
+  return (
+    '<div class="staff-scatter">' +
+      '<div class="staff-scatter-title">Корреляция часов работы и выручки по дням</div>' +
+      '<div class="staff-scatter-viz">' +
+        '<span class="corr-val">' + corrTxt + '</span>' +
+        '<span>' + escapeHtml(diag) + '</span>' +
+      '</div>' +
+      '<div style="font-size:10px;color:var(--text3);margin-top:8px">' +
+        escapeHtml(r.correlation_formula || 'Pearson(hours, revenue)') +
+        ' · Scatter-plot будет в Phase 2.9.2c' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+// ——— Block 4: Производительность ————————————————————————————————————————
+
+function renderStaffPerformance(perfData) {
+  if (!perfData || !perfData.matrix) return '';
+
+  const byClass = { star: [], plowhorse: [], puzzle: [], dog: [] };
+  perfData.matrix.forEach(e => {
+    if (byClass[e.ks_class]) byClass[e.ks_class].push(e);
+  });
+
+  const thr = perfData.thresholds || {};
+
+  const matrixHtml =
+    '<div class="staff-ks-matrix">' +
+      '<div class="staff-ks-title">Матрица производительности (роли с атрибуцией выручки)</div>' +
+      '<div class="staff-ks-frame">' +
+        '<div class="staff-ks-y-axis">Выручка на час →</div>' +
+        '<div class="staff-ks-grid">' +
+          ksQuad('puzzle',   '❓', 'Puzzle',    byClass.puzzle) +
+          ksQuad('star',     '⭐', 'Star',      byClass.star) +
+          ksQuad('dog',      '🐶', 'Dog',       byClass.dog) +
+          ksQuad('plowhorse','🐎', 'Plowhorse', byClass.plowhorse) +
+        '</div>' +
+        '<div class="staff-ks-x-axis">Часы работы →</div>' +
+      '</div>' +
+      (thr.hours_median ?
+        '<div style="font-size:10px;color:var(--text3);margin-top:10px">' +
+          'Медианы: ' + thr.hours_median + ' ч · ' + Math.round(thr.rph_median || 0).toLocaleString('ru') + ' ₽/час' +
+        '</div>' : '') +
+    '</div>';
+
+  const shiftsHtml = renderStaffShifts(perfData);
+  return '<div class="staff-ks-wrap">' + matrixHtml + shiftsHtml + '</div>';
+
+  function ksQuad(key, ico, name, arr) {
+    const names = arr.slice(0, 3).map(e => e.employee_name).join(', ') +
+                  (arr.length > 3 ? ` и ещё ${arr.length - 3}` : '');
+    return (
+      '<div class="staff-ks-quad q-' + key + '">' +
+        '<div class="ico">' + ico + '</div>' +
+        '<div class="n">' + arr.length + '</div>' +
+        '<div class="name">' + escapeHtml(name) + '</div>' +
+        (arr.length ? '<div class="names">' + escapeHtml(names) + '</div>' : '') +
+      '</div>'
+    );
+  }
+}
+
+function renderStaffShifts(perfData) {
+  const goodShifts = (perfData.good_shifts || []).slice(0, 5);
+  const badShifts = (perfData.bad_shifts || []).slice(0, 5);
+  const thr = perfData.thresholds || {};
+
+  const goodRows = goodShifts.map(s =>
+    '<div class="staff-shift-row">' +
+      '<span class="date">' + escapeHtml(s.report_date) + '</span>' +
+      '<span class="info">' + formatBig(s.revenue) + ' ₽ · ' + s.headcount + ' чел. · <span class="manager">' + escapeHtml(s.manager) + '</span></span>' +
+      '<span class="metric pos">' + s.fot_pct.toFixed(1) + '%</span>' +
+    '</div>'
+  ).join('');
+
+  const badRows = badShifts.map(s =>
+    '<div class="staff-shift-row">' +
+      '<span class="date">' + escapeHtml(s.report_date) + '</span>' +
+      '<span class="info">' + formatBig(s.revenue) + ' ₽ · ' + s.headcount + ' чел. · <span class="manager">' + escapeHtml(s.manager) + '</span></span>' +
+      '<span class="metric neg">' + s.fot_pct.toFixed(1) + '%</span>' +
+    '</div>'
+  ).join('');
+
+  const ruleLine = thr.good_shift_rule
+    ? '<div style="font-size:10px;color:var(--text3);margin-top:6px">' +
+        '✅ ' + escapeHtml(thr.good_shift_rule) + ' · ⚠ ' + escapeHtml(thr.bad_shift_rule) +
+      '</div>'
+    : '';
+
+  return (
+    '<div class="staff-shifts-panel">' +
+      '<div class="staff-shifts-title">Сильные и слабые смены</div>' +
+      (goodRows ?
+        '<div class="staff-shifts-section">' +
+          '<div class="staff-shifts-section-lbl good">✅ Лучшие смены (высокая выручка + низкий ФОТ%)</div>' +
+          goodRows +
+        '</div>' : '') +
+      (badRows ?
+        '<div class="staff-shifts-section">' +
+          '<div class="staff-shifts-section-lbl bad">⚠ Слабые смены (низкая выручка + высокий ФОТ%)</div>' +
+          badRows +
+        '</div>' : '') +
+      ruleLine +
+      (!goodRows && !badRows ? '<div style="font-size:11px;color:var(--text3)">Смен в период не найдено</div>' : '') +
+    '</div>'
+  );
+}
+
+// ——— Block 5: Менеджеры (ТОЛЬКО за период) ————————————————————————————————
+
+function renderStaffManagers(mgrsData) {
+  if (!mgrsData || !mgrsData.managers) return '';
+  const mgrs = mgrsData.managers;
+  const summary = mgrsData.summary || {};
+
+  const rows = mgrs.map(m => {
+    const classBadge = '<span class="mgr-class-badge c-' + m.classification + '">' + classLabel(m.classification) + '</span>';
+    const daysCell = m.days_as_manager + ' <span class="small" style="color:var(--text3)">(' + m.days_share_pct + '%)</span>';
+    return (
+      '<tr>' +
+        '<td class="name-cell">' + escapeHtml(m.manager_name) + '</td>' +
+        '<td class="num">' + daysCell + '</td>' +
+        '<td class="num">' + formatBig(m.avg_revenue_per_day_rub) + '</td>' +
+        '<td class="num">' + Math.round(m.avg_check_rub) + '</td>' +
+        '<td class="num">' + m.fot_pct_avg.toFixed(1) + '%</td>' +
+        '<td class="num" title="' + escapeAttr(m.losses_formula || '') + '">' + m.loss_pct_avg.toFixed(2) + '%</td>' +
+        '<td class="num">' + formatBig(m.losses_staff_total_rub) + '</td>' +
+        '<td class="num" style="color:var(--green)">' + m.strong_shifts_count + '</td>' +
+        '<td class="num" style="color:var(--red)">' + m.weak_shifts_count + '</td>' +
+        '<td>' + classBadge + '</td>' +
+      '</tr>'
+    );
+  }).join('');
+
+  const coverageLine = summary.days_in_period ?
+    '<div style="font-size:10px;color:var(--text3);padding:8px 14px;background:var(--bg2);border-bottom:1px solid var(--border)">' +
+      'Покрытие: ' + (summary.total_days_covered || 0) + ' из ' + summary.days_in_period + ' дней периода (' + (summary.coverage_pct || 0) + '%)' +
+      (summary.days_without_manager > 0 ? ' · <span style="color:var(--red)">Без менеджера: ' + summary.days_without_manager + ' дн</span>' : '') +
+    '</div>' : '';
+
+  return (
+    '<div class="staff-table-wrap">' +
+      coverageLine +
+      '<div class="staff-table-scroll">' +
+        '<table class="staff-table">' +
+          '<thead><tr>' +
+            '<th>Менеджер</th>' +
+            '<th style="text-align:right">Дней в периоде</th>' +
+            '<th style="text-align:right">Ср.выручка/день</th>' +
+            '<th style="text-align:right">Ср.чек</th>' +
+            '<th style="text-align:right">ФОТ %</th>' +
+            '<th style="text-align:right" title="Потери ÷ Выручка × 100">Потери %</th>' +
+            '<th style="text-align:right">Потери ₽</th>' +
+            '<th style="text-align:right">✅</th>' +
+            '<th style="text-align:right">⚠</th>' +
+            '<th>Класс</th>' +
+          '</tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+      '</div>' +
+    '</div>'
+  );
+
+  function classLabel(c) {
+    return {
+      'top':'Топ',
+      'reliable':'Надёжный',
+      'concerning':'Внимание',
+      'problem':'Проблема',
+      'insufficient_data':'Мало данных',
+      'no_manager':'Без менеджера',
+    }[c] || c;
+  }
+}
+
+// ——— Block 6: Потери ————————————————————————————————————————————————————
+
+function renderStaffLosses(lossesData) {
+  if (!lossesData || !lossesData.kpi) return '';
+  const kpi = lossesData.kpi;
+
+  // 3 KPI верхнего уровня с формулами
+  const kpiRow =
+    '<div class="staff-losses-kpi-row">' +
+      lossKpi('Потери персонала',
+              (kpi.losses_staff_pct_of_revenue || 0).toFixed(2) + '%',
+              kpi.losses_pct_formula,
+              kpi.losses_staff_pct_of_revenue > 1.5 ? 'accent-red' : 'accent-green') +
+      lossKpi('На смену',
+              Math.round(kpi.losses_per_shift_avg_rub || 0).toLocaleString('ru') + ' ₽',
+              kpi.losses_per_shift_formula, null) +
+      lossKpi('Инвестиции в персонал',
+              formatBig(kpi.staff_investment_rub || 0) + ' ₽',
+              kpi.staff_investment_formula, 'accent-gold') +
+    '</div>';
+
+  const alerts = (lossesData.alerts || []).map(a =>
+    '<div class="staff-losses-alert sev-' + a.severity + '">' +
+      '<span>' + (a.severity === 'red' ? '🔴' : '🟡') + '</span>' +
+      '<div>' + escapeHtml(a.message) + '</div>' +
+    '</div>'
+  ).join('');
+  const alertsHtml = alerts
+    ? '<div class="staff-losses-alerts"><div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px;font-weight:500">Сигналы</div>' + alerts + '</div>'
+    : '';
+
+  const breakdown = (lossesData.category_a_breakdown || []).slice(0, 6);
+  const maxRub = Math.max(...breakdown.map(b => b.total_rub), 1);
+  const breakdownRows = breakdown.map(b => {
+    const w = Math.round((b.total_rub / maxRub) * 100);
+    return (
+      '<div class="bar-row">' +
+        '<span class="lbl">' + escapeHtml(b.item) + '</span>' +
+        '<div class="bar-wrap"><div class="bar-fill" style="width:' + w + '%"></div></div>' +
+        '<span class="v">' + formatBig(b.total_rub) + ' ₽</span>' +
+      '</div>'
+    );
+  }).join('');
+  const breakdownHtml =
+    '<div class="staff-losses-breakdown">' +
+      '<div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px;font-weight:500">Прямые потери персонала — разбивка</div>' +
+      breakdownRows +
+    '</div>';
+
+  const byMgr = lossesData.by_manager || [];
+  const mgrRows = byMgr.map(m =>
+    '<tr>' +
+      '<td class="name-cell">' + escapeHtml(m.manager) + '</td>' +
+      '<td class="num small">' + m.days + '</td>' +
+      '<td class="num">' + formatBig(m.losses_total_rub) + ' ₽</td>' +
+      '<td class="num small" style="color:var(--text3)">' + formatBig(m.revenue_rub) + ' ₽</td>' +
+      '<td class="num" title="' + escapeAttr(m.loss_formula || '') + '" style="color:' + (m.loss_pct > 1.0 ? 'var(--red)' : 'var(--text)') + '">' + m.loss_pct.toFixed(2) + '%</td>' +
+    '</tr>'
+  ).join('');
+  const byMgrHtml = byMgr.length ? (
+    '<div class="staff-table-wrap">' +
+      '<div style="font-size:10px;color:var(--text3);padding:8px 14px;background:var(--bg2);border-bottom:1px solid var(--border)">Потери в разрезе менеджеров дня</div>' +
+      '<div class="staff-table-scroll">' +
+        '<table class="staff-table">' +
+          '<thead><tr>' +
+            '<th>Менеджер</th>' +
+            '<th style="text-align:right">Дней</th>' +
+            '<th style="text-align:right">Потери ₽</th>' +
+            '<th style="text-align:right">Выручка в его дни</th>' +
+            '<th style="text-align:right">% потерь</th>' +
+          '</tr></thead>' +
+          '<tbody>' + mgrRows + '</tbody>' +
+        '</table>' +
+      '</div>' +
+    '</div>'
+  ) : '';
+
+  const byDow = lossesData.by_dow || [];
+  const maxDowLoss = Math.max(...byDow.map(d => d.loss_pct), 0.1);
+  const minDowLoss = Math.min(...byDow.map(d => d.loss_pct), 0.01);
+  const dowCells = byDow.map(d => {
+    const cls = d.loss_pct >= maxDowLoss * 0.95 ? 'high' : d.loss_pct <= minDowLoss * 1.05 ? 'low' : '';
+    return (
+      '<div class="staff-losses-dow-cell ' + cls + '">' +
+        '<div class="day">' + escapeHtml(d.day_name) + '</div>' +
+        '<div class="v">' + formatBig(d.avg_losses_rub) + '</div>' +
+        '<div class="pct">' + d.loss_pct.toFixed(2) + '%</div>' +
+      '</div>'
+    );
+  }).join('');
+  const byDowHtml = byDow.length ? (
+    '<div class="staff-losses-dow">' +
+      '<div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1.2px;font-weight:500">Потери по дням недели (среднее ₽ / % от выручки)</div>' +
+      '<div class="staff-losses-dow-grid">' + dowCells + '</div>' +
+    '</div>'
+  ) : '';
+
+  return kpiRow + alertsHtml + breakdownHtml + byMgrHtml + byDowHtml;
+
+  function lossKpi(label, value, formula, extraClass) {
+    const cls = 'staff-kpi' + (extraClass ? ' ' + extraClass : '');
+    return (
+      '<div class="' + cls + '">' +
+        '<div class="lbl">' + escapeHtml(label) + '</div>' +
+        '<div class="val">' + escapeHtml(value) + '</div>' +
+        '<div class="sub">' + escapeHtml(truncate(formula || '', 70)) + '</div>' +
+      '</div>'
+    );
+  }
+}
+
+// ——— Block 2: Штат (таблица сотрудников + drawer) ————————————————————
+
+function renderStaffEmployeesTable(listData) {
+  if (!listData || !listData.employees) return '';
+  const employees = listData.employees;
+
+  const rows = employees.map(e => {
+    const lastShift = e.days_since_last_shift === 0 ? 'сегодня' : (e.days_since_last_shift || 0) + ' дн.';
+    const perf = (e.revenue_per_hour_rub !== null && e.revenue_per_hour_rub !== undefined)
+      ? Math.round(e.revenue_per_hour_rub).toLocaleString('ru') + ' ₽/ч'
+      : '—';
+    return (
+      '<tr onclick="openStaffDrawer(\'' + escapeAttr(e.employee_id) + '\')">' +
+        '<td class="name-cell">' + escapeHtml(e.employee_name) + '</td>' +
+        '<td class="small">' + escapeHtml(e.role_primary || '—') + '</td>' +
+        '<td class="small">' + escapeHtml(e.group_primary === '-' ? 'Менеджмент' : e.group_primary) + '</td>' +
+        '<td><span class="staff-status-badge st-' + e.status + '">' + statusLabel(e.status) + '</span></td>' +
+        '<td class="num">' + (e.shifts_count || 0) + '</td>' +
+        '<td class="num">' + Math.round(e.hours_total || 0) + '</td>' +
+        '<td class="num">' + Math.round(e.payroll_total_rub || 0).toLocaleString('ru') + '</td>' +
+        '<td class="num">' + perf + '</td>' +
+        '<td class="small">' + lastShift + '</td>' +
+      '</tr>'
+    );
+  }).join('');
+
+  return (
+    '<div class="staff-table-wrap">' +
+      '<div class="staff-table-scroll">' +
+        '<table class="staff-table">' +
+          '<thead><tr>' +
+            '<th>Сотрудник</th>' +
+            '<th>Роль</th>' +
+            '<th>Группа</th>' +
+            '<th>Статус</th>' +
+            '<th style="text-align:right">Смен</th>' +
+            '<th style="text-align:right">Часов</th>' +
+            '<th style="text-align:right">Начислено, ₽</th>' +
+            '<th style="text-align:right">₽/час выручки</th>' +
+            '<th>Посл. смена</th>' +
+          '</tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+      '</div>' +
+    '</div>' +
+    renderStaffDrawerSkeleton()
+  );
+
+  function statusLabel(s) {
+    return {
+      'core':'Ядро','regular':'Постоянный','new':'Новый','occasional':'Редкий','dormant':'Dormant',
+    }[s] || s;
+  }
+}
+
+function renderStaffDrawerSkeleton() {
+  return (
+    '<div class="staff-drawer-overlay" id="staffDrawer" onclick="if(event.target===this)closeStaffDrawer()">' +
+      '<div class="staff-drawer">' +
+        '<div class="staff-drawer-head">' +
+          '<div>' +
+            '<div class="staff-drawer-name" id="staffDrawerName">—</div>' +
+            '<div class="staff-drawer-sub" id="staffDrawerSub">—</div>' +
+          '</div>' +
+          '<div class="staff-drawer-close" onclick="closeStaffDrawer()">✕</div>' +
+        '</div>' +
+        '<div class="staff-drawer-body" id="staffDrawerBody">' +
+          '<div style="color:var(--text3);font-size:11px">Загрузка…</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+async function openStaffDrawer(employeeId) {
+  const overlay = document.getElementById('staffDrawer');
+  if (!overlay) return;
+  overlay.classList.add('open');
+  document.getElementById('staffDrawerName').textContent = 'Загрузка…';
+  document.getElementById('staffDrawerSub').textContent = '';
+  document.getElementById('staffDrawerBody').innerHTML = '<div style="color:var(--text3);font-size:11px">Загрузка…</div>';
+
+  const st = CAL_STATE.global;
+  const qs = '?restaurant_id=' + R.id +
+             '&employee_id=' + encodeURIComponent(employeeId) +
+             '&start=' + encodeURIComponent(st.start) +
+             '&end=' + encodeURIComponent(st.end);
+
+  try {
+    const data = await apiGet('/api/staff-detail' + qs);
+    renderStaffDrawerBody(data);
+  } catch (e) {
+    document.getElementById('staffDrawerBody').innerHTML =
+      '<div style="color:var(--red);font-size:11px">Ошибка загрузки: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderStaffDrawerBody(data) {
+  if (!data || !data.employee) return;
+  const e = data.employee;
+  const k = data.kpi_period || {};
+  const c = data.contribution || {};
+
+  document.getElementById('staffDrawerName').textContent = e.employee_name || '—';
+  document.getElementById('staffDrawerSub').textContent =
+    (e.role_primary || '') + ' · ' + (e.group_primary === '-' ? 'Менеджмент' : e.group_primary) +
+    ' · стаж ' + (e.tenure_days || 0) + ' дн.';
+
+  // KPI за период
+  const perfKpis = (k.revenue_per_hour_rub !== null && k.revenue_per_hour_rub !== undefined) ?
+    '<div class="staff-drawer-kpi"><div class="lbl">Выручка/час</div><div class="val">' + Math.round(k.revenue_per_hour_rub).toLocaleString('ru') + ' ₽</div></div>' +
+    '<div class="staff-drawer-kpi"><div class="lbl">Чеков/час</div><div class="val">' + (k.checks_per_hour || 0).toFixed(1) + '</div></div>' +
+    '<div class="staff-drawer-kpi"><div class="lbl">Средний чек</div><div class="val">' + Math.round(k.avg_check_rub || 0).toLocaleString('ru') + ' ₽</div></div>'
+    : '';
+
+  // Новый блок: вклад сотрудника в ресторан
+  const contributionHtml = c.hours_share_pct !== undefined ? (
+    '<div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1.2px;margin:16px 0 8px;font-weight:500">Вклад в ресторан</div>' +
+    '<div class="staff-drawer-kpi-grid">' +
+      drawerKpi('Доля часов', c.hours_share_pct + '%', c.hours_share_formula) +
+      drawerKpi('Доля ФОТ', c.payroll_share_pct + '%', c.payroll_share_formula) +
+      (c.revenue_share_pct !== null ? drawerKpi('Доля выручки', c.revenue_share_pct + '%', c.revenue_share_formula) : '') +
+      (c.revenue_attributed_rub ? drawerKpi('Атрибуция ₽', formatBig(c.revenue_attributed_rub) + ' ₽',
+        'hours_total × revenue_per_hour_rub') : '') +
+    '</div>'
+  ) : '';
+
+  const timeline = (data.shifts_timeline || []).slice(0, 10).map(s =>
+    '<div class="staff-shift-row" style="grid-template-columns:90px 1fr 80px">' +
+      '<span class="date">' + escapeHtml(s.date) + '</span>' +
+      '<span class="info">' + s.hours.toFixed(1) + ' ч · ' +
+        (s.revenue_attributed ? formatBig(s.revenue_attributed) + ' ₽ · ' + (s.checks || 0) + ' чек.' : 'без атрибуции') +
+      '</span>' +
+      '<span class="metric" style="color:var(--text2)">' + (s.payroll ? Math.round(s.payroll).toLocaleString('ru') : '—') + '</span>' +
+    '</div>'
+  ).join('');
+
+  const html =
+    '<div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px;font-weight:500">KPI за период</div>' +
+    '<div class="staff-drawer-kpi-grid">' +
+      '<div class="staff-drawer-kpi"><div class="lbl">Смен</div><div class="val">' + (k.shifts_count || 0) + '</div></div>' +
+      '<div class="staff-drawer-kpi"><div class="lbl">Часов</div><div class="val">' + Math.round(k.hours_total || 0) + '</div></div>' +
+      '<div class="staff-drawer-kpi"><div class="lbl">Начислено</div><div class="val">' + formatBig(k.payroll_total_rub || 0) + ' ₽</div></div>' +
+      '<div class="staff-drawer-kpi"><div class="lbl">₽/час</div><div class="val">' + Math.round(k.rate_effective_rub_per_hour || 0) + '</div></div>' +
+      perfKpis +
+    '</div>' +
+    contributionHtml +
+    (timeline ?
+      '<div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1.2px;margin:16px 0 8px;font-weight:500">Последние смены</div>' +
+      '<div>' + timeline + '</div>' : ''
+    );
+
+  document.getElementById('staffDrawerBody').innerHTML = html;
+
+  function drawerKpi(lbl, val, formula) {
+    return (
+      '<div class="staff-drawer-kpi" title="' + escapeAttr(formula || '') + '">' +
+        '<div class="lbl">' + escapeHtml(lbl) + '</div>' +
+        '<div class="val">' + escapeHtml(String(val)) + '</div>' +
+        (formula ? '<div style="font-size:9px;color:var(--text3);margin-top:4px">' + escapeHtml(truncate(formula, 45)) + '</div>' : '') +
+      '</div>'
+    );
+  }
+}
+
+function closeStaffDrawer() {
+  const overlay = document.getElementById('staffDrawer');
+  if (overlay) overlay.classList.remove('open');
+}
+
+// Закрытие drawer по Esc
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeStaffDrawer();
+});
+
+// ═══ ADMIN — Аналитика активности (Phase 2.9.3) ═══════════════════════════
+//
+// Видна только пользователям с is_admin=true в KV USERS.
+// При загрузке дёргаем /api/admin/me — если админ, вставляем кнопку вкладки
+// в nav. Если не админ — ничего не происходит, пользователь даже не видит
+// что такая вкладка существует.
+//
+// Источник: /api/admin/activity?window=7|30
+// Рендер: 5 блоков — toolbar, сводка, sparkline DAU, топ табов/endpoints, таблица юзеров
+
+const ADMIN_STATE = {
+  is_admin: false,
+  window: 7,
+  data: null,
+  loading: false,
+};
+
+async function checkAdminAndShowTab() {
+  try {
+    const r = await apiGet('/api/admin/me');
+    if (!r || !r.is_admin) return;
+    ADMIN_STATE.is_admin = true;
+
+    // Берём родителя существующей кнопки «Персонал» — это гарантированно
+    // правильный контейнер на том же уровне, что и остальные .ntab-кнопки.
+    const staffBtn = document.querySelector('[data-tab="staff"]');
+    if (!staffBtn || !staffBtn.parentElement) {
+      console.log('[admin] staff tab not found, skipping admin tab');
+      return;
+    }
+    const navContainer = staffBtn.parentElement;
+
+    // Защита от повторного добавления (hot-reload / повторный вызов init)
+    if (navContainer.querySelector('[data-tab="admin"]')) return;
+
+    const btn = document.createElement('div');
+    btn.className = 'ntab';
+    btn.setAttribute('data-tab', 'admin');
+    btn.setAttribute('onclick', 'goTab(this)');
+    btn.textContent = '📊 Активность';
+    // Вставляем после «Персонал», чтобы порядок был стабилен
+    staffBtn.insertAdjacentElement('afterend', btn);
+    console.log('[admin] is_admin=true, tab added next to staff');
+  } catch (e) {
+    console.log('[admin] check failed (normal for non-admins):', e.message);
+  }
+}
+
+async function renderAdmin() {
+  trackUI('admin_open');
+  const root = document.getElementById('adminRoot');
+  if (!root) return;
+  if (!ADMIN_STATE.is_admin) {
+    root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red);font-size:12px">403 — Доступ только для администраторов.</div>';
+    return;
+  }
+  await loadAdminData();
+  drawAdmin();
+}
+
+async function loadAdminData() {
+  if (ADMIN_STATE.loading) return;
+  ADMIN_STATE.loading = true;
+  const root = document.getElementById('adminRoot');
+  if (root && !ADMIN_STATE.data) {
+    root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">Загрузка аналитики активности…</div>';
+  }
+  try {
+    const data = await apiGet('/api/admin/activity?window=' + ADMIN_STATE.window);
+    ADMIN_STATE.data = data;
+  } catch (e) {
+    console.error('[admin] load failed:', e.message);
+    if (root) {
+      root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red);font-size:12px">Ошибка: ' + escapeHtml(e.message) + '</div>';
+    }
+  } finally {
+    ADMIN_STATE.loading = false;
+  }
+}
+
+function drawAdmin() {
+  const root = document.getElementById('adminRoot');
+  if (!root || !ADMIN_STATE.data) return;
+  const d = ADMIN_STATE.data;
+  const html = [
+    renderAdminToolbar(d),
+    renderAdminSummary(d.summary),
+    renderAdminSparkline(d.daily_dau),
+    renderAdminTwoCol(d),
+    renderAdminUsers(d.by_user),
+  ];
+  root.innerHTML = html.join('');
+}
+
+// ——— Toolbar ——————————————————————————————————————————————————————
+
+function renderAdminToolbar(d) {
+  const w = ADMIN_STATE.window;
+  return (
+    '<div class="admin-toolbar">' +
+      '<span class="admin-toolbar-label">Окно:</span>' +
+      '<div class="admin-toolbar-switch">' +
+        '<button class="' + (w === 7 ? 'active' : '') + '" onclick="switchAdminWindow(7)">7 дней</button>' +
+        '<button class="' + (w === 30 ? 'active' : '') + '" onclick="switchAdminWindow(30)">30 дней</button>' +
+      '</div>' +
+      '<button class="admin-toolbar-refresh" onclick="refreshAdmin()">↻ Обновить</button>' +
+      '<span style="color:var(--text3);font-size:10px;margin-left:10px">' +
+        'Обновлено: ' + formatAdminTime(d.generated_at) +
+      '</span>' +
+    '</div>'
+  );
+}
+
+async function switchAdminWindow(w) {
+  if (ADMIN_STATE.window === w) return;
+  ADMIN_STATE.window = w;
+  ADMIN_STATE.data = null;
+  await loadAdminData();
+  drawAdmin();
+}
+
+async function refreshAdmin() {
+  ADMIN_STATE.data = null;
+  await loadAdminData();
+  drawAdmin();
+}
+
+function formatAdminTime(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) +
+           ' ' + d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+  } catch (_e) { return iso; }
+}
+
+// ——— Сводка KPI ——————————————————————————————————————————————————————
+
+function renderAdminSummary(s) {
+  if (!s) return '';
+  const errPct = s.total_events > 0 ? +((s.errors / s.total_events) * 100).toFixed(1) : 0;
+  const errClass = errPct > 5 ? 'accent-red' : errPct > 2 ? 'accent-gold' : 'accent-green';
+  return (
+    '<div class="admin-summary-row">' +
+      adminCard('DAU', s.dau, 'уникальных за сегодня', 'accent-gold') +
+      adminCard('WAU', s.wau, 'уникальных за неделю', 'accent-blue') +
+      adminCard('Событий', (s.total_events || 0).toLocaleString('ru'), 'всего в окне', null) +
+      adminCard('API / UI', (s.api_calls || 0).toLocaleString('ru') + ' / ' + (s.ui_clicks || 0), 'запросов / кликов', null) +
+      adminCard('Ошибок', s.errors, errPct + '% от запросов', errClass) +
+    '</div>'
+  );
+}
+
+function adminCard(label, value, sub, extraClass) {
+  const cls = 'admin-summary-card' + (extraClass ? ' ' + extraClass : '');
+  return (
+    '<div class="' + cls + '">' +
+      '<div class="lbl">' + escapeHtml(label) + '</div>' +
+      '<div class="val">' + escapeHtml(String(value)) + '</div>' +
+      '<div class="sub">' + escapeHtml(sub) + '</div>' +
+    '</div>'
+  );
+}
+
+// ——— Sparkline DAU ————————————————————————————————————————————————
+
+function renderAdminSparkline(daily) {
+  if (!daily || !daily.length) return '';
+  const maxDau = Math.max.apply(null, daily.map(function(x){ return x.dau; }).concat([1]));
+  const bars = daily.slice(-14);
+  const todayIso = new Date().toISOString().slice(0, 10);
+
+  const barsHtml = bars.map(function(b) {
+    const h = Math.max(4, Math.round((b.dau / maxDau) * 100));
+    const isToday = b.date === todayIso;
+    const style = 'height:' + h + '%;' + (isToday ? 'background:linear-gradient(180deg,var(--green),var(--green2));' : '');
+    return (
+      '<div class="admin-spark-bar" style="' + style + '">' +
+        '<div class="tip">' + escapeHtml(b.date) + '<br>DAU: <b>' + b.dau + '</b> · событий: ' + b.events + '</div>' +
+      '</div>'
+    );
+  }).join('');
+
+  const labelsHtml = bars.map(function(b) {
+    const parts = b.date.split('-');
+    return '<div>' + parts[2] + '.' + parts[1] + '</div>';
+  }).join('');
+
+  return (
+    '<div class="admin-sparkline-wrap">' +
+      '<div class="admin-sparkline-title">DAU по дням (последние ' + bars.length + ' дней)</div>' +
+      '<div class="admin-sparkline">' + barsHtml + '</div>' +
+      '<div class="admin-spark-labels">' + labelsHtml + '</div>' +
+    '</div>'
+  );
+}
+
+// ——— Две колонки: топ табов + топ endpoints ——————————————————————————
+
+function renderAdminTwoCol(d) {
+  return (
+    '<div class="admin-two-col">' +
+      renderAdminTopTabs(d.top_tabs) +
+      renderAdminTopEndpoints(d.top_endpoints) +
+    '</div>'
+  );
+}
+
+function renderAdminTopTabs(tabs) {
+  const rows = (tabs || []).map(function(t, i) {
+    const name = (t.tab_action || '').replace(/^\/ui\//, '');
+    return (
+      '<div class="admin-rank-row">' +
+        '<span class="rank">' + (i + 1) + '.</span>' +
+        '<span class="name">' + escapeHtml(name) + '</span>' +
+        '<span class="count">' + t.clicks + '</span>' +
+        '<span class="users">' + t.unique_users + ' польз.</span>' +
+      '</div>'
+    );
+  }).join('');
+  return (
+    '<div class="admin-col">' +
+      '<div class="admin-col-title">Топ вкладок и UI-кликов</div>' +
+      '<div class="admin-rank-list">' + (rows || '<div style="padding:14px;color:var(--text3);font-size:11px">Нет данных</div>') + '</div>' +
+    '</div>'
+  );
+}
+
+function renderAdminTopEndpoints(eps) {
+  const rows = (eps || []).map(function(e) {
+    const isSlow = e.avg_ms > 1500;
+    const hasErrors = e.errors > 0;
+    return (
+      '<tr>' +
+        '<td class="endpoint-cell">' + escapeHtml(e.endpoint) + '</td>' +
+        '<td class="method-cell">' + escapeHtml(e.method) + '</td>' +
+        '<td class="num">' + e.calls + '</td>' +
+        '<td class="num">' + e.unique_users + '</td>' +
+        '<td class="num slow-cell' + (isSlow ? ' is-slow' : '') + '">' + e.avg_ms + '</td>' +
+        '<td class="num err-cell' + (hasErrors ? ' has-errors' : '') + '">' + e.errors + '</td>' +
+      '</tr>'
+    );
+  }).join('');
+  return (
+    '<div class="admin-col">' +
+      '<div class="admin-col-title">Топ API endpoints</div>' +
+      '<div style="overflow:auto;max-height:500px">' +
+        '<table class="admin-endpoint-table">' +
+          '<thead><tr>' +
+            '<th>Endpoint</th>' +
+            '<th>Метод</th>' +
+            '<th style="text-align:right">Вызовов</th>' +
+            '<th style="text-align:right">Польз.</th>' +
+            '<th style="text-align:right">Ср. мс</th>' +
+            '<th style="text-align:right">Ошибок</th>' +
+          '</tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+// ——— Таблица пользователей ————————————————————————————————————————————
+
+function renderAdminUsers(users) {
+  if (!users || !users.length) return '';
+
+  // Индикатор активности: точка зелёная/жёлтая/серая по давности last_seen
+  const now = Date.now();
+  const rows = users.map(function(u) {
+    const last = u.last_seen ? new Date(u.last_seen.replace(' ', 'T') + 'Z').getTime() : 0;
+    const hoursAgo = (now - last) / 3600000;
+    let dotClass = 'stale';
+    let dotLabel = '>1 нед.';
+    if (hoursAgo < 24) { dotClass = 'today'; dotLabel = 'сегодня'; }
+    else if (hoursAgo < 24 * 3) { dotClass = 'recent'; dotLabel = Math.round(hoursAgo / 24) + ' дн.'; }
+    else if (hoursAgo < 24 * 7) { dotClass = 'recent'; dotLabel = Math.round(hoursAgo / 24) + ' дн.'; }
+    else { dotLabel = Math.round(hoursAgo / 24) + ' дн.'; }
+
+    return (
+      '<tr>' +
+        '<td class="email-cell">' +
+          '<span class="admin-activity-dot ' + dotClass + '" title="' + dotLabel + '"></span>' +
+          escapeHtml(u.email) +
+        '</td>' +
+        '<td class="num">' + u.total_events + '</td>' +
+        '<td class="num">' + u.api_calls + '</td>' +
+        '<td class="num">' + u.ui_clicks + '</td>' +
+        '<td class="num">' + u.active_days + '</td>' +
+        '<td class="num">' + u.unique_endpoints + '</td>' +
+        '<td class="num">' + u.restaurants_viewed + '</td>' +
+        '<td class="small">' + escapeHtml(u.last_seen || '—') + '</td>' +
+      '</tr>'
+    );
+  }).join('');
+
+  return (
+    '<div class="admin-users-wrap">' +
+      '<div class="admin-col-title" style="border-bottom:1px solid var(--border)">Пользователи (' + users.length + ')</div>' +
+      '<div class="admin-users-scroll">' +
+        '<table class="admin-users-table">' +
+          '<thead><tr>' +
+            '<th>Email</th>' +
+            '<th style="text-align:right">Событий</th>' +
+            '<th style="text-align:right">API</th>' +
+            '<th style="text-align:right">UI</th>' +
+            '<th style="text-align:right">Дней</th>' +
+            '<th style="text-align:right">Endpoints</th>' +
+            '<th style="text-align:right">Ресторанов</th>' +
+            '<th>Последний заход</th>' +
+          '</tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+
 init();
+

@@ -29,6 +29,7 @@ import {
   handleStaffManagers,
   handleStaffLosses,
 } from './staff';
+import { handleAdminMe, handleAdminActivity } from './admin';
 import {
   requireJwtSecret,
   rateLimitOrResponse,
@@ -307,6 +308,18 @@ export default {
       return _r;
     }
 
+    // --- Admin (Phase 2.9.3) ---
+    if (url.pathname === "/api/admin/me" && request.method === "GET") {
+      const _r = await handleAdminMe(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+    if (url.pathname === "/api/admin/activity" && request.method === "GET") {
+      const _r = await handleAdminActivity(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+
     // --- AI Insight (Phase 2.6) ---
     if (url.pathname === "/api/ai-insight" && request.method === "POST") {
       const _r = await handleAiInsight(request, env, ctx);
@@ -314,7 +327,7 @@ export default {
       return _r;
     }
 
-    // --- Client-side activity tracking (Phase 2.5) ---
+    // --- Client-side activity tracking (Phase 2.5 + 2.9.3) ---
     if (url.pathname === '/api/activity' && request.method === 'POST') {
       const a = await authFromCookie(request, env);
       if (a instanceof Response) return new Response(null, { status: 204 });
@@ -322,11 +335,21 @@ export default {
         const body = await request.json() as { action?: string; tab?: string; restaurant_id?: number; meta?: string };
         const action = String(body.action || '').slice(0, 50);
         if (!action) return new Response(null, { status: 204 });
+
+        // Для события 'tab' включаем конкретную вкладку в endpoint, иначе
+        // в логе всё сливается в единый '/ui/tab' без детализации.
+        // Санитизация: только латинские буквы/цифры/дефис, max 30 символов.
+        const tabRaw = String(body.tab || '').slice(0, 30);
+        const tabSafe = tabRaw.replace(/[^a-zA-Z0-9_-]/g, '');
+        const endpointPath = (action === 'tab' && tabSafe)
+          ? `/ui/tab/${tabSafe}`
+          : `/ui/${action}`;
+
         ctx.waitUntil(
           logActivity(env, {
             user_id: a.user_id,
             email: a.email,
-            endpoint: '/ui/' + action,
+            endpoint: endpointPath,
             method: 'POST',
             restaurant_id: body.restaurant_id ?? null,
             response_status: 200,

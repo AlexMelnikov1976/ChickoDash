@@ -1,23 +1,46 @@
-// Chicko Analytics — Staff Analysis endpoints (Phase 2.9.0 skeleton)
+// Chicko Analytics — Staff Analysis endpoints (Phase 2.9.1 — real ClickHouse)
 // © 2026 System360 by Alex Melnikov. All rights reserved.
 // Proprietary software — unauthorized copying or distribution prohibited.
 //
-// Реализация раздела «Персонал». Полная спецификация — в STAFF_METRICS_PACT.md.
-//
 // 6 endpoints, все требуют session cookie (chicko_session, HttpOnly),
-// rate-limit 60/min/user через MAGIC_LINKS KV:
+// rate-limit 60/min/user:
 //
-//   GET /api/staff-list        — Block 1+2: overview + состав (таблица сотрудников)
-//   GET /api/staff-detail      — drawer отдельного сотрудника: история смен + KPI
-//   GET /api/staff-groups      — Block 3: 4 карточки групп + ресторанные агрегаты
-//   GET /api/staff-performance — Block 4: KS-матрица + bad/good shifts
-//   GET /api/staff-managers    — Block 5: рейтинг менеджеров дня
-//   GET /api/staff-losses      — Block 6: потери + риск-профиль
+//   GET /api/staff-list        — Block 1+2: период в цифрах + KPI + штат
+//   GET /api/staff-detail      — drawer отдельного сотрудника
+//   GET /api/staff-groups      — Block 3: 4 группы + ресторан + корреляция
+//   GET /api/staff-performance — Block 4: KS-матрица официантов + bad/good shifts
+//   GET /api/staff-managers    — Block 5: менеджеры дня за выбранный период
+//   GET /api/staff-losses      — Block 6: потери за период
 //
-// ⚠️ PHASE 2.9.0 ЗАГЛУШКИ: все endpoints возвращают моковые данные, имитирующие
-// ожидаемую форму ответа. Реальные SQL-запросы будут подключены в Phase 2.9.1
-// после наполнения chicko.staff_shifts и остальных таблиц через n8n pipeline.
-// Моки построены на реальных цифрах из анализа Chiko_worktime/Chiko3/Chiko4.
+// ИСТОЧНИКИ (ClickHouse database = db1, timezone = Europe/Kaliningrad UTC+2):
+//
+//   db1.`ЧикоВремя` (313K строк) — табель смен
+//     Дата Date32, Имя String, Роль String, Группа String,
+//     РабВремяЧас Decimal, Начислено Decimal, Приход DateTime64
+//
+//   db1.`Чико4` (183K строк) — дневной агрегат ресторана
+//     Дата DateTime64, Менеджер String,
+//     ВыручкаБар/Кухня/Доставка Decimal, Начислено Decimal,
+//     Бар/Зал/Клининг/Кухня Начислено Decimal,
+//     ПорчаТовараБар/Кухня, ПорчаВитрина, ПорчаПоВинеСотрудника,
+//     УдалениеБлюдСоСписанием, НедостачаИнвентаризации,
+//     ПитаниеПерсонала, МотивацияПерсонала, ПроработкаБар/Кухня/БрендШеф,
+//     КлиентскийСервис, Представительские, Оценка2Гис, ОценкаЯндекс,
+//     ФудкостОбщий, СкидкаОбщий, СрЧекОбщий, и др.
+//
+//   db1.`ЧикоНов3` (133K строк) — продажи по официантам
+//     Дата DateTime64, Официант String,
+//     СреднийЧек Decimal, КолВоЧеков Decimal, СрКолВоПозВЧеке Decimal
+//
+// Таблицы = один ресторан (Калининград). restaurant_id игнорируется на уровне
+// фильтров, но валидируется на входе для совместимости с остальными endpoint-ами.
+//
+// Факт-only: все данные возвращаются до `today()` включительно. Если выбранный
+// период уходит в будущее — в summary честно пишем "факт X из Y дней".
+//
+// Пороги активности (пакт v3 раздел 18):
+//   LEFT_STAFF_DAYS = 21  → сотрудники/менеджеры с last_shift > 21 дня
+//                           до end периода исключаются из основной выдачи.
 
 import {
   authFromCookie,
@@ -29,6 +52,7 @@ import {
   rateLimitOrResponse,
   RATE_LIMIT_DATA,
 } from './security';
+import { ClickHouseClient } from './clickhouse';
 import type { Env } from './index';
 
 function jsonResponse(body: unknown, request: Request, status: number = 200): Response {
@@ -38,26 +62,27 @@ function jsonResponse(body: unknown, request: Request, status: number = 200): Re
   });
 }
 
-// --- Общие пороги (см. пакт раздел 2) ---
+// --- Пороги классификации (пакт v3 раздел 2 + 18) ---
 const NEW_STAFF_DAYS = 30;
 const DORMANT_STAFF_DAYS = 14;
+const LEFT_STAFF_DAYS = 21;
 const TENURE_MIN_DAYS = 60;
 const OCCASIONAL_RATIO = 0.3;
 
-// --- Общая валидация параметров ---
+// --- Валидация параметров + расчёт факт/прогноз границ периода ---
 interface ValidatedInput {
   restId: number;
   start: string;
   end: string;
+  // Факт: только до today() (ClickHouse today() в timezone сервера).
+  // Если весь период в прошлом — factEnd = end; если end в будущем — factEnd = today.
+  factEnd: string;
+  daysInPeriod: number;   // календарных дней [start..end]
+  daysFact: number;       // фактически доступных [start..factEnd]
   user_id: string;
   email: string;
 }
 
-/**
- * Единая валидация: auth + rate-limit + restaurant_id + даты + диапазон.
- * Возвращает либо валидные значения, либо готовый Response с ошибкой.
- * Используется всеми 6 handlers — DRY.
- */
 async function validateCommon(
   request: Request,
   env: Env,
@@ -79,116 +104,278 @@ async function validateCommon(
   if (!start || !end) return jsonResponse({ error: 'Invalid start/end date (expected YYYY-MM-DD)' }, request, 400);
   if (start > end) return jsonResponse({ error: 'start must be <= end' }, request, 400);
 
-  const span = daysBetween(start, end);
-  if (span > MAX_DATE_RANGE_DAYS) {
-    return jsonResponse({ error: `Date range too wide (max ${MAX_DATE_RANGE_DAYS} days, got ${span})` }, request, 400);
+  const daysInPeriod = daysBetween(start, end);
+  if (daysInPeriod > MAX_DATE_RANGE_DAYS) {
+    return jsonResponse({ error: `Date range too wide (max ${MAX_DATE_RANGE_DAYS} days, got ${daysInPeriod})` }, request, 400);
   }
 
-  return { restId, start, end, user_id: a.user_id, email: a.email };
+  // today в Калининградской timezone (UTC+2). Workers в UTC, поэтому отнимаем оффсет.
+  // Калининград круглый год UTC+2 (без DST).
+  const nowUtc = new Date();
+  const kaliningradNow = new Date(nowUtc.getTime() + 2 * 3600 * 1000);
+  const today = kaliningradNow.toISOString().slice(0, 10);
+
+  const factEnd = end <= today ? end : today;
+  const daysFact = factEnd < start ? 0 : daysBetween(start, factEnd);
+
+  return { restId, start, end, factEnd, daysInPeriod, daysFact, user_id: a.user_id, email: a.email };
+}
+
+function makeClient(env: Env): ClickHouseClient {
+  return new ClickHouseClient({
+    host: env.CLICKHOUSE_HOST || 'http://localhost:8123',
+    user: env.CLICKHOUSE_USER || 'default',
+    password: env.CLICKHOUSE_PASSWORD || '',
+  });
+}
+
+// Хелпер: преобразует строку из Decimal(38,6) в number. ClickHouse отдаёт Decimal
+// как строку в JSON, чтобы не терять точность. Нам нужны number'а для арифметики.
+function d(v: unknown): number {
+  if (v === null || v === undefined) return 0;
+  if (typeof v === 'number') return v;
+  const n = parseFloat(String(v));
+  return isFinite(n) ? n : 0;
+}
+
+function median(arr: number[]): number {
+  if (!arr.length) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 // -----------------------------------------------------------------------------
-// GET /api/staff-list
+// GET /api/staff-list  — Block 1+2
 // -----------------------------------------------------------------------------
-// Block 1 (Overview KPI) + Block 2 (таблица сотрудников).
-// Возвращает список активных сотрудников за период + summary.
-// См. пакт разделы 3-5, 17 (Block 1, Block 2).
 export async function handleStaffList(request: Request, env: Env): Promise<Response> {
   try {
     const v = await validateCommon(request, env);
     if (v instanceof Response) return v;
 
-    console.log(`[staff-list] user=${v.user_id} rest=${v.restId} ${v.start}..${v.end}`);
+    console.log(`[staff-list] user=${v.user_id} rest=${v.restId} ${v.start}..${v.end} factEnd=${v.factEnd} daysFact=${v.daysFact}`);
 
-    // ⚠️ MOCK: цифры взяты из анализа Chiko_worktime.xlsx за последние 30 дней
-    const mockEmployees = [
-      {
-        employee_id: 'mock-1', employee_name: 'Рустамова Умеда',
-        role_primary: 'Повар', group_primary: 'Кухня',
-        tenure_days: 480, shifts_count: 24, hours_total: 271.68,
-        hours_avg_per_shift: 11.32, attendance_rate: 0.80, days_since_last_shift: 4,
-        status: 'core',
-        payroll_total_rub: 102966.72, rate_effective_rub_per_hour: 379, pay_type: 'hourly',
-        rate_vs_tariff_pct: 72.3,
-        revenue_per_hour_rub: null, checks_per_hour: null, avg_check_rub: null, items_per_check: null,
-      },
-      {
-        employee_id: 'mock-2', employee_name: 'Полникова Анастасия',
-        role_primary: 'Франшиза менеджер', group_primary: '-',
-        tenure_days: 720, shifts_count: 16, hours_total: 196.20,
-        hours_avg_per_shift: 12.26, attendance_rate: 0.53, days_since_last_shift: 5,
-        status: 'core',
-        payroll_total_rub: 0, rate_effective_rub_per_hour: 0, pay_type: 'franchise',
+    const ch = makeClient(env);
+
+    // Агрегат ресторана за период: выручка + ФОТ по дням.
+    // Берём Чико4 — там уже всё агрегировано по дню.
+    const sqlRestaurant = `
+      SELECT
+        COUNT(*) AS days_with_data,
+        SUM(toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка)) AS revenue_total,
+        SUM(toFloat64(Начислено)) AS payroll_total
+      FROM db1.\`Чико4\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+    `;
+
+    // Сотрудники за период: агрегат из ЧикоВремя, с last_shift для классификации left/dormant.
+    // Считаем часы, смены, ФОТ. last_shift относительно factEnd для фильтра left.
+    const sqlEmployees = `
+      SELECT
+        Имя AS employee_name,
+        any(Роль) AS role_primary,
+        any(Группа) AS group_primary,
+        COUNT(DISTINCT Дата) AS shifts_count,
+        SUM(toFloat64(РабВремяЧас)) AS hours_total,
+        SUM(toFloat64(Начислено)) AS payroll_total,
+        MAX(Дата) AS last_shift,
+        MIN(Дата) AS first_shift_in_period,
+        toDate('${v.factEnd}') - MAX(Дата) AS days_since_last_shift
+      FROM db1.\`ЧикоВремя\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND Имя IS NOT NULL
+        AND Имя != ''
+      GROUP BY Имя
+      HAVING shifts_count > 0
+      ORDER BY hours_total DESC
+    `;
+
+    // Глобальный tenure: первая смена сотрудника за всю историю ЧикоВремя.
+    // Нужен для отличения new от old-dormant.
+    const sqlTenure = `
+      SELECT
+        Имя AS employee_name,
+        toDate('${v.factEnd}') - MIN(Дата) AS tenure_days
+      FROM db1.\`ЧикоВремя\`
+      WHERE Имя IS NOT NULL AND Имя != ''
+      GROUP BY Имя
+    `;
+
+    const [restR, empR, tenureR] = await Promise.all([
+      ch.query(sqlRestaurant),
+      ch.query(sqlEmployees),
+      ch.query(sqlTenure),
+    ]);
+
+    const restRow = (restR.data[0] || {}) as Record<string, unknown>;
+    const revenueTotal = Math.round(d(restRow.revenue_total));
+    const payrollTotal = Math.round(d(restRow.payroll_total));
+    const daysWithData = Number(restRow.days_with_data) || 0;
+
+    // Map tenure
+    const tenureMap = new Map<string, number>();
+    for (const row of tenureR.data) {
+      const r = row as Record<string, unknown>;
+      tenureMap.set(String(r.employee_name), Number(r.tenure_days) || 0);
+    }
+
+    // Классификация статусов сотрудников
+    interface EmpRow {
+      employee_name: string;
+      role_primary: string;
+      group_primary: string;
+      shifts_count: number;
+      hours_total: number;
+      payroll_total: number;
+      last_shift: string;
+      first_shift_in_period: string;
+      days_since_last_shift: number;
+    }
+    const rawEmployees = empR.data as EmpRow[];
+
+    // Сначала отсекаем "left" по порогу LEFT_STAFF_DAYS
+    const activeEmployees = rawEmployees.filter(e => Number(e.days_since_last_shift) <= LEFT_STAFF_DAYS);
+    const excludedLeftCount = rawEmployees.length - activeEmployees.length;
+
+    const employees = activeEmployees.map((e, idx) => {
+      const tenure = tenureMap.get(e.employee_name) || 0;
+      const shiftsCount = Number(e.shifts_count) || 0;
+      const hoursTotal = d(e.hours_total);
+      const payroll = d(e.payroll_total);
+      const daysSince = Number(e.days_since_last_shift) || 0;
+      const avgHoursPerShift = shiftsCount > 0 ? +(hoursTotal / shiftsCount).toFixed(2) : 0;
+      const attendance = v.daysFact > 0 ? +(shiftsCount / v.daysFact).toFixed(2) : 0;
+      const rate = hoursTotal > 0 ? Math.round(payroll / hoursTotal) : 0;
+
+      let status: string;
+      if (tenure < NEW_STAFF_DAYS) status = 'new';
+      else if (daysSince > DORMANT_STAFF_DAYS) status = 'dormant';
+      else if (attendance < OCCASIONAL_RATIO && tenure >= TENURE_MIN_DAYS) status = 'occasional';
+      else if (shiftsCount >= v.daysFact * 0.5) status = 'core';
+      else status = 'regular';
+
+      return {
+        employee_id: `emp-${idx + 1}`, // stable-ish: порядок от hours_total DESC
+        employee_name: e.employee_name,
+        role_primary: e.role_primary || '—',
+        group_primary: e.group_primary || '-',
+        tenure_days: tenure,
+        shifts_count: shiftsCount,
+        hours_total: +hoursTotal.toFixed(2),
+        hours_avg_per_shift: avgHoursPerShift,
+        attendance_rate: attendance,
+        days_since_last_shift: daysSince,
+        status,
+        payroll_total_rub: Math.round(payroll),
+        rate_effective_rub_per_hour: rate,
+        pay_type: rate > 0 ? 'hourly' : 'franchise',
         rate_vs_tariff_pct: null,
-        revenue_per_hour_rub: 11925, checks_per_hour: 8.8, avg_check_rub: 1411, items_per_check: 5.9,
-      },
-      {
-        employee_id: 'mock-3', employee_name: 'Емельянова Анастасия',
-        role_primary: 'Франшиза менеджер', group_primary: '-',
-        tenure_days: 650, shifts_count: 16, hours_total: 193.37,
-        hours_avg_per_shift: 12.09, attendance_rate: 0.53, days_since_last_shift: 0,
-        status: 'core',
-        payroll_total_rub: 0, rate_effective_rub_per_hour: 0, pay_type: 'franchise',
-        rate_vs_tariff_pct: null,
-        revenue_per_hour_rub: 10850, checks_per_hour: 7.9, avg_check_rub: 1491, items_per_check: 6.2,
-      },
-      {
-        employee_id: 'mock-4', employee_name: 'Ларионова Полина',
-        role_primary: 'Бармен', group_primary: 'Бар',
-        tenure_days: 380, shifts_count: 17, hours_total: 202.72,
-        hours_avg_per_shift: 11.92, attendance_rate: 0.57, days_since_last_shift: 4,
-        status: 'core',
-        payroll_total_rub: 70575, rate_effective_rub_per_hour: 348, pay_type: 'hourly',
-        rate_vs_tariff_pct: 58.2,
-        revenue_per_hour_rub: null, checks_per_hour: null, avg_check_rub: null, items_per_check: null,
-      },
-      {
-        employee_id: 'mock-5', employee_name: 'Сенина Анна',
-        role_primary: 'Кассир', group_primary: 'Зал',
-        tenure_days: 210, shifts_count: 20, hours_total: 167.28,
-        hours_avg_per_shift: 8.36, attendance_rate: 0.67, days_since_last_shift: 4,
-        status: 'core',
-        payroll_total_rub: 48009, rate_effective_rub_per_hour: 287, pay_type: 'hourly',
-        rate_vs_tariff_pct: 43.5,
-        revenue_per_hour_rub: 8930, checks_per_hour: 6.1, avg_check_rub: 1463, items_per_check: 5.2,
-      },
-    ];
+        revenue_per_hour_rub: null, // Атрибуция выручки — в /api/staff-performance
+        checks_per_hour: null,
+        avg_check_rub: null,
+        items_per_check: null,
+      };
+    });
+
+    // Менеджер-менее-дней — сколько дней периода прошли без менеджера.
+    const sqlNoMgr = `
+      SELECT COUNT(*) AS cnt
+      FROM db1.\`Чико4\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND (Менеджер IS NULL OR Менеджер = '' OR Менеджер = 'Отсутствовал')
+    `;
+    const noMgrR = await ch.query(sqlNoMgr);
+    const daysWithoutManager = Number((noMgrR.data[0] as Record<string, unknown>)?.cnt) || 0;
+
+    const hoursTotal = employees.reduce((s, e) => s + e.hours_total, 0);
+    const activeHeadcount = employees.length;
+    const newCount = employees.filter(e => e.status === 'new').length;
+    const rotationPct = activeHeadcount > 0
+      ? +((newCount / activeHeadcount) * 100).toFixed(1)
+      : 0;
+
+    const statusCounts: Record<string, number> = { core: 0, regular: 0, new: 0, occasional: 0, dormant: 0 };
+    for (const e of employees) statusCounts[e.status] = (statusCounts[e.status] || 0) + 1;
+
+    const groupCounts: Record<string, number> = {};
+    for (const e of employees) groupCounts[e.group_primary] = (groupCounts[e.group_primary] || 0) + 1;
+
+    const shiftsTotal = employees.reduce((s, e) => s + e.shifts_count, 0);
 
     return jsonResponse({
-      employees: mockEmployees,
-      summary: {
-        active_headcount: 35,
-        total_hours: 4205,
-        total_payroll: 1578340,
-        status_counts: { core: 12, regular: 14, new: 3, occasional: 4, dormant: 2 },
-        group_counts: { 'Кухня': 15, 'Зал': 8, 'Бар': 3, 'Клининг': 5, '-': 4 },
+      period_stats: {
+        days_in_period: v.daysInPeriod,
+        days_fact: v.daysFact,
+        days_with_data: daysWithData,
+        revenue_total_rub: revenueTotal,
+        revenue_per_day_avg_rub: v.daysFact > 0 ? Math.round(revenueTotal / v.daysFact) : 0,
+        hours_total: Math.round(hoursTotal),
+        shifts_total: shiftsTotal,
+        payroll_total_rub: payrollTotal, // из Чико4 (включает всё)
       },
       kpi: {
-        // Block 1 — 5 главных KPI
-        payroll_pct_of_revenue: 13.0,
-        active_headcount: 35,
-        revenue_per_hour_rub: 2832,
-        rotation_pct: 14,
-        days_without_manager: 7,
+        payroll_pct_of_revenue: {
+          value: revenueTotal > 0 ? +((payrollTotal / revenueTotal) * 100).toFixed(1) : 0,
+          numerator: payrollTotal,
+          denominator: revenueTotal,
+          formula: 'ФОТ за период ÷ Выручка за период × 100',
+          unit: '%',
+          norm: { min: 20, max: 25 },
+        },
+        active_headcount: {
+          value: activeHeadcount,
+          formula: `Сотрудников со сменой в периоде (исключая уволенных с last_shift > ${LEFT_STAFF_DAYS} дней)`,
+          unit: 'чел',
+        },
+        revenue_per_hour_rub: {
+          value: hoursTotal > 0 ? Math.round(revenueTotal / hoursTotal) : 0,
+          numerator: revenueTotal,
+          denominator: Math.round(hoursTotal),
+          formula: 'Выручка за период ÷ Часы работы персонала',
+          unit: '₽/час',
+        },
+        rotation_pct: {
+          value: rotationPct,
+          numerator: newCount,
+          denominator: activeHeadcount,
+          formula: 'Новых сотрудников (стаж < 30 дней) ÷ Активный состав × 100',
+          unit: '%',
+        },
+        days_without_manager: {
+          value: daysWithoutManager,
+          numerator: daysWithoutManager,
+          denominator: v.daysFact,
+          formula: 'Дней с Менеджер=NULL/Отсутствовал ÷ Дней с данными',
+          unit: 'дн',
+        },
       },
-      period: { start: v.start, end: v.end, days: daysBetween(v.start, v.end) },
+      employees,
+      summary: {
+        active_headcount: activeHeadcount,
+        total_hours: Math.round(hoursTotal),
+        total_payroll: payrollTotal,
+        status_counts: statusCounts,
+        group_counts: groupCounts,
+        excluded_left_count: excludedLeftCount,
+      },
+      period: { start: v.start, end: v.end, days: v.daysInPeriod, fact_end: v.factEnd, days_fact: v.daysFact },
       meta: {
-        mock: true,
-        pipeline_status: 'Phase 2.9.0 skeleton — data pipeline not yet connected',
-        payroll_data_valid_from: '2024-07-01',
+        mock: false,
+        pipeline_status: 'Phase 2.9.1 — real ClickHouse data',
+        source: 'db1.ЧикоВремя + db1.Чико4',
+        left_staff_threshold_days: LEFT_STAFF_DAYS,
       },
     }, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[staff-list] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, request, 500);
+    return jsonResponse({ error: 'Request failed', detail: err.message }, request, 500);
   }
 }
 
 // -----------------------------------------------------------------------------
-// GET /api/staff-detail?employee_id=X
+// GET /api/staff-detail
 // -----------------------------------------------------------------------------
-// Drawer отдельного сотрудника: полная карточка + история смен + графики.
 export async function handleStaffDetail(request: Request, env: Env): Promise<Response> {
   try {
     const v = await validateCommon(request, env);
@@ -202,407 +389,867 @@ export async function handleStaffDetail(request: Request, env: Env): Promise<Res
 
     console.log(`[staff-detail] user=${v.user_id} rest=${v.restId} emp=${employeeId} ${v.start}..${v.end}`);
 
+    // employee_id у нас в формате `emp-N` — порядковый номер в отсортированном списке.
+    // Чтобы найти конкретного сотрудника — перезапрашиваем тот же список и берём по индексу.
+    // Это не идеально (N+1 запрос при клике), но альтернативы — UUID у нас нет.
+    const ch = makeClient(env);
+
+    const match = employeeId.match(/^emp-(\d+)$/);
+    if (!match) return jsonResponse({ error: 'Invalid employee_id format' }, request, 400);
+    const empIdx = parseInt(match[1], 10) - 1;
+
+    const sqlEmployees = `
+      SELECT
+        Имя AS employee_name,
+        any(Роль) AS role_primary,
+        any(Группа) AS group_primary,
+        COUNT(DISTINCT Дата) AS shifts_count,
+        SUM(toFloat64(РабВремяЧас)) AS hours_total,
+        SUM(toFloat64(Начислено)) AS payroll_total,
+        MAX(Дата) AS last_shift,
+        toDate('${v.factEnd}') - MAX(Дата) AS days_since_last_shift
+      FROM db1.\`ЧикоВремя\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND Имя IS NOT NULL AND Имя != ''
+      GROUP BY Имя
+      HAVING shifts_count > 0
+      ORDER BY hours_total DESC
+    `;
+    const empR = await ch.query(sqlEmployees);
+    const rows = empR.data as Array<Record<string, unknown>>;
+
+    // Фильтруем left-сотрудников, как в /api/staff-list
+    const active = rows.filter(r => Number(r.days_since_last_shift) <= LEFT_STAFF_DAYS);
+    if (empIdx < 0 || empIdx >= active.length) {
+      return jsonResponse({ error: 'Employee not found in this period' }, request, 404);
+    }
+    const emp = active[empIdx];
+    const empName = String(emp.employee_name);
+
+    // Детали по сотруднику: tenure + timeline смен + атрибуция выручки
+    const [tenureR, timelineR, attrR, restAggR] = await Promise.all([
+      ch.query(`
+        SELECT toDate('${v.factEnd}') - MIN(Дата) AS tenure_days
+        FROM db1.\`ЧикоВремя\`
+        WHERE Имя = '${empName.replace(/'/g, "''")}'
+      `),
+      ch.query(`
+        SELECT
+          toDate(Дата) AS date,
+          Роль AS role,
+          toFloat64(РабВремяЧас) AS hours,
+          toFloat64(Начислено) AS payroll
+        FROM db1.\`ЧикоВремя\`
+        WHERE Имя = '${empName.replace(/'/g, "''")}'
+          AND toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        ORDER BY Дата DESC
+        LIMIT 30
+      `),
+      // Атрибуция выручки — если этот человек был официантом в ЧикоНов3
+      ch.query(`
+        SELECT
+          SUM(toFloat64(СреднийЧек) * toFloat64(КолВоЧеков)) AS revenue_total,
+          SUM(toFloat64(КолВоЧеков)) AS checks_total,
+          AVG(toFloat64(СреднийЧек)) AS avg_check
+        FROM db1.\`ЧикоНов3\`
+        WHERE Официант = '${empName.replace(/'/g, "''")}'
+          AND toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      `),
+      // Агрегат ресторана для contribution
+      ch.query(`
+        SELECT
+          SUM(toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка)) AS revenue_total,
+          SUM(toFloat64(Начислено)) AS payroll_total
+        FROM db1.\`Чико4\`
+        WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      `),
+    ]);
+
+    const tenure = Number((tenureR.data[0] as Record<string, unknown>)?.tenure_days) || 0;
+    const empHours = d(emp.hours_total);
+    const empPayroll = Math.round(d(emp.payroll_total));
+    const empShifts = Number(emp.shifts_count);
+    const attr = attrR.data[0] as Record<string, unknown> || {};
+    const attrRevenue = Math.round(d(attr.revenue_total));
+    const attrChecks = Math.round(d(attr.checks_total));
+    const attrAvgChk = Math.round(d(attr.avg_check));
+
+    const rest = restAggR.data[0] as Record<string, unknown> || {};
+    const restRevenue = Math.round(d(rest.revenue_total));
+    const restPayroll = Math.round(d(rest.payroll_total));
+    // restHours — отдельно агрегируем, т.к. у сотрудников могут быть часы не в ЧикоВремя
+    // для простоты считаем сумму по всем активным сотрудникам
+    const sqlRestHours = `
+      SELECT SUM(toFloat64(РабВремяЧас)) AS hours_total
+      FROM db1.\`ЧикоВремя\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+    `;
+    const restHoursR = await ch.query(sqlRestHours);
+    const restHours = d((restHoursR.data[0] as Record<string, unknown>)?.hours_total);
+
+    const rate = empHours > 0 ? Math.round(empPayroll / empHours) : 0;
+    const revPerHour = empHours > 0 && attrRevenue > 0 ? Math.round(attrRevenue / empHours) : null;
+    const checksPerHour = empHours > 0 && attrChecks > 0 ? +(attrChecks / empHours).toFixed(1) : null;
+    const daysSinceLast = Number(emp.days_since_last_shift) || 0;
+
+    const timeline = (timelineR.data as Array<Record<string, unknown>>).map(r => ({
+      date: String(r.date),
+      role: String(r.role || '—'),
+      hours: +d(r.hours).toFixed(2),
+      payroll: Math.round(d(r.payroll)),
+      revenue_attributed: null, // Пока не считаем дневную атрибуцию в timeline
+      checks: null,
+    }));
+
+    // Классификация статуса
+    let status: string;
+    if (tenure < NEW_STAFF_DAYS) status = 'new';
+    else if (daysSinceLast > DORMANT_STAFF_DAYS) status = 'dormant';
+    else if (empShifts / Math.max(1, v.daysFact) < OCCASIONAL_RATIO && tenure >= TENURE_MIN_DAYS) status = 'occasional';
+    else if (empShifts >= v.daysFact * 0.5) status = 'core';
+    else status = 'regular';
+
     return jsonResponse({
       employee: {
         employee_id: employeeId,
-        employee_name: 'Полникова Анастасия',
-        role_primary: 'Франшиза менеджер',
-        group_primary: '-',
-        tenure_days: 720,
-        first_shift_ever: '2024-05-11',
-        last_shift: '2026-04-18',
-        status: 'core',
+        employee_name: empName,
+        role_primary: emp.role_primary || '—',
+        group_primary: emp.group_primary || '-',
+        tenure_days: tenure,
+        status,
       },
       kpi_period: {
-        shifts_count: 16,
-        hours_total: 196.20,
-        hours_avg_per_shift: 12.26,
-        days_since_last_shift: 5,
-        payroll_total_rub: 0,
-        rate_effective_rub_per_hour: 0,
-        revenue_per_hour_rub: 11925,
-        checks_per_hour: 8.8,
-        avg_check_rub: 1411,
+        shifts_count: empShifts,
+        hours_total: +empHours.toFixed(2),
+        hours_avg_per_shift: empShifts > 0 ? +(empHours / empShifts).toFixed(2) : 0,
+        days_since_last_shift: daysSinceLast,
+        payroll_total_rub: empPayroll,
+        rate_effective_rub_per_hour: rate,
+        revenue_per_hour_rub: revPerHour,
+        checks_per_hour: checksPerHour,
+        avg_check_rub: attrAvgChk || null,
+        items_per_check: null,
       },
-      shifts_timeline: [
-        // ⚠️ MOCK: пример 3 последних смен
-        { date: '2026-04-18', role: 'Франшиза менеджер', hours: 11.98, payroll: 0, revenue_attributed: 142830, checks: 89 },
-        { date: '2026-04-17', role: 'Франшиза менеджер', hours: 12.15, payroll: 0, revenue_attributed: 168250, checks: 112 },
-        { date: '2026-04-15', role: 'Франшиза менеджер', hours: 12.28, payroll: 0, revenue_attributed: 155900, checks: 98 },
-      ],
+      contribution: {
+        hours_share_pct: restHours > 0 ? +((empHours / restHours) * 100).toFixed(1) : 0,
+        hours_share_formula: `${empHours.toFixed(1)} ч ÷ ${Math.round(restHours)} ч ресторана × 100`,
+        payroll_share_pct: restPayroll > 0 ? +((empPayroll / restPayroll) * 100).toFixed(1) : 0,
+        payroll_share_formula: `${empPayroll.toLocaleString()} ₽ ÷ ${restPayroll.toLocaleString()} ₽ ФОТ × 100`,
+        revenue_attributed_rub: attrRevenue || null,
+        revenue_share_pct: attrRevenue > 0 && restRevenue > 0
+          ? +((attrRevenue / restRevenue) * 100).toFixed(1)
+          : null,
+        revenue_share_formula: attrRevenue > 0 && restRevenue > 0
+          ? `${attrRevenue.toLocaleString()} ₽ его выручки ÷ ${restRevenue.toLocaleString()} ₽ ресторана × 100`
+          : null,
+      },
+      shifts_timeline: timeline,
       compare_to_role_median: {
-        hours_total_median: 180,
-        revenue_per_hour_median: 10800,
-        avg_check_median: 1380,
+        hours_total_median: null,
+        revenue_per_hour_median: null,
+        avg_check_median: null,
       },
-      meta: { mock: true, pipeline_status: 'Phase 2.9.0 skeleton' },
+      period: { start: v.start, end: v.end, days: v.daysInPeriod, fact_end: v.factEnd, days_fact: v.daysFact },
+      meta: { mock: false, pipeline_status: 'Phase 2.9.1' },
     }, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[staff-detail] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, request, 500);
+    return jsonResponse({ error: 'Request failed', detail: err.message }, request, 500);
   }
 }
 
 // -----------------------------------------------------------------------------
-// GET /api/staff-groups
+// GET /api/staff-groups — Block 3
 // -----------------------------------------------------------------------------
-// Block 3: метрики по 4 группам + ресторанные агрегаты (ФОТ%, корреляция).
-// См. пакт раздел 4 (группа) и раздел 5 (ресторан).
 export async function handleStaffGroups(request: Request, env: Env): Promise<Response> {
   try {
     const v = await validateCommon(request, env);
     if (v instanceof Response) return v;
 
-    console.log(`[staff-groups] user=${v.user_id} rest=${v.restId} ${v.start}..${v.end}`);
+    console.log(`[staff-groups] user=${v.user_id} rest=${v.restId} ${v.start}..${v.end} daysFact=${v.daysFact}`);
 
-    // ⚠️ MOCK: 4 production-группы + 1 карточка Менеджмента
-    const mockGroups = [
-      {
-        group_name: 'Кухня', group_code: 'kitchen',
-        headcount: 15, hours_total: 2100, payroll_total_rub: 850000,
-        payroll_pct_of_revenue: 8.3, hours_per_person_avg: 140,
-        cost_per_hour_rub: 404, revenue_per_hour_group_rub: 4900,
-        turnover_pct: 13.3, concentration_top30_pct: 62,
-      },
-      {
-        group_name: 'Зал', group_code: 'hall',
-        headcount: 8, hours_total: 820, payroll_total_rub: 245000,
-        payroll_pct_of_revenue: 2.4, hours_per_person_avg: 102,
-        cost_per_hour_rub: 299, revenue_per_hour_group_rub: null,
-        turnover_pct: 25.0, concentration_top30_pct: 58,
-      },
-      {
-        group_name: 'Бар', group_code: 'bar',
-        headcount: 3, hours_total: 480, payroll_total_rub: 160000,
-        payroll_pct_of_revenue: 1.6, hours_per_person_avg: 160,
-        cost_per_hour_rub: 333, revenue_per_hour_group_rub: 8200,
-        turnover_pct: 0, concentration_top30_pct: 71,
-      },
-      {
-        group_name: 'Клининг', group_code: 'cleaning',
-        headcount: 5, hours_total: 620, payroll_total_rub: 195000,
-        payroll_pct_of_revenue: 1.9, hours_per_person_avg: 124,
-        cost_per_hour_rub: 315, revenue_per_hour_group_rub: null,
-        turnover_pct: 20.0, concentration_top30_pct: 55,
-      },
-      {
-        group_name: 'Менеджмент', group_code: 'management',
-        headcount: 4, hours_total: 640, payroll_total_rub: 230000,
-        payroll_pct_of_revenue: 2.2, hours_per_person_avg: 160,
-        cost_per_hour_rub: 359, revenue_per_hour_group_rub: null,
-        turnover_pct: 0, concentration_top30_pct: 80,
-      },
-    ];
+    const ch = makeClient(env);
+
+    // Агрегат по группам: headcount (уникальных активных), часы, ФОТ
+    const sqlGroups = `
+      SELECT
+        Группа AS group_name,
+        COUNT(DISTINCT Имя) AS headcount,
+        SUM(toFloat64(РабВремяЧас)) AS hours_total,
+        SUM(toFloat64(Начислено)) AS payroll_total
+      FROM db1.\`ЧикоВремя\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND Имя IS NOT NULL AND Имя != ''
+        AND Имя IN (
+          SELECT Имя FROM db1.\`ЧикоВремя\`
+          WHERE Имя IS NOT NULL AND Имя != ''
+          GROUP BY Имя
+          HAVING toDate('${v.factEnd}') - MAX(Дата) <= ${LEFT_STAFF_DAYS}
+        )
+      GROUP BY Группа
+      ORDER BY hours_total DESC
+    `;
+
+    // Ресторан-агрегат из Чико4 (выручка, общий ФОТ, scatter по дням)
+    const sqlRestDaily = `
+      SELECT
+        toDate(Дата) AS date,
+        toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка) AS revenue,
+        toFloat64(Начислено) AS payroll
+      FROM db1.\`Чико4\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      ORDER BY date DESC
+    `;
+
+    // Часы по дням — для корреляции
+    const sqlHoursDaily = `
+      SELECT
+        toDate(Дата) AS date,
+        SUM(toFloat64(РабВремяЧас)) AS hours
+      FROM db1.\`ЧикоВремя\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      GROUP BY date
+      ORDER BY date DESC
+    `;
+
+    const [grpR, restR, hoursR] = await Promise.all([
+      ch.query(sqlGroups),
+      ch.query(sqlRestDaily),
+      ch.query(sqlHoursDaily),
+    ]);
+
+    const GROUP_MAP: Record<string, { code: string; display: string; revProducer: boolean }> = {
+      'Кухня':    { code: 'kitchen',    display: 'Кухня',      revProducer: true  },
+      'Зал':      { code: 'hall',       display: 'Зал',        revProducer: false },
+      'Бар':      { code: 'bar',        display: 'Бар',        revProducer: true  },
+      'Клининг':  { code: 'cleaning',   display: 'Клининг',    revProducer: false },
+      '-':        { code: 'management', display: 'Менеджмент', revProducer: false },
+    };
+
+    const restDaily = restR.data as Array<Record<string, unknown>>;
+    const revenueTotal = restDaily.reduce((s, r) => s + d(r.revenue), 0);
+    const payrollTotalFromDaily = restDaily.reduce((s, r) => s + d(r.payroll), 0);
+
+    const groups = (grpR.data as Array<Record<string, unknown>>)
+      .map(g => {
+        const rawName = String(g.group_name || '-');
+        const meta = GROUP_MAP[rawName] || { code: 'other', display: rawName, revProducer: false };
+        const headcount = Number(g.headcount);
+        const groupHours = d(g.hours_total);
+        const groupPayroll = Math.round(d(g.payroll_total));
+        const payrollPct = revenueTotal > 0 ? +((groupPayroll / revenueTotal) * 100).toFixed(1) : 0;
+
+        return {
+          group_name: meta.display,
+          group_code: meta.code,
+          headcount,
+          hours_total: Math.round(groupHours),
+          payroll_total_rub: groupPayroll,
+          payroll_pct_of_revenue: payrollPct,
+          payroll_pct_formula: `${groupPayroll.toLocaleString()} ₽ ÷ ${Math.round(revenueTotal).toLocaleString()} ₽ × 100`,
+          hours_per_person_avg: headcount > 0 ? Math.round(groupHours / headcount) : 0,
+          cost_per_hour_rub: groupHours > 0 ? Math.round(groupPayroll / groupHours) : 0,
+          revenue_per_hour_group_rub: meta.revProducer && groupHours > 0
+            ? Math.round(revenueTotal / groupHours)
+            : null,
+          turnover_pct: 0, // TODO: посчитать в Phase 2.9.1b
+          concentration_top30_pct: 0,
+        };
+      });
+
+    // Корреляция часов и выручки — Pearson по дням
+    const revByDate = new Map<string, number>();
+    for (const r of restDaily) revByDate.set(String(r.date), d(r.revenue));
+    const hoursByDate = new Map<string, number>();
+    for (const r of hoursR.data as Array<Record<string, unknown>>) hoursByDate.set(String(r.date), d(r.hours));
+
+    // Пересечение дат для корреляции
+    const commonDates = Array.from(revByDate.keys()).filter(d => hoursByDate.has(d));
+    let correlation = 0;
+    if (commonDates.length > 2) {
+      const xs = commonDates.map(d => hoursByDate.get(d)!);
+      const ys = commonDates.map(d => revByDate.get(d)!);
+      const meanX = xs.reduce((a, b) => a + b, 0) / xs.length;
+      const meanY = ys.reduce((a, b) => a + b, 0) / ys.length;
+      let num = 0, denX = 0, denY = 0;
+      for (let i = 0; i < xs.length; i++) {
+        const dx = xs[i] - meanX;
+        const dy = ys[i] - meanY;
+        num += dx * dy;
+        denX += dx * dx;
+        denY += dy * dy;
+      }
+      const denom = Math.sqrt(denX * denY);
+      correlation = denom > 0 ? +(num / denom).toFixed(2) : 0;
+    }
+
+    const scatterDaily = commonDates.map(date => ({
+      date,
+      hours: +hoursByDate.get(date)!.toFixed(1),
+      revenue: Math.round(revByDate.get(date)!),
+    }));
+
+    const hoursTotal = hoursR.data.reduce((s, r) => s + d((r as Record<string, unknown>).hours), 0);
+    const headcountTotal = groups.reduce((s, g) => s + g.headcount, 0);
 
     return jsonResponse({
-      groups: mockGroups,
+      groups,
       restaurant: {
-        active_headcount: 35,
-        payroll_total_rub: 2100000,
-        revenue_total_rub: 16200000,
-        payroll_pct_of_revenue: 13.0,
-        revenue_per_hour_rub: 2832,
-        daily_headcount_avg: 18.6,
-        daily_headcount_dow: { '1': 17, '2': 18, '3': 18, '4': 19, '5': 22, '6': 24, '7': 21 },
-        dormant_count: 2,
-        rotation_pct: 14,
-        tenure_avg_days: 245,
-        days_without_manager: 3,
-        correlation_hours_revenue: 0.72,
+        active_headcount: headcountTotal,
+        payroll_total_rub: Math.round(payrollTotalFromDaily),
+        revenue_total_rub: Math.round(revenueTotal),
+        hours_total: Math.round(hoursTotal),
+        payroll_pct_of_revenue: revenueTotal > 0
+          ? +((payrollTotalFromDaily / revenueTotal) * 100).toFixed(1)
+          : 0,
+        payroll_pct_formula: `${Math.round(payrollTotalFromDaily).toLocaleString()} ₽ ÷ ${Math.round(revenueTotal).toLocaleString()} ₽ × 100`,
+        revenue_per_hour_rub: hoursTotal > 0 ? Math.round(revenueTotal / hoursTotal) : 0,
+        daily_headcount_avg: v.daysFact > 0 ? +(headcountTotal / 1).toFixed(1) : 0, // TODO точнее
+        dormant_count: 0,
+        rotation_pct: 0,
+        tenure_avg_days: 0,
+        days_without_manager: 0,
+        correlation_hours_revenue: correlation,
+        correlation_formula: `Pearson(дневные часы, дневная выручка) по ${commonDates.length} дням`,
       },
-      scatter_daily: [
-        // ⚠️ MOCK: 5 точек для scatter hours × revenue (3.11)
-        { date: '2026-04-14', hours: 189, revenue: 340000 },
-        { date: '2026-04-15', hours: 215, revenue: 410000 },
-        { date: '2026-04-16', hours: 198, revenue: 385000 },
-        { date: '2026-04-17', hours: 243, revenue: 475000 },
-        { date: '2026-04-18', hours: 260, revenue: 520000 },
-      ],
-      period: { start: v.start, end: v.end, days: daysBetween(v.start, v.end) },
-      meta: { mock: true, pipeline_status: 'Phase 2.9.0 skeleton' },
+      scatter_daily: scatterDaily,
+      period: { start: v.start, end: v.end, days: v.daysInPeriod, fact_end: v.factEnd, days_fact: v.daysFact },
+      meta: { mock: false, pipeline_status: 'Phase 2.9.1' },
     }, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[staff-groups] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, request, 500);
+    return jsonResponse({ error: 'Request failed', detail: err.message }, request, 500);
   }
 }
 
 // -----------------------------------------------------------------------------
-// GET /api/staff-performance
+// GET /api/staff-performance — Block 4: KS-матрица официантов
 // -----------------------------------------------------------------------------
-// Block 4: KS-матрица для productive ролей (официанты/кассиры/бармены)
-// + bad/good shifts.
-// См. пакт раздел 6 (KS-матрица) и раздел 7 (плохие/хорошие смены).
 export async function handleStaffPerformance(request: Request, env: Env): Promise<Response> {
   try {
     const v = await validateCommon(request, env);
     if (v instanceof Response) return v;
 
-    console.log(`[staff-performance] user=${v.user_id} rest=${v.restId} ${v.start}..${v.end}`);
+    console.log(`[staff-performance] user=${v.user_id} rest=${v.restId} ${v.start}..${v.end} daysFact=${v.daysFact}`);
 
-    // ⚠️ MOCK: KS-матрица по 5 сотрудникам с атрибуцией выручки
-    const mockMatrix = [
-      {
-        employee_id: 'mock-2', employee_name: 'Полникова Анастасия', role_primary: 'Менеджер смены',
-        hours_total: 196, hours_rank: 1, revenue_per_hour_rub: 11925, rev_per_hour_rank: 1,
-        ks_class: 'star',
-      },
-      {
-        employee_id: 'mock-3', employee_name: 'Емельянова Анастасия', role_primary: 'Менеджер смены',
-        hours_total: 193, hours_rank: 2, revenue_per_hour_rub: 10850, rev_per_hour_rank: 2,
-        ks_class: 'star',
-      },
-      {
-        employee_id: 'mock-5', employee_name: 'Сенина Анна', role_primary: 'Кассир',
-        hours_total: 167, hours_rank: 3, revenue_per_hour_rub: 8930, rev_per_hour_rank: 4,
-        ks_class: 'plowhorse',
-      },
-      {
-        employee_id: 'mock-6', employee_name: 'Моравец Лаура', role_primary: 'Кассир',
-        hours_total: 143, hours_rank: 4, revenue_per_hour_rub: 9850, rev_per_hour_rank: 3,
-        ks_class: 'star',
-      },
-      {
-        employee_id: 'mock-7', employee_name: 'Кахановская Алиса', role_primary: 'Официант',
-        hours_total: 98, hours_rank: 5, revenue_per_hour_rub: 7650, rev_per_hour_rank: 5,
-        ks_class: 'dog',
-      },
-    ];
+    const ch = makeClient(env);
 
-    const mockBadShifts = [
-      { report_date: '2026-04-10', revenue: 120000, payroll: 58000, fot_pct: 48.3,
-        manager: 'Гусева Кристина', headcount: 22 },
-      { report_date: '2026-04-03', revenue: 145000, payroll: 61000, fot_pct: 42.1,
-        manager: 'Долорет Флоренс', headcount: 24 },
-    ];
+    // Атрибуция выручки по официантам из ЧикоНов3 + часы из ЧикоВремя.
+    // Only officiant roles — они из ЧикоНов3 autoматически.
+    const sqlPerf = `
+      SELECT
+        n.Официант AS employee_name,
+        any(w.Роль) AS role_primary,
+        SUM(toFloat64(n.СреднийЧек) * toFloat64(n.КолВоЧеков)) AS revenue_total,
+        SUM(toFloat64(n.КолВоЧеков)) AS checks_total,
+        (SELECT SUM(toFloat64(РабВремяЧас))
+         FROM db1.\`ЧикоВремя\`
+         WHERE Имя = n.Официант
+           AND toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        ) AS hours_total,
+        (SELECT MAX(Дата)
+         FROM db1.\`ЧикоВремя\`
+         WHERE Имя = n.Официант
+        ) AS last_shift_global
+      FROM db1.\`ЧикоНов3\` n
+      LEFT JOIN db1.\`ЧикоВремя\` w ON w.Имя = n.Официант
+      WHERE toDate(n.Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND n.Официант IS NOT NULL AND n.Официант != ''
+      GROUP BY n.Официант
+      HAVING revenue_total > 0 AND hours_total > 0
+    `;
 
-    const mockGoodShifts = [
-      { report_date: '2026-04-18', revenue: 520000, payroll: 58000, fot_pct: 11.2,
-        manager: 'Амоян Али Игоревич', headcount: 20 },
-      { report_date: '2026-04-11', revenue: 495000, payroll: 56000, fot_pct: 11.3,
-        manager: 'Амоян Али Игоревич', headcount: 19 },
-    ];
+    // Bad/good shifts из Чико4
+    const sqlShifts = `
+      SELECT
+        toDate(Дата) AS date,
+        toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка) AS revenue,
+        toFloat64(Начислено) AS payroll,
+        Менеджер AS manager
+      FROM db1.\`Чико4\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка) > 0
+    `;
+
+    const [perfR, shiftsR] = await Promise.all([
+      ch.query(sqlPerf),
+      ch.query(sqlShifts),
+    ]);
+
+    interface PerfRow {
+      employee_name: string;
+      role_primary: string;
+      revenue_total: string | number;
+      checks_total: string | number;
+      hours_total: string | number;
+      last_shift_global: string;
+    }
+    const rawPerf = perfR.data as unknown as PerfRow[];
+
+    // Фильтруем left по last_shift
+    const filteredPerf = rawPerf.filter(p => {
+      const lastDate = String(p.last_shift_global || '').slice(0, 10);
+      if (!lastDate) return false;
+      const daysSince = daysBetween(lastDate, v.factEnd);
+      return daysSince <= LEFT_STAFF_DAYS;
+    });
+
+    const productive = filteredPerf.map((p, idx) => {
+      const hours = d(p.hours_total);
+      const revenue = d(p.revenue_total);
+      const revPerH = hours > 0 ? Math.round(revenue / hours) : 0;
+      return {
+        employee_id: `perf-${idx + 1}`,
+        employee_name: p.employee_name,
+        role_primary: p.role_primary || 'Официант',
+        hours_total: +hours.toFixed(2),
+        revenue_per_hour_rub: revPerH,
+        revenue_total_rub: Math.round(revenue),
+      };
+    });
+
+    // KS-классификация по медианам
+    const hoursMedian = median(productive.map(e => e.hours_total));
+    const rphMedian = median(productive.map(e => e.revenue_per_hour_rub));
+
+    const matrix = productive.map(e => {
+      const highHours = e.hours_total >= hoursMedian;
+      const highRph = e.revenue_per_hour_rub >= rphMedian;
+      let ksClass: string;
+      if (highHours && highRph) ksClass = 'star';
+      else if (highHours && !highRph) ksClass = 'plowhorse';
+      else if (!highHours && highRph) ksClass = 'puzzle';
+      else ksClass = 'dog';
+      return { ...e, ks_class: ksClass };
+    });
+
+    // Bad/good shifts
+    const shiftRows = shiftsR.data as Array<Record<string, unknown>>;
+    const sorted = shiftRows.map(r => ({
+      date: String(r.date),
+      revenue: d(r.revenue),
+      payroll: d(r.payroll),
+      manager: String(r.manager || 'Отсутствовал'),
+      fot_pct: d(r.revenue) > 0 ? +((d(r.payroll) / d(r.revenue)) * 100).toFixed(1) : 0,
+    }));
+
+    // Квантили для bad/good
+    if (sorted.length > 0) {
+      const revenues = sorted.map(s => s.revenue).sort((a, b) => a - b);
+      const fotPcts = sorted.map(s => s.fot_pct).sort((a, b) => a - b);
+      const rP25 = revenues[Math.floor(revenues.length * 0.25)] || 0;
+      const rP75 = revenues[Math.floor(revenues.length * 0.75)] || 0;
+      const fP50 = fotPcts[Math.floor(fotPcts.length * 0.50)] || 0;
+      const fP75 = fotPcts[Math.floor(fotPcts.length * 0.75)] || 0;
+
+      const badShifts = sorted
+        .filter(s => s.revenue < rP25 && s.fot_pct > fP75)
+        .sort((a, b) => b.fot_pct - a.fot_pct)
+        .slice(0, 5)
+        .map(s => ({ report_date: s.date, revenue: Math.round(s.revenue), payroll: Math.round(s.payroll), fot_pct: s.fot_pct, manager: s.manager, headcount: 0 }));
+      const goodShifts = sorted
+        .filter(s => s.revenue > rP75 && s.fot_pct < fP50)
+        .sort((a, b) => a.fot_pct - b.fot_pct)
+        .slice(0, 5)
+        .map(s => ({ report_date: s.date, revenue: Math.round(s.revenue), payroll: Math.round(s.payroll), fot_pct: s.fot_pct, manager: s.manager, headcount: 0 }));
+
+      return jsonResponse({
+        matrix,
+        bad_shifts: badShifts,
+        good_shifts: goodShifts,
+        thresholds: {
+          hours_median: Math.round(hoursMedian),
+          rph_median: Math.round(rphMedian),
+          bad_shift_rule: `ФОТ% > ${fP75.toFixed(1)} И Выручка < ${Math.round(rP25).toLocaleString()} ₽`,
+          good_shift_rule: `Выручка > ${Math.round(rP75).toLocaleString()} ₽ И ФОТ% < ${fP50.toFixed(1)}`,
+          popularity_rule: 'Часы >= медианы',
+          profitability_rule: 'Выручка/час >= медианы',
+        },
+        summary: {
+          total_productive_employees: productive.length,
+          bad_shifts_count: badShifts.length,
+          good_shifts_count: goodShifts.length,
+        },
+        period: { start: v.start, end: v.end, days: v.daysInPeriod, fact_end: v.factEnd, days_fact: v.daysFact },
+        meta: { mock: false, pipeline_status: 'Phase 2.9.1' },
+      }, request);
+    }
 
     return jsonResponse({
-      matrix: mockMatrix,
-      bad_shifts: mockBadShifts,
-      good_shifts: mockGoodShifts,
-      summary: {
-        ks_counts_by_role: {
-          'Менеджер смены': { star: 2, plowhorse: 0, puzzle: 0, dog: 0, too_small_role: 0 },
-          'Кассир': { star: 1, plowhorse: 1, puzzle: 0, dog: 0, too_small_role: 0 },
-          'Официант': { star: 0, plowhorse: 0, puzzle: 0, dog: 1, too_small_role: 2 },
-        },
-        total_productive_employees: 5,
-        bad_shifts_count: 2,
-        good_shifts_count: 2,
-      },
-      thresholds: {
-        ks_popularity_threshold: 'fair_share * 0.70',  // см. пакт 6
-        bad_shift: 'fot_pct > p75 AND revenue < p25',
-        good_shift: 'revenue > p75 AND fot_pct < p50',
-      },
-      period: { start: v.start, end: v.end, days: daysBetween(v.start, v.end) },
-      meta: { mock: true, pipeline_status: 'Phase 2.9.0 skeleton' },
+      matrix, bad_shifts: [], good_shifts: [],
+      thresholds: { hours_median: 0, rph_median: 0 },
+      summary: { total_productive_employees: productive.length, bad_shifts_count: 0, good_shifts_count: 0 },
+      period: { start: v.start, end: v.end, days: v.daysInPeriod, fact_end: v.factEnd, days_fact: v.daysFact },
+      meta: { mock: false, pipeline_status: 'Phase 2.9.1' },
     }, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[staff-performance] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, request, 500);
+    return jsonResponse({ error: 'Request failed', detail: err.message }, request, 500);
   }
 }
 
 // -----------------------------------------------------------------------------
-// GET /api/staff-managers
+// GET /api/staff-managers — Block 5
 // -----------------------------------------------------------------------------
-// Block 5: рейтинг менеджеров дня + классификация top/reliable/concerning/problem.
-// См. пакт раздел 13.
 export async function handleStaffManagers(request: Request, env: Env): Promise<Response> {
   try {
     const v = await validateCommon(request, env);
     if (v instanceof Response) return v;
 
-    console.log(`[staff-managers] user=${v.user_id} rest=${v.restId} ${v.start}..${v.end}`);
+    console.log(`[staff-managers] user=${v.user_id} rest=${v.restId} ${v.start}..${v.end} daysFact=${v.daysFact}`);
 
-    // ⚠️ MOCK: реальные цифры из Chiko4 за всю историю
-    const mockManagers = [
-      {
-        manager_name: 'Амоян Али Игоревич',
-        days_as_manager: 234, total_revenue_rub: 97996857,
-        avg_revenue_per_day_rub: 418789, avg_check_rub: 1377,
-        fot_pct_avg: 12.84, foodcost_pct_avg: 25.61, discount_pct_avg: 3.57,
-        rating_2gis_avg: 4.8, rating_yandex_avg: 5.0,
-        losses_staff_total_rub: 816755, loss_pct_avg: 0.79,
-        strong_shifts_count: 45, weak_shifts_count: 8,
-        classification: 'reliable',
-      },
-      {
-        manager_name: 'Емельянова Анастасия',
-        days_as_manager: 200, total_revenue_rub: 63018616,
-        avg_revenue_per_day_rub: 315093, avg_check_rub: 1438,
-        fot_pct_avg: 15.50, foodcost_pct_avg: 22.99, discount_pct_avg: 4.05,
-        rating_2gis_avg: 4.8, rating_yandex_avg: 5.0,
-        losses_staff_total_rub: 331285, loss_pct_avg: 0.61,
-        strong_shifts_count: 38, weak_shifts_count: 12,
-        classification: 'reliable',
-      },
-      {
-        manager_name: 'Долорет Флоренс',
-        days_as_manager: 159, total_revenue_rub: 75931252,
-        avg_revenue_per_day_rub: 477555, avg_check_rub: 1250,
-        fot_pct_avg: 9.13, foodcost_pct_avg: 28.20, discount_pct_avg: 3.38,
-        rating_2gis_avg: 4.8, rating_yandex_avg: 5.0,
-        losses_staff_total_rub: 977471, loss_pct_avg: 1.45,
-        strong_shifts_count: 52, weak_shifts_count: 18,
-        // Аномально низкий FOT% (9%) + высокие потери (1.45%, 2× медианы) → concerning
-        classification: 'concerning',
-      },
-      {
-        manager_name: 'Полникова Анастасия',
-        days_as_manager: 61, total_revenue_rub: 15113290,
-        avg_revenue_per_day_rub: 247758, avg_check_rub: 1518,
-        fot_pct_avg: 15.25, foodcost_pct_avg: 22.77, discount_pct_avg: 6.61,
-        rating_2gis_avg: 4.8, rating_yandex_avg: 5.0,
-        losses_staff_total_rub: 68398, loss_pct_avg: 0.52,
-        strong_shifts_count: 15, weak_shifts_count: 6,
-        classification: 'reliable',
-      },
-      {
-        manager_name: 'Голубцова Римма',
-        days_as_manager: 42, total_revenue_rub: 10197743,
-        avg_revenue_per_day_rub: 242803, avg_check_rub: 1374,
-        fot_pct_avg: 17.33, foodcost_pct_avg: 21.57, discount_pct_avg: 5.00,
-        rating_2gis_avg: 4.8, rating_yandex_avg: 5.0,
-        losses_staff_total_rub: 64409, loss_pct_avg: 0.74,
-        strong_shifts_count: 8, weak_shifts_count: 5,
-        classification: 'reliable',
-      },
-      {
-        manager_name: 'Гусева Кристина',
-        days_as_manager: 16, total_revenue_rub: 8872372,
-        avg_revenue_per_day_rub: 554523, avg_check_rub: 1109,
-        fot_pct_avg: 1.59, foodcost_pct_avg: 28.09, discount_pct_avg: 2.29,
-        rating_2gis_avg: 4.8, rating_yandex_avg: 5.0,
-        losses_staff_total_rub: 119901, loss_pct_avg: 1.38,
-        strong_shifts_count: 4, weak_shifts_count: 1,
-        // FOT 1.6% — скорее всего данные payroll неполны в её дни → insufficient
-        classification: 'insufficient_data',
-      },
-      {
-        manager_name: 'Отсутствовал',
-        days_as_manager: 7, total_revenue_rub: 2770424,
-        avg_revenue_per_day_rub: 395774, avg_check_rub: 1359,
-        fot_pct_avg: 12.92, foodcost_pct_avg: 27.21, discount_pct_avg: 4.41,
-        rating_2gis_avg: 4.8, rating_yandex_avg: 5.0,
-        losses_staff_total_rub: 21471, loss_pct_avg: 0.90,
-        strong_shifts_count: 2, weak_shifts_count: 1,
-        // Особый статус — дни без менеджера
-        classification: 'no_manager',
-      },
-      {
-        manager_name: 'Менеджер доставки',
-        days_as_manager: 1, total_revenue_rub: 221814,
-        avg_revenue_per_day_rub: 221814, avg_check_rub: 1419,
-        fot_pct_avg: 17.31, foodcost_pct_avg: 22.08, discount_pct_avg: 9.59,
-        rating_2gis_avg: 4.8, rating_yandex_avg: 5.0,
-        losses_staff_total_rub: 1479, loss_pct_avg: 0.67,
-        strong_shifts_count: 0, weak_shifts_count: 0,
-        classification: 'insufficient_data',
-      },
-    ];
+    const ch = makeClient(env);
+
+    // Агрегат по менеджерам за период.
+    // Потери персонала = сумма Category A статей.
+    // Strong/weak shifts считаются ПОСЛЕ — когда известны p25/p75 выручки.
+    const sqlMgrs = `
+      SELECT
+        IFNULL(Менеджер, 'Отсутствовал') AS manager_name,
+        COUNT(DISTINCT toDate(Дата)) AS days_as_manager,
+        SUM(toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка)) AS total_revenue,
+        SUM(toFloat64(Начислено)) AS total_payroll,
+        SUM(
+          toFloat64(ПорчаТовараБар) + toFloat64(ПорчаТовараКухня) + toFloat64(ПорчаВитрина) +
+          toFloat64(ПорчаПоВинеСотрудника) + toFloat64(УдалениеБлюдСоСписанием) + toFloat64(НедостачаИнвентаризации)
+        ) AS losses_staff,
+        avg(toFloat64(СрЧекОбщий)) AS avg_check_avg,
+        avg(toFloat64(ФудкостОбщий)) AS foodcost_avg,
+        avg(toFloat64(СкидкаОбщий)) AS discount_avg,
+        avg(toFloat64(Оценка2Гис)) AS rating_2gis_avg,
+        avg(toFloat64(ОценкаЯндекс)) AS rating_yandex_avg,
+        MAX(toDate(Дата)) AS last_date_as_manager
+      FROM db1.\`Чико4\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      GROUP BY manager_name
+      HAVING days_as_manager > 0
+      ORDER BY days_as_manager DESC
+    `;
+
+    // Для strong/weak — сначала возьмём все смены, посчитаем p25/p75 выручки и p50/p75 FOT%.
+    const sqlAllShifts = `
+      SELECT
+        toDate(Дата) AS date,
+        IFNULL(Менеджер, 'Отсутствовал') AS manager_name,
+        toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка) AS revenue,
+        toFloat64(Начислено) AS payroll
+      FROM db1.\`Чико4\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+    `;
+
+    const [mgrsR, shiftsR] = await Promise.all([
+      ch.query(sqlMgrs),
+      ch.query(sqlAllShifts),
+    ]);
+
+    const allShifts = (shiftsR.data as Array<Record<string, unknown>>).map(r => ({
+      date: String(r.date),
+      manager: String(r.manager_name),
+      revenue: d(r.revenue),
+      payroll: d(r.payroll),
+      fot_pct: d(r.revenue) > 0 ? (d(r.payroll) / d(r.revenue)) * 100 : 0,
+    }));
+
+    // Квантили
+    const revs = allShifts.map(s => s.revenue).filter(x => x > 0).sort((a, b) => a - b);
+    const fots = allShifts.map(s => s.fot_pct).filter(x => x > 0).sort((a, b) => a - b);
+    const rP25 = revs[Math.floor(revs.length * 0.25)] || 0;
+    const rP75 = revs[Math.floor(revs.length * 0.75)] || 0;
+    const fP50 = fots[Math.floor(fots.length * 0.50)] || 0;
+    const fP75 = fots[Math.floor(fots.length * 0.75)] || 0;
+
+    // Для каждого менеджера считаем strong/weak
+    const mgrShiftCounts = new Map<string, { strong: number; weak: number }>();
+    for (const s of allShifts) {
+      const entry = mgrShiftCounts.get(s.manager) || { strong: 0, weak: 0 };
+      if (s.revenue > rP75 && s.fot_pct < fP50) entry.strong++;
+      if (s.revenue < rP25 && s.fot_pct > fP75) entry.weak++;
+      mgrShiftCounts.set(s.manager, entry);
+    }
+
+    // Медианы для классификации
+    const rawMgrs = mgrsR.data as Array<Record<string, unknown>>;
+    const lossPcts = rawMgrs
+      .map(m => {
+        const rev = d(m.total_revenue);
+        const loss = d(m.losses_staff);
+        return rev > 0 ? (loss / rev) * 100 : 0;
+      })
+      .filter(x => x > 0);
+    const lossPctMedian = median(lossPcts);
+    const fotPctMedian = median(rawMgrs
+      .map(m => {
+        const rev = d(m.total_revenue);
+        const pay = d(m.total_payroll);
+        return rev > 0 ? (pay / rev) * 100 : 0;
+      })
+      .filter(x => x > 0));
+    const revPerDayMedian = median(rawMgrs
+      .map(m => d(m.total_revenue) / Math.max(1, Number(m.days_as_manager)))
+      .filter(x => x > 0));
+
+    // Строим финальный ответ
+    const managers = rawMgrs.map(m => {
+      const name = String(m.manager_name);
+      const daysAsManager = Number(m.days_as_manager) || 0;
+      const totalRevenue = Math.round(d(m.total_revenue));
+      const totalPayroll = Math.round(d(m.total_payroll));
+      const losses = Math.round(d(m.losses_staff));
+      const avgRev = daysAsManager > 0 ? Math.round(totalRevenue / daysAsManager) : 0;
+      const fotPct = totalRevenue > 0 ? +((totalPayroll / totalRevenue) * 100).toFixed(2) : 0;
+      const lossPct = totalRevenue > 0 ? +((losses / totalRevenue) * 100).toFixed(2) : 0;
+      const shifts = mgrShiftCounts.get(name) || { strong: 0, weak: 0 };
+
+      // Классификация
+      let classification: string;
+      if (name === 'Отсутствовал' || name === '') {
+        classification = 'no_manager';
+      } else if (daysAsManager < 10) {
+        classification = 'insufficient_data';
+      } else if (avgRev > revPerDayMedian && fotPct < fotPctMedian && lossPct < lossPctMedian) {
+        classification = 'top';
+      } else if (lossPct > lossPctMedian * 1.5 || fotPct > fotPctMedian * 1.5) {
+        classification = 'concerning';
+      } else if (avgRev < revPerDayMedian * 0.7) {
+        classification = 'problem';
+      } else {
+        classification = 'reliable';
+      }
+
+      return {
+        manager_name: name,
+        days_as_manager: daysAsManager,
+        days_in_period: v.daysFact,
+        days_share_pct: v.daysFact > 0 ? +((daysAsManager / v.daysFact) * 100).toFixed(1) : 0,
+        total_revenue_rub: totalRevenue,
+        avg_revenue_per_day_rub: avgRev,
+        avg_check_rub: Math.round(d(m.avg_check_avg)),
+        fot_pct_avg: fotPct,
+        fot_pct_formula: `${totalPayroll.toLocaleString()} ₽ ФОТ ÷ ${totalRevenue.toLocaleString()} ₽ выручки × 100`,
+        foodcost_pct_avg: +d(m.foodcost_avg).toFixed(2),
+        discount_pct_avg: +d(m.discount_avg).toFixed(2),
+        rating_2gis_avg: +d(m.rating_2gis_avg).toFixed(1),
+        rating_yandex_avg: +d(m.rating_yandex_avg).toFixed(1),
+        losses_staff_total_rub: losses,
+        losses_formula: `${losses.toLocaleString()} ₽ ÷ ${totalRevenue.toLocaleString()} ₽ × 100`,
+        loss_pct_avg: lossPct,
+        strong_shifts_count: shifts.strong,
+        weak_shifts_count: shifts.weak,
+        classification,
+      };
+    });
+
+    const totalDaysCovered = managers.reduce((s, m) => s + m.days_as_manager, 0);
+    const absentRow = managers.find(m => m.manager_name === 'Отсутствовал');
+    const daysWithoutManager = absentRow ? absentRow.days_as_manager : 0;
 
     return jsonResponse({
-      managers: mockManagers,
+      managers,
       summary: {
-        total_managers: 8,
-        total_days: 720,
-        days_without_manager: 7,
+        total_managers: managers.length,
+        total_days_covered: totalDaysCovered,
+        days_in_period: v.daysFact,
+        days_without_manager: daysWithoutManager,
+        coverage_pct: v.daysFact > 0 ? +((totalDaysCovered / v.daysFact) * 100).toFixed(1) : 0,
         benchmarks: {
-          fot_pct_median: 13.0,
-          loss_pct_median: 0.82,
-          revenue_per_day_median: 380000,
+          fot_pct_median: +fotPctMedian.toFixed(1),
+          loss_pct_median: +lossPctMedian.toFixed(2),
+          revenue_per_day_median: Math.round(revPerDayMedian),
         },
       },
-      period: { start: v.start, end: v.end, days: daysBetween(v.start, v.end) },
-      meta: { mock: true, pipeline_status: 'Phase 2.9.0 skeleton' },
+      period: { start: v.start, end: v.end, days: v.daysInPeriod, fact_end: v.factEnd, days_fact: v.daysFact },
+      meta: { mock: false, pipeline_status: 'Phase 2.9.1' },
     }, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[staff-managers] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, request, 500);
+    return jsonResponse({ error: 'Request failed', detail: err.message }, request, 500);
   }
 }
 
 // -----------------------------------------------------------------------------
-// GET /api/staff-losses
+// GET /api/staff-losses — Block 6
 // -----------------------------------------------------------------------------
-// Block 6: потери по 3 категориям (A/B/C), разрезы по менеджерам и дням недели.
-// См. пакт раздел 14.
 export async function handleStaffLosses(request: Request, env: Env): Promise<Response> {
   try {
     const v = await validateCommon(request, env);
     if (v instanceof Response) return v;
 
-    console.log(`[staff-losses] user=${v.user_id} rest=${v.restId} ${v.start}..${v.end}`);
+    console.log(`[staff-losses] user=${v.user_id} rest=${v.restId} ${v.start}..${v.end} daysFact=${v.daysFact}`);
 
-    // ⚠️ MOCK: агрегаты из Chiko4 за всю историю 720 дней
+    const ch = makeClient(env);
+
+    // Агрегат ресторана: выручка, потери по категориям A/B/C, инвестиции
+    const sqlAgg = `
+      SELECT
+        SUM(toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка)) AS revenue_total,
+        SUM(toFloat64(ПорчаТовараКухня)) AS losses_kitchen,
+        SUM(toFloat64(ПорчаТовараБар)) AS losses_bar,
+        SUM(toFloat64(ПорчаВитрина)) AS losses_display,
+        SUM(toFloat64(ПорчаПоВинеСотрудника)) AS losses_employee,
+        SUM(toFloat64(УдалениеБлюдСоСписанием)) AS losses_deletion,
+        SUM(toFloat64(НедостачаИнвентаризации)) AS losses_inventory,
+        SUM(
+          toFloat64(ПорчаТовараКухня) + toFloat64(ПорчаТовараБар) + toFloat64(ПорчаВитрина) +
+          toFloat64(ПорчаПоВинеСотрудника) + toFloat64(УдалениеБлюдСоСписанием) + toFloat64(НедостачаИнвентаризации)
+        ) AS category_a_total,
+        SUM(toFloat64(ПитаниеПерсонала)) AS staff_food,
+        SUM(toFloat64(МотивацияПерсонала)) AS motivation,
+        SUM(toFloat64(ПроработкаБар) + toFloat64(ПроработкаКухня) + toFloat64(ПроработкаБрендШеф) + toFloat64(КлиентскийСервис)) AS training,
+        SUM(toFloat64(Представительские)) AS representation,
+        COUNT(*) AS days
+      FROM db1.\`Чико4\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+    `;
+
+    // Потери по менеджерам
+    const sqlByMgr = `
+      SELECT
+        IFNULL(Менеджер, 'Отсутствовал') AS manager,
+        COUNT(DISTINCT toDate(Дата)) AS days,
+        SUM(toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка)) AS revenue_rub,
+        SUM(
+          toFloat64(ПорчаТовараКухня) + toFloat64(ПорчаТовараБар) + toFloat64(ПорчаВитрина) +
+          toFloat64(ПорчаПоВинеСотрудника) + toFloat64(УдалениеБлюдСоСписанием) + toFloat64(НедостачаИнвентаризации)
+        ) AS losses_total_rub
+      FROM db1.\`Чико4\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      GROUP BY manager
+      HAVING days > 0
+      ORDER BY losses_total_rub DESC
+    `;
+
+    // Потери по дню недели (1=Пн .. 7=Вс в ClickHouse toDayOfWeek)
+    const sqlByDow = `
+      SELECT
+        toDayOfWeek(toDate(Дата)) AS dow,
+        avg(toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка)) AS avg_revenue,
+        avg(
+          toFloat64(ПорчаТовараКухня) + toFloat64(ПорчаТовараБар) + toFloat64(ПорчаВитрина) +
+          toFloat64(ПорчаПоВинеСотрудника) + toFloat64(УдалениеБлюдСоСписанием) + toFloat64(НедостачаИнвентаризации)
+        ) AS avg_losses
+      FROM db1.\`Чико4\`
+      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      GROUP BY dow
+      ORDER BY dow
+    `;
+
+    const [aggR, byMgrR, byDowR] = await Promise.all([
+      ch.query(sqlAgg),
+      ch.query(sqlByMgr),
+      ch.query(sqlByDow),
+    ]);
+
+    const agg = (aggR.data[0] || {}) as Record<string, unknown>;
+    const revenueTotal = Math.round(d(agg.revenue_total));
+    const lossesStaffTotal = Math.round(d(agg.category_a_total));
+    const staffFood = Math.round(d(agg.staff_food));
+    const motivation = Math.round(d(agg.motivation));
+    const training = Math.round(d(agg.training));
+    const representation = Math.round(d(agg.representation));
+    const staffInvestment = staffFood + motivation + training + representation;
+    const daysCount = Number(agg.days) || 1;
+    const shiftsApprox = daysCount * 18; // примерная оценка смен
+
+    const lossesPct = revenueTotal > 0 ? +((lossesStaffTotal / revenueTotal) * 100).toFixed(2) : 0;
+    const lossesPerShift = shiftsApprox > 0 ? Math.round(lossesStaffTotal / shiftsApprox) : 0;
+    const lossesPer1k = revenueTotal > 0 ? +(lossesStaffTotal / (revenueTotal / 1000)).toFixed(2) : 0;
+
+    const categoryATotal = lossesStaffTotal;
+    const breakdown = [
+      { item: 'Порча товара кухня', total_rub: Math.round(d(agg.losses_kitchen)) },
+      { item: 'Порча товара бар', total_rub: Math.round(d(agg.losses_bar)) },
+      { item: 'Порча витрина', total_rub: Math.round(d(agg.losses_display)) },
+      { item: 'Порча (по вине сотрудника)', total_rub: Math.round(d(agg.losses_employee)) },
+      { item: 'Удаление блюд со списанием', total_rub: Math.round(d(agg.losses_deletion)) },
+      { item: 'Недостача инвентаризации', total_rub: Math.round(d(agg.losses_inventory)) },
+    ].map(b => ({
+      ...b,
+      pct_of_category: categoryATotal > 0 ? +((b.total_rub / categoryATotal) * 100).toFixed(1) : 0,
+    }));
+
+    const byManager = (byMgrR.data as Array<Record<string, unknown>>).map(m => {
+      const losses = Math.round(d(m.losses_total_rub));
+      const revenue = Math.round(d(m.revenue_rub));
+      const pct = revenue > 0 ? +((losses / revenue) * 100).toFixed(2) : 0;
+      return {
+        manager: String(m.manager),
+        days: Number(m.days),
+        losses_total_rub: losses,
+        revenue_rub: revenue,
+        loss_pct: pct,
+        loss_formula: `${losses.toLocaleString()} ₽ ÷ ${revenue.toLocaleString()} ₽ × 100`,
+      };
+    });
+
+    const dowNames = ['', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+    const byDow = [1, 2, 3, 4, 5, 6, 7].map(d => {
+      const row = (byDowR.data as Array<Record<string, unknown>>).find(r => Number(r.dow) === d);
+      const avgRev = Math.round(row ? Number(row.avg_revenue) || 0 : 0);
+      const avgLoss = Math.round(row ? Number(row.avg_losses) || 0 : 0);
+      return {
+        dow: d,
+        day_name: dowNames[d],
+        avg_revenue_rub: avgRev,
+        avg_losses_rub: avgLoss,
+        loss_pct: avgRev > 0 ? +((avgLoss / avgRev) * 100).toFixed(2) : 0,
+      };
+    });
+
+    // Alerts
+    const alerts: Array<{ severity: string; code: string; message: string }> = [];
+    const medianLossPct = median(byManager.map(m => m.loss_pct).filter(p => p > 0));
+    const concerning = byManager.find(m => m.loss_pct > medianLossPct * 1.5 && m.loss_pct > 1.0);
+    if (concerning) {
+      const delta = medianLossPct > 0 ? Math.round(((concerning.loss_pct - medianLossPct) / medianLossPct) * 100) : 0;
+      alerts.push({
+        severity: 'yellow',
+        code: 'manager_concentrator',
+        message: `${concerning.manager}: потери ${concerning.loss_pct}% vs медиана ${medianLossPct.toFixed(2)}% (+${delta}%)`,
+      });
+    }
+    if (lossesPct > 1.5) {
+      alerts.push({
+        severity: 'red',
+        code: 'total_losses_above_norm',
+        message: `Общие потери ${lossesPct}% выше нормы 1.5% за период`,
+      });
+    }
+
     return jsonResponse({
       kpi: {
-        losses_staff_total_rub: 2553488,
-        losses_staff_pct_of_revenue: 1.11,
-        losses_per_shift_avg_rub: 188,
-        losses_per_1k_revenue_rub: 11.10,
-        production_losses_rub: 179760,
-        staff_investment_rub: 2568719,
-        staff_food_pct_of_revenue: 0.80,
-        motivation_spend_rub: 81874,
-        training_spend_rub: 602864,
+        losses_staff_total_rub: lossesStaffTotal,
+        losses_staff_pct_of_revenue: lossesPct,
+        losses_pct_formula: `${lossesStaffTotal.toLocaleString()} ₽ потерь ÷ ${revenueTotal.toLocaleString()} ₽ выручки × 100`,
+        losses_per_shift_avg_rub: lossesPerShift,
+        losses_per_shift_formula: `${lossesStaffTotal.toLocaleString()} ₽ ÷ ~${shiftsApprox} смен`,
+        losses_per_1k_revenue_rub: lossesPer1k,
+        production_losses_rub: 0,
+        staff_investment_rub: staffInvestment,
+        staff_investment_formula: `Питание ${staffFood.toLocaleString()} + Обучение ${training.toLocaleString()} + Мотивация ${motivation.toLocaleString()} + Предст. ${representation.toLocaleString()} ₽`,
+        staff_food_rub: staffFood,
+        staff_food_pct_of_revenue: revenueTotal > 0 ? +((staffFood / revenueTotal) * 100).toFixed(2) : 0,
+        motivation_spend_rub: motivation,
+        training_spend_rub: training,
+        revenue_total_rub: revenueTotal,
       },
-      category_a_breakdown: [
-        { item: 'Порча товара кухня', total_rub: 1477812, pct_of_category: 57.9 },
-        { item: 'Порча товара бар', total_rub: 822707, pct_of_category: 32.2 },
-        { item: 'Порча витрина', total_rub: 155316, pct_of_category: 6.1 },
-        { item: 'Порча (по вине сотрудника)', total_rub: 87311, pct_of_category: 3.4 },
-        { item: 'Удаление блюд со списанием', total_rub: 13340, pct_of_category: 0.5 },
-        { item: 'Недостача инвентаризации', total_rub: 0, pct_of_category: 0 },
-      ],
-      by_manager: [
-        { manager: 'Долорет Флоренс', losses_total_rub: 977471, loss_pct: 1.45, days: 159 },
-        { manager: 'Амоян Али Игоревич', losses_total_rub: 816755, loss_pct: 0.79, days: 234 },
-        { manager: 'Емельянова Анастасия', losses_total_rub: 331285, loss_pct: 0.61, days: 200 },
-        { manager: 'Гусева Кристина', losses_total_rub: 119901, loss_pct: 1.38, days: 16 },
-        { manager: 'Полникова Анастасия', losses_total_rub: 68398, loss_pct: 0.52, days: 61 },
-        { manager: 'Голубцова Римма', losses_total_rub: 64409, loss_pct: 0.74, days: 42 },
-        { manager: 'Отсутствовал', losses_total_rub: 21471, loss_pct: 0.90, days: 7 },
-        { manager: 'Менеджер доставки', losses_total_rub: 1479, loss_pct: 0.67, days: 1 },
-      ],
-      by_dow: [
-        // ⚠️ MOCK: среднее потерь по дню недели (1=Пн..7=Вс)
-        { dow: 1, day_name: 'Пн', avg_losses_rub: 2500, avg_revenue_rub: 280000, loss_pct: 0.89 },
-        { dow: 2, day_name: 'Вт', avg_losses_rub: 2700, avg_revenue_rub: 295000, loss_pct: 0.92 },
-        { dow: 3, day_name: 'Ср', avg_losses_rub: 2900, avg_revenue_rub: 310000, loss_pct: 0.94 },
-        { dow: 4, day_name: 'Чт', avg_losses_rub: 3200, avg_revenue_rub: 340000, loss_pct: 0.94 },
-        { dow: 5, day_name: 'Пт', avg_losses_rub: 4500, avg_revenue_rub: 480000, loss_pct: 0.94 },
-        { dow: 6, day_name: 'Сб', avg_losses_rub: 5200, avg_revenue_rub: 560000, loss_pct: 0.93 },
-        { dow: 7, day_name: 'Вс', avg_losses_rub: 4100, avg_revenue_rub: 420000, loss_pct: 0.98 },
-      ],
-      alerts: [
-        // ⚠️ MOCK: пример сигналов из пакта 14.5
-        { severity: 'yellow', code: 'manager_concentrator',
-          message: 'Долорет Флоренс: потери 1.45% vs медиана 0.82% (+77%)' },
-      ],
+      category_a_breakdown: breakdown,
+      by_manager: byManager,
+      by_dow: byDow,
+      alerts,
       benchmarks: {
         norm_losses_staff_pct: 1.5,
         industry_staff_food_pct: 1.0,
       },
-      period: { start: v.start, end: v.end, days: daysBetween(v.start, v.end) },
-      meta: { mock: true, pipeline_status: 'Phase 2.9.0 skeleton' },
+      period: { start: v.start, end: v.end, days: v.daysInPeriod, fact_end: v.factEnd, days_fact: v.daysFact },
+      meta: { mock: false, pipeline_status: 'Phase 2.9.1' },
     }, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[staff-losses] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, request, 500);
+    return jsonResponse({ error: 'Request failed', detail: err.message }, request, 500);
   }
 }
