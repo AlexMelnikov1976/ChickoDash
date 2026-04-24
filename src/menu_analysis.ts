@@ -266,6 +266,10 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
     const restId = parsePositiveIntStrict(url.searchParams.get('restaurant_id'));
     const start = parseIsoDate(url.searchParams.get('start'));
     const end = parseIsoDate(url.searchParams.get('end'));
+
+    // DIAG: убрать после фикса Phase 2.9.4
+    console.log(`[menu-diag] raw: restaurant_id=${url.searchParams.get('restaurant_id')} start=${url.searchParams.get('start')} end=${url.searchParams.get('end')} → parsed: restId=${restId} start=${start} end=${end}`);
+
     if (restId === null) return jsonResponse({ error: 'Invalid restaurant_id' }, request, 400);
     if (!start || !end) return jsonResponse({ error: 'Invalid dates' }, request, 400);
     if (start > end) return jsonResponse({ error: 'start > end' }, request, 400);

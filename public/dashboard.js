@@ -405,6 +405,14 @@ async function init() {
     buildCompSlots(); buildCalendars();
     hideLoader();
     selectRest(0);
+    // Phase 2.9.4: восстанавливаем вкладку, на которой был пользователь до рефреша
+    try {
+      const _savedTab = sessionStorage.getItem('chicko_tab');
+      if (_savedTab && _savedTab !== 'overview') {
+        const _tabEl = document.querySelector('.ntab[data-tab="' + _savedTab + '"]');
+        if (_tabEl) goTab(_tabEl);
+      }
+    } catch(e) {}
     // Тихая фоновая загрузка истории с 2024 через 2 сек после старта
     setTimeout(()=>loadFullHistory(true), 2000);
     // Phase 2.9.3: проверяем, админ ли пользователь. Если да — вставляем вкладку «Активность».
@@ -436,7 +444,17 @@ async function loadFullHistory(silent=false) {
     }
     ALL_DATES = [...new Set(RESTS.flatMap(r => r.ts.map(t => t.date)))].sort();
     MIN_DATE = ALL_DATES[0] || '';
+    // Phase 2.9.4: сохраняем текущий выбор пользователя — buildCalendars()
+    // сбрасывает CAL_STATE на {start:MIN_DATE, end:MAX_DATE}, что после
+    // загрузки полной истории даёт 844-дневный диапазон и ломает menu-analysis.
+    const _savedStart = CAL_STATE.global ? CAL_STATE.global.start : null;
+    const _savedEnd = CAL_STATE.global ? CAL_STATE.global.end : null;
     buildCalendars();
+    if (_savedStart && _savedEnd && CAL_STATE.global) {
+      CAL_STATE.global.start = _savedStart;
+      CAL_STATE.global.end = _savedEnd;
+      updateCalLabel('global');
+    }
     if(!silent) hideLoader();
     if (btn) { btn.textContent = '✅ История загружена (2024–)'; btn.disabled = true; btn.style.color='var(--green)'; }
     const tsEl=document.getElementById('dataTsVal');
@@ -686,6 +704,8 @@ function goTab(el) {
   el.classList.add('active');
   const tab = el.dataset.tab;
   document.getElementById('p-'+tab).classList.add('active');
+  // Phase 2.9.4: запоминаем вкладку для восстановления после рефреша
+  try { sessionStorage.setItem('chicko_tab', tab); } catch(e) {}
   if(tab==='dynamics') renderDynamics();
   if(tab==='compare') renderCompare();
   if(tab==='analysis') renderAnalysis();
@@ -2579,9 +2599,21 @@ async function loadMenuAnalysis() {
   MENU_STATE.loading = true;
   try {
     const st = CAL_STATE.global;
+    // Phase 2.9.4: KS-анализ за 2+ года бессмыслен, а бэкенд режет
+    // диапазон > 400 дней (MAX_DATE_RANGE_DAYS). Автоматически обрезаем
+    // до последних 90 дней от end, если диапазон слишком широкий.
+    let menuStart = st.start;
+    let menuEnd = st.end;
+    const _rangeDays = Math.round((new Date(menuEnd) - new Date(menuStart)) / 86400000) + 1;
+    if (_rangeDays > 365) {
+      const _d = new Date(menuEnd + 'T00:00:00Z');
+      _d.setUTCDate(_d.getUTCDate() - 89);
+      menuStart = _d.toISOString().slice(0, 10);
+      console.log('[menu] range capped from ' + _rangeDays + 'd to 90d: ' + menuStart + '..' + menuEnd);
+    }
     const qs = '?restaurant_id=' + R.id +
-               '&start=' + encodeURIComponent(st.start) +
-               '&end=' + encodeURIComponent(st.end);
+               '&start=' + encodeURIComponent(menuStart) +
+               '&end=' + encodeURIComponent(menuEnd);
     const data = await apiGet('/api/menu-analysis' + qs);
     MENU_STATE.raw = data;
     MENU_STATE.loadedFor = key;
