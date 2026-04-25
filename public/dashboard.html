@@ -68,7 +68,8 @@
     <div class="ntab"        data-tab="compare"   onclick="goTab(this)">⚡ Сравнение</div>
     <div class="ntab"        data-tab="analysis"  onclick="goTab(this)">🧮 Анализ</div>
     <div class="ntab"        data-tab="menu"      onclick="goTab(this)">📋 Меню</div>
-    <div class="ntab"        data-tab="staff"     onclick="goTab(this)">👥 Персонал</div>
+    <div class="ntab locked"  data-tab="staff"     onclick="goTab(this)">👥 Персонал <span class="lock-badge">🔒</span></div>
+    <div class="ntab"        data-tab="marketing" onclick="goTab(this)">💎 Маркетинг</div>
     <!-- dev tab hidden for users -->
   </div>
 </div>
@@ -178,6 +179,7 @@
       <button class="mtbtn" onclick="setRevM('kitchen',this)">Кухня</button>
       <button class="mtbtn" onclick="setRevM('bar',this)">Бар</button>
       <button class="mtbtn" onclick="setRevM('delivery',this)">Доставка</button>
+      <button class="mtbtn" onclick="setRevM('grill',this)">Гриль</button>
     </div>
     <div style="height:220px"><canvas id="revC"></canvas></div>
   </div>
@@ -380,10 +382,47 @@
 
 <!-- ══ STAFF ══ Phase 2.9.2 -->
 <div class="panel" id="p-staff">
-  <div id="staffRoot">
-    <!-- Контент рисуется JS функциями renderStaff* из dashboard.js -->
+  <div style="text-align:center;padding:80px 20px">
+    <div style="font-size:48px;margin-bottom:14px">🔒</div>
+    <div style="font-family:'Cormorant Garamond',serif;font-size:32px;color:var(--gold);margin-bottom:8px;font-weight:700">Скоро</div>
+    <div style="color:var(--text2);font-size:13px;max-width:480px;margin:0 auto;line-height:1.6">
+      Раздел «Персонал» временно недоступен.<br>
+      Готовим: ТОП официантов, KPI смен, выработка, эффективность по точкам.
+    </div>
+    <div style="margin-top:16px;color:var(--text3);font-size:11px">Q2 2026</div>
+  </div>
+</div>
+
+<!-- ══ MARKETING ══ Phase 2.10 -->
+<div class="panel" id="p-marketing">
+  <!-- Banner: ограничение по Калининграду -->
+  <div class="mkt-banner">
+    <span class="mkt-banner-ico">📍</span>
+    <div>
+      <b>Маркетинг доступен только для ресторана в Калининграде.</b>
+      Программа лояльности Premium Bonus подключена пока к одной точке. По мере подключения других ресторанов раздел заработает для них автоматически.
+    </div>
+  </div>
+
+  <!-- Шапка периода -->
+  <div class="prow">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div style="font-family:'Cormorant Garamond',serif;font-size:22px;color:var(--gold);font-weight:700">CRM-портрет лояльности</div>
+      <div id="mkt-meta" style="font-size:11px;color:var(--text3)">Загрузка…</div>
+    </div>
+    <div class="pgroup" id="mktPeriodBtns">
+      <button class="pbtn" data-d="7" onclick="mktSetPeriod(7,this)">7д</button>
+      <button class="pbtn" data-d="14" onclick="mktSetPeriod(14,this)">14д</button>
+      <button class="pbtn" data-d="30" onclick="mktSetPeriod(30,this)">30д</button>
+      <button class="pbtn active" data-d="90" onclick="mktSetPeriod(90,this)">90д</button>
+      <button class="pbtn" data-d="120" onclick="mktSetPeriod(120,this)">120д</button>
+      <button class="pbtn" data-d="365" onclick="mktSetPeriod(365,this)">Год</button>
+    </div>
+  </div>
+
+  <div id="mkt-root">
     <div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">
-      Загрузка анализа персонала…
+      Загрузка маркетинг-данных…
     </div>
   </div>
 </div>

@@ -312,3 +312,83 @@ export async function handleRestaurantMeta(request: Request, env: Env): Promise<
     return jsonResponse({ error: 'Request failed' }, request, 500);
   }
 }
+
+/**
+ * GET /api/grill-daily?restaurant_id=N&start=YYYY-MM-DD&end=YYYY-MM-DD
+ *
+ * Phase 2.9.4: Ежедневная выручка по гриль-группам ('Гриль Новый', 'Гриль-меню Допы').
+ * Источник: chicko.dish_sales.
+ * Используется фронтом для кнопки «Гриль» на графике выручки по дням.
+ *
+ * Returns:
+ *   { data: [ { date: "YYYY-MM-DD", revenue: number }, ... ] }
+ */
+export async function handleGrillDaily(request: Request, env: Env): Promise<Response> {
+  try {
+    const a = await authFromCookie(request, env);
+    if (a instanceof Response) return a;
+
+    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);
+    if (rl) return rl;
+
+    const url = new URL(request.url);
+    const restIdStr = url.searchParams.get('restaurant_id');
+    const restId = restIdStr !== null ? parsePositiveIntStrict(restIdStr) : null;
+    const start = parseIsoDate(url.searchParams.get('start'));
+    const end = parseIsoDate(url.searchParams.get('end'));
+
+    if (restId === null) {
+      return jsonResponse({ error: 'Invalid restaurant_id' }, request, 400);
+    }
+    if (!start || !end) {
+      return jsonResponse({ error: 'Invalid start/end date' }, request, 400);
+    }
+    if (start > end) {
+      return jsonResponse({ error: 'start must be <= end' }, request, 400);
+    }
+    const span = daysBetween(start, end);
+    if (span > MAX_DATE_RANGE_DAYS) {
+      return jsonResponse({ error: `Date range too wide (max ${MAX_DATE_RANGE_DAYS} days)` }, request, 400);
+    }
+
+    console.log(`[grill-daily] user=${a.user_id} restaurant_id=${restId} ${start}..${end}`);
+
+    const clickhouse = mkClickhouse(env);
+
+    // Резолвим dept_uuid из dept_id
+    const uuidResult = await clickhouse.query(
+      `SELECT DISTINCT dept_uuid FROM chicko.mart_restaurant_daily_base WHERE dept_id = ${restId} LIMIT 1`
+    );
+    const uuidRows = uuidResult.data as Array<Record<string, unknown>>;
+    if (!uuidRows.length) {
+      return jsonResponse({ error: 'Restaurant not found' }, request, 404);
+    }
+    const deptUuid = String(uuidRows[0].dept_uuid);
+
+    // Выручка по дням из dish_sales, группы гриля
+    const sql = `
+      SELECT
+        toString(report_date) AS date,
+        SUM(revenue_rub) AS revenue
+      FROM chicko.dish_sales
+      WHERE dept_uuid = '${deptUuid}'
+        AND report_date BETWEEN '${start}' AND '${end}'
+        AND dish_group IN ('Гриль Новый', 'Гриль-меню Допы')
+        AND qty > 0
+      GROUP BY report_date
+      ORDER BY report_date
+    `;
+
+    const result = await clickhouse.query(sql);
+    const data = (result.data as Array<Record<string, unknown>>).map(r => ({
+      date: String(r.date),
+      revenue: +(r.revenue as number | string),
+    }));
+
+    return jsonResponse({ data }, request);
+  } catch (error) {
+    const err = error as Error;
+    console.error(`[grill-daily] error: ${err.message}`, err.stack);
+    return jsonResponse({ error: 'Request failed' }, request, 500);
+  }
+}

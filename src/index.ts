@@ -17,7 +17,7 @@ import {
 import { handleDashboard } from './dashboard';
 import { handleDowProfiles } from './dow_profiles';
 import { handleForecast } from './forecast';
-import { handleRestaurantsList, handleBenchmarks, handleRestaurantMeta } from './data_endpoints';
+import { handleRestaurantsList, handleBenchmarks, handleRestaurantMeta, handleGrillDaily } from './data_endpoints';
 import { handleCspReport } from './csp_report';
 import { handleAiInsight } from './ai_insight';
 import { handleMenuAnalysis } from './menu_analysis';
@@ -30,6 +30,7 @@ import {
   handleStaffLosses,
 } from './staff';
 import { handleAdminMe, handleAdminActivity } from './admin';
+import { handleMarketingOverview } from './marketing';
 import {
   requireJwtSecret,
   rateLimitOrResponse,
@@ -276,6 +277,13 @@ export default {
       return _r;
     }
 
+    // --- Grill Daily (Phase 2.9.4) ---
+    if (url.pathname === "/api/grill-daily" && request.method === "GET") {
+      const _r = await handleGrillDaily(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+
     // --- Staff Analysis (Phase 2.9) ---
     if (url.pathname === "/api/staff-list" && request.method === "GET") {
       const _r = await handleStaffList(request, env);
@@ -316,6 +324,13 @@ export default {
     }
     if (url.pathname === "/api/admin/activity" && request.method === "GET") {
       const _r = await handleAdminActivity(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+
+    // --- Marketing (Phase 2.10) ---
+    if (url.pathname === "/api/marketing-overview" && request.method === "GET") {
+      const _r = await handleMarketingOverview(request, env);
       _logReq(request, env, ctx, _r, _t0);
       return _r;
     }

@@ -1947,3 +1947,82 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 .rank-full-tbl tr.rft-me td:nth-child(2){color:var(--gold);font-weight:600}
 .rft-best{color:var(--green) !important;font-weight:700}
 .rft-worst{color:var(--red) !important}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Phase 2.10 — Маркетинг (CRM-портрет лояльности)
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* Замок на вкладке Персонал */
+.ntab.locked{opacity:.6;cursor:not-allowed}
+.ntab.locked:hover{color:var(--text2)}
+.ntab .lock-badge{font-size:9px;margin-left:4px;color:var(--gold)}
+
+/* Заглушка-баннер о Калининграде */
+.mkt-banner{background:linear-gradient(90deg,rgba(212,168,75,.12),rgba(212,168,75,.04));border:1px solid var(--gold);border-radius:10px;padding:11px 16px;margin-bottom:14px;display:flex;align-items:flex-start;gap:12px;font-size:11px;line-height:1.55;color:var(--gold3)}
+.mkt-banner-ico{font-size:18px;line-height:1}
+.mkt-banner b{color:var(--gold);font-weight:600}
+
+/* Insights — что бросается в глаза */
+.mkt-insight{padding:11px 14px;border-radius:8px;font-size:11px;margin-bottom:8px;display:flex;align-items:flex-start;gap:10px;line-height:1.55;font-weight:400}
+.mkt-insight b{font-weight:600}
+.mkt-insight .ins-ico{flex-shrink:0;font-size:14px;line-height:1.1}
+.mkt-insight .ins-action{display:block;font-size:10px;color:var(--text3);margin-top:4px}
+.ins-red{background:rgba(231,76,60,.12);border:1px solid rgba(231,76,60,.3);color:#f4a49e}
+.ins-amber{background:rgba(243,156,18,.12);border:1px solid rgba(243,156,18,.3);color:#f8cd7a}
+.ins-green{background:rgba(46,204,113,.12);border:1px solid rgba(46,204,113,.3);color:#82e0aa}
+.ins-blue{background:rgba(74,158,245,.12);border:1px solid rgba(74,158,245,.3);color:#9ec8f7}
+.ins-gold{background:rgba(212,168,75,.12);border:1px solid rgba(212,168,75,.3);color:var(--gold2)}
+
+/* Funnel */
+.mkt-fstep{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(46,64,104,.3)}
+.mkt-fstep:last-child{border-bottom:none}
+.mkt-fbar{flex:1;height:24px;background:var(--card2);border-radius:6px;overflow:hidden;position:relative}
+.mkt-fbar-fill{height:100%;border-radius:6px;display:flex;align-items:center;padding:0 10px;font-size:11px;font-weight:600;color:#000;transition:width .8s ease;white-space:nowrap}
+.mkt-flbl{font-size:11px;color:var(--text2);width:160px;flex-shrink:0}
+.mkt-fval{font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--gold);width:60px;text-align:right;flex-shrink:0}
+.mkt-fpct{font-size:10px;color:var(--text3);width:50px;text-align:right;flex-shrink:0}
+.mkt-fconv{font-size:9px;color:var(--text3);text-align:center;padding:3px 0;letter-spacing:.5px}
+.mkt-fconv .v{color:var(--gold);font-weight:600}
+.mkt-fnote{margin-top:14px;padding:10px 12px;background:var(--card2);border-radius:8px;border-left:3px solid var(--gold);font-size:11px;color:var(--text2);line-height:1.5}
+.mkt-fnote b{color:var(--gold);font-weight:600}
+.mkt-fnote .danger{color:#f4a49e;font-weight:600}
+
+/* Segments / RFM */
+.mkt-srow{display:flex;align-items:center;gap:10px;padding:6px 0}
+.mkt-sdot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.mkt-sname{flex:1;font-size:11px;color:var(--text)}
+.mkt-sname .desc{display:block;font-size:9px;color:var(--text3);margin-top:1px}
+.mkt-sval{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--gold);font-weight:600;width:50px;text-align:right}
+.mkt-spct{font-size:10px;color:var(--text3);width:42px;text-align:right}
+
+/* Campaign cards */
+.mkt-camp{background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;transition:.15s;min-height:140px}
+.mkt-camp:hover{border-color:var(--border2)}
+.mkt-camp.hot{border-color:rgba(231,76,60,.5)}
+.mkt-camp.hot:hover{border-color:var(--red)}
+.mkt-camp-head{display:flex;justify-content:space-between;align-items:start}
+.mkt-camp-icon{font-size:18px;line-height:1}
+.mkt-camp-tag{font-size:10px;color:var(--text3);padding:2px 8px;border-radius:10px;background:rgba(78,106,144,.15);font-weight:500}
+.mkt-camp-tag.hot{color:#f4a49e;background:rgba(231,76,60,.15)}
+.mkt-camp-name{font-size:11px;color:var(--text2);font-weight:500}
+.mkt-camp-val{font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:700;color:var(--gold);line-height:1}
+.mkt-camp-sub{font-size:10px;color:var(--text3)}
+.mkt-camp-money{font-size:11px;color:var(--gold2);font-weight:500;margin-top:2px}
+.mkt-camp-cta{font-size:10px;color:var(--text3);margin-top:auto;padding-top:6px;cursor:not-allowed;opacity:.6;text-transform:uppercase;letter-spacing:.5px;font-weight:500}
+
+/* Health */
+.mkt-hrow{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(46,64,104,.3);font-size:11px;gap:12px}
+.mkt-hrow:last-child{border-bottom:none}
+.mkt-hbar{flex:1;height:5px;background:var(--card2);border-radius:3px;overflow:hidden}
+.mkt-hbar-fill{height:100%;border-radius:3px;transition:width .6s}
+.mkt-hlbl{width:140px;color:var(--text2);flex-shrink:0}
+.mkt-hval{font-family:'JetBrains Mono',monospace;width:50px;text-align:right;font-weight:600;flex-shrink:0}
+
+/* Misc */
+.mkt-tag-no-history{font-size:9px;color:var(--text3);background:rgba(78,106,144,.15);padding:2px 6px;border-radius:4px;display:inline-block;margin-left:6px;text-transform:uppercase;letter-spacing:.5px;font-weight:500;font-style:normal}
+.mkt-foot{margin-top:20px;padding:12px 16px;background:var(--card2);border-radius:8px;font-size:10px;color:var(--text3);text-align:center;line-height:1.6}
+.mkt-foot b{color:var(--text2)}
+.mkt-chart-h150{height:150px;position:relative}
+.mkt-error{padding:30px 20px;text-align:center;color:#f4a49e;background:rgba(231,76,60,.08);border:1px solid rgba(231,76,60,.3);border-radius:8px;font-size:12px}
+
+/* end of file */

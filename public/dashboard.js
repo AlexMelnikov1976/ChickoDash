@@ -698,6 +698,17 @@ function dowBenchmarks(ts) {
 }
 
 function goTab(el) {
+  // Phase 2.10: блокировка locked вкладок (Персонал — заглушка)
+  if (el.classList.contains('locked')) {
+    // Покажем panel, но без рендера контента — внутри уже статическая заглушка "Скоро"
+    trackUI('tab', { tab: el.dataset.tab + '_locked' });
+    document.querySelectorAll('.ntab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('p-'+el.dataset.tab).classList.add('active');
+    try { sessionStorage.setItem('chicko_tab', el.dataset.tab); } catch(e) {}
+    return;
+  }
   trackUI('tab', { tab: el.dataset.tab });
   document.querySelectorAll('.ntab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
@@ -712,6 +723,7 @@ function goTab(el) {
   if(tab==='menu') renderMenu();
   if(tab==='staff') renderStaff();
   if(tab==='admin') renderAdmin();
+  if(tab==='marketing') renderMarketing();
 }
 
 // ═══ FORECAST BLOCK (Phase 1.4 #71, Phase 2.2 2026-04-21) ═══
@@ -1984,7 +1996,38 @@ function setDynGroup(mode,btn){
   btn.classList.add('active');
   renderDynamics();
 }
-function setRevM(m,btn){S.revMetric=m;document.querySelectorAll('#revMBtns .mtbtn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderRevChart()}
+// Phase 2.9.4: Гриль — lazy-load кеш
+const GRILL_CACHE = {}; // key: "restId:start:end" → {date: revenue}
+
+async function loadGrillData() {
+  if (!R || !R.id) return;
+  const st = CAL_STATE && CAL_STATE.global;
+  if (!st || !st.start || !st.end) return;
+  const cacheKey = R.id + ':' + st.start + ':' + st.end;
+  if (GRILL_CACHE[cacheKey]) {
+    // Кеш есть — реинжектим в R.ts (мог смениться ресторан и вернуться)
+    const map = GRILL_CACHE[cacheKey];
+    if (R && R.ts) R.ts.forEach(function(t) { t.grill = map[t.date] || 0; });
+    return;
+  }
+  try {
+    const qs = '?restaurant_id=' + R.id + '&start=' + encodeURIComponent(st.start) + '&end=' + encodeURIComponent(st.end);
+    const resp = await apiGet('/api/grill-daily' + qs);
+    const map = {};
+    if (resp && resp.data) {
+      resp.data.forEach(function(r) { map[r.date] = r.revenue; });
+    }
+    GRILL_CACHE[cacheKey] = map;
+    // Инжектим grill в ts-записи текущего ресторана
+    if (R && R.ts) {
+      R.ts.forEach(function(t) { t.grill = map[t.date] || 0; });
+    }
+  } catch(e) {
+    console.error('[grill] load failed:', e.message);
+  }
+}
+
+function setRevM(m,btn){S.revMetric=m;document.querySelectorAll('#revMBtns .mtbtn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');if(m==='grill'){loadGrillData().then(function(){renderRevChart()})}else{renderRevChart()}}
 function setDOWMet(m,btn){S.dowMetric=m;document.querySelectorAll('#dowMetBtns .mtbtn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderDOW()}
 function setDowFilter(f,btn){S.dowFilter=f;document.querySelectorAll('#dowFilterBtns .pbtn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderDowFilter()}
 
@@ -2025,6 +2068,7 @@ function groupTs(ts, mode) {
       bar: items.reduce((s,t) => s + (t.bar||0), 0),
       kitchen: items.reduce((s,t) => s + (t.kitchen||0), 0),
       delivery: items.reduce((s,t) => s + (t.delivery||0), 0),
+      grill: items.reduce((s,t) => s + (t.grill||0), 0),
       avgCheck: totalChecks > 0 ? totalRev / totalChecks : 0,
       checks: totalChecks,
       foodcost: totalRev > 0 ? items.reduce((s,t) => s + (t.foodcost||0) * t.revenue, 0) / totalRev : 0,
@@ -2066,7 +2110,12 @@ function getNetGroupedTs(){
 
 function renderDynamics(){
   const netTs = getNetGroupedTs();
-  renderRevChart(netTs);
+  // Phase 2.9.4: если активна кнопка «Гриль» — загружаем данные для текущего ресторана
+  if (S.revMetric === 'grill') {
+    loadGrillData().then(function() { renderRevChart(netTs); });
+  } else {
+    renderRevChart(netTs);
+  }
   renderLineChart2('chkC','avgCheck','#4A9EF5','Средний чек',netTs,v=>fmtR(v));
   renderLineChart2('cntC','checks','#9B59B6','Чеков',netTs,null);
   renderLineChart2('fcC','foodcost','#F39C12','Фудкост %',netTs,null);
@@ -2080,22 +2129,51 @@ function renderRevChart(netTs){
   const ttl=document.getElementById('revChartTitle');
   if(ttl) ttl.innerHTML='💰 Выручка по '+(groupLabels[S.dynGroup]||'дням');
   const ts=getDynTs();
-  const mc={revenue:'#D4A84B',kitchen:'#4A9EF5',bar:'#9B59B6',delivery:'#2ECC71'};
-  const ml={revenue:'Общая',kitchen:'Кухня',bar:'Бар',delivery:'Доставка'};
+  const mc={revenue:'#D4A84B',kitchen:'#4A9EF5',bar:'#9B59B6',delivery:'#2ECC71',grill:'#E74C3C'};
+  const ml={revenue:'Общая',kitchen:'Кухня',bar:'Бар',delivery:'Доставка',grill:'Гриль'};
   const lbls = ts.map(t => t.label || fmtD(t.date));
   const metric = S.revMetric;
-  const datasets = [{label:ml[metric],data:ts.map(t=>t[metric]||0),backgroundColor:mc[metric]+'99',borderColor:mc[metric],borderWidth:1,borderRadius:4}];
+  const datasets = [{label:ml[metric],data:ts.map(t=>t[metric]||0),backgroundColor:mc[metric]+'99',borderColor:mc[metric],borderWidth:1,borderRadius:4,yAxisID:'y'}];
   // Линия сети — реальные данные за тот же период
   if (netTs && netTs.length) {
     const netMap = {};
     netTs.forEach(t => { netMap[t.date] = t; });
-    datasets.push({label:'Сеть',data:ts.map(t=> { const n=netMap[t.date]; return n ? (n[metric]||0) : 0; }),type:'line',borderColor:'rgba(142,170,206,.5)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false});
+    datasets.push({label:'Сеть',data:ts.map(t=> { const n=netMap[t.date]; return n ? (n[metric]||0) : 0; }),type:'line',borderColor:'rgba(142,170,206,.5)',borderDash:[4,4],borderWidth:1.5,pointRadius:0,fill:false,yAxisID:'y'});
+  }
+  // Phase 2.9.4: линия «Доля гриля %» на правой оси
+  if (metric === 'grill') {
+    datasets.push({
+      label:'Доля %',
+      data:ts.map(t => { const rev = t.revenue || 0; const gr = t.grill || 0; return rev > 0 ? Math.round(gr / rev * 1000) / 10 : 0; }),
+      type:'line',
+      borderColor:'#F1C40F',
+      borderWidth:2,
+      pointRadius:ts.length>50?0:3,
+      pointBackgroundColor:'#F1C40F',
+      fill:false,
+      tension:.3,
+      yAxisID:'y1'
+    });
   }
   const opts = chartOpts(v=>fmtR(v));
-  // Tooltip: доля от выручки для Кухня/Бар/Доставка
+  // Правая ось для % доли гриля
+  if (metric === 'grill') {
+    opts.scales = opts.scales || {};
+    opts.scales.y = opts.scales.y || {};
+    opts.scales.y.position = 'left';
+    opts.scales.y1 = {
+      position:'right',
+      grid:{drawOnChartArea:false},
+      ticks:{color:'#F1C40F',callback:function(v){return v+'%'}},
+      min:0
+    };
+  }
+  // Tooltip: доля от выручки для Кухня/Бар/Доставка/Гриль
   if (metric !== 'revenue') {
     opts.plugins.tooltip = {callbacks:{label:function(ctx){
       const val = ctx.raw || 0;
+      // Линия «Доля %» — значение уже в процентах
+      if (ctx.dataset.yAxisID === 'y1') return ctx.dataset.label+': '+val+'%';
       const idx = ctx.dataIndex;
       const total = ts[idx] ? ts[idx].revenue : 0;
       const pct = total > 0 ? (val/total*100).toFixed(1) : '0';
@@ -4721,3 +4799,565 @@ function renderAdminUsers(users) {
 
 init();
 
+
+// ════════════════════════════════════════════════════════════════════════
+// Phase 2.10 — MARKETING TAB (CRM-портрет лояльности)
+// ════════════════════════════════════════════════════════════════════════
+//
+// Endpoint /api/marketing-overview возвращает один объект со всеми срезами:
+// kpi, funnel, rfm, loyalty, campaigns, balances, money, health,
+// sparkline_dau (массив точек по дням), meta.
+//
+// Для динамики используем sparkline_dau — endpoint расширим под все периоды
+// (7/14/30/90/120/365 дней) на стороне сервера, либо клиент сам режет.
+//
+// Сейчас держим всю логику клиентскую — endpoint вернёт максимум, мы режем.
+
+const MKT_STATE = {
+  data: null,        // ответ endpoint
+  period: 90,        // активный период в днях
+  charts: {},        // Chart.js инстансы
+  loading: false,
+  error: null
+};
+
+async function renderMarketing() {
+  trackUI('marketing_open', {});
+  const root = document.getElementById('mkt-root');
+  if (!root) return;
+
+  // Кэшируем — не перегружаем при каждом возврате на вкладку
+  if (MKT_STATE.data) {
+    mktDraw();
+    return;
+  }
+  if (MKT_STATE.loading) return;
+  MKT_STATE.loading = true;
+
+  try {
+    const r = await fetch(API_BASE + '/api/marketing-overview', {
+      credentials: 'include'
+    });
+    if (r.status === 401) { showLogin(); return; }
+    if (!r.ok) {
+      throw new Error('HTTP ' + r.status);
+    }
+    MKT_STATE.data = await r.json();
+    mktDraw();
+  } catch (e) {
+    console.error('[marketing] error:', e.message);
+    MKT_STATE.error = e.message;
+    root.innerHTML = '<div class="mkt-error">Не удалось загрузить маркетинг-данные: ' + escapeHtml(e.message) + '</div>';
+  } finally {
+    MKT_STATE.loading = false;
+  }
+}
+
+function mktSetPeriod(days, btnEl) {
+  MKT_STATE.period = days;
+  document.querySelectorAll('#mktPeriodBtns .pbtn').forEach(b => b.classList.remove('active'));
+  if (btnEl) btnEl.classList.add('active');
+  // Перерисуем только KPI-дельты и графики динамики
+  if (MKT_STATE.data) mktDrawDynamics();
+}
+
+function mktFmtNum(n) {
+  if (n === null || n === undefined) return '—';
+  return Math.round(n).toLocaleString('ru');
+}
+function mktFmtMoney(n) {
+  if (n === null || n === undefined) return '—';
+  return Math.round(n).toLocaleString('ru') + ' ₽';
+}
+function mktFmtPct(n, digits=1) {
+  if (n === null || n === undefined) return '—';
+  return n.toFixed(digits) + '%';
+}
+
+function mktDraw() {
+  const d = MKT_STATE.data;
+  const root = document.getElementById('mkt-root');
+
+  // Meta информация в шапке
+  const meta = document.getElementById('mkt-meta');
+  if (meta && d.meta) {
+    meta.innerHTML = 'Снапшот <b style="color:var(--gold2)">' + escapeHtml(d.meta.snapshot_date) + '</b>';
+  }
+
+  // ── Insights ──────────────────────────────────────────────────────────
+  // Считаем заранее, чтобы готовые рекомендации с реальными числами
+  const insights = mktBuildInsights(d);
+
+  // ── Funnel этапы ──────────────────────────────────────────────────────
+  const fnl = d.funnel || {};
+  const total = fnl.clients_total || 0;
+  const pct = (n) => total > 0 ? (n / total * 100) : 0;
+  const repeatPct = pct(fnl.clients_repeat);
+  const a90Pct = pct(fnl.clients_active_90d);
+  const a30Pct = pct(fnl.clients_active_30d);
+  const loyalPct = pct(fnl.clients_loyal_5_plus);
+  const conv1to2 = fnl.clients_total > 0 ? (fnl.clients_repeat / fnl.clients_total * 100) : 0;
+  const conv2to90 = fnl.clients_repeat > 0 ? (fnl.clients_active_90d / fnl.clients_repeat * 100) : 0;
+  const conv90to30 = fnl.clients_active_90d > 0 ? (fnl.clients_active_30d / fnl.clients_active_90d * 100) : 0;
+  const conv30toLoyal = fnl.clients_active_30d > 0 ? (fnl.clients_loyal_5_plus / fnl.clients_active_30d * 100) : 0;
+
+  // ── HTML ───────────────────────────────────────────────────────────────
+  root.innerHTML = `
+    <!-- Row 2: KPI -->
+    <div class="g5">
+      <div class="kcard">
+        <div class="klbl">База клиентов</div>
+        <div class="kval"><span id="mkt-k-total">${mktFmtNum(d.kpi.clients_total)}</span></div>
+        <div class="kdelta nt" id="mkt-kd-total">—</div>
+        <div class="kbench">Уникальных в CRM</div>
+        <div class="kbar bgo" style="width:100%"></div>
+      </div>
+      <div class="kcard">
+        <div class="klbl">Активны 30 дней</div>
+        <div class="kval"><span id="mkt-k-act">${mktFmtNum(d.kpi.clients_active_30d)}</span> <span class="u">${mktFmtPct(pct(d.kpi.clients_active_30d))}</span></div>
+        <div class="kdelta nt" id="mkt-kd-act">—</div>
+        <div class="kbench">Купили за последние 30 дней</div>
+        <div class="kbar bg" style="width:75%"></div>
+      </div>
+      <div class="kcard">
+        <div class="klbl">Repeat rate</div>
+        <div class="kval"><span id="mkt-k-rep">${mktFmtPct(d.kpi.repeat_rate_pct, 1)}</span></div>
+        <div class="kdelta nt" id="mkt-kd-rep">—</div>
+        <div class="kbench">Доля клиентов с 2+ чеками</div>
+        <div class="kbar bb" style="width:84%"></div>
+      </div>
+      <div class="kcard">
+        <div class="klbl">Медиана LTV</div>
+        <div class="kval"><span id="mkt-k-ltv">${mktFmtNum(d.kpi.ltv_median)}</span> <span class="u">₽</span></div>
+        <div class="kdelta nt" id="mkt-kd-ltv">—</div>
+        <div class="kbench">LTV среднего клиента</div>
+        <div class="kbar bgo" style="width:60%"></div>
+      </div>
+      <div class="kcard">
+        <div class="klbl">Бонусы в обороте</div>
+        <div class="kval"><span>${(d.kpi.bal_total_sum/1000000).toFixed(2)}</span> <span class="u">млн ₽</span></div>
+        <div class="kdelta nt">— только текущий снапшот</div>
+        <div class="kbench">${mktFmtNum(d.balances.clients_with_gift)} клиентов с подарком</div>
+        <div class="kbar ba" style="width:100%"></div>
+      </div>
+    </div>
+
+    <!-- Row 3: Insights -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="ctitle">🔔 Что бросается в глаза</div>
+      ${insights}
+    </div>
+
+    <!-- Row 4: Funnel + RFM -->
+    <div class="g21">
+      <div class="card">
+        <div class="ctitle">
+          <span>🪜 Воронка удержания</span>
+          <span class="right">от регистрации до лояльного ядра</span>
+        </div>
+        <div class="mkt-fstep">
+          <div class="mkt-flbl">Вся база</div>
+          <div class="mkt-fbar"><div class="mkt-fbar-fill" style="width:100%;background:linear-gradient(90deg,var(--gold),var(--gold2))">100%</div></div>
+          <div class="mkt-fval">${mktFmtNum(fnl.clients_total)}</div>
+          <div class="mkt-fpct"></div>
+        </div>
+        <div class="mkt-fconv">↓ <span class="v">${conv1to2.toFixed(1)}%</span> вернулись хотя бы 2 раза</div>
+        <div class="mkt-fstep">
+          <div class="mkt-flbl">Купили 2+ раз</div>
+          <div class="mkt-fbar"><div class="mkt-fbar-fill" style="width:${repeatPct.toFixed(1)}%;background:linear-gradient(90deg,#2980b9,var(--blue))">${repeatPct.toFixed(1)}%</div></div>
+          <div class="mkt-fval">${mktFmtNum(fnl.clients_repeat)}</div>
+          <div class="mkt-fpct">/ ${mktFmtNum(total)}</div>
+        </div>
+        <div class="mkt-fconv">↓ <span class="v">${conv2to90.toFixed(1)}%</span> остались активными 90д</div>
+        <div class="mkt-fstep">
+          <div class="mkt-flbl">Активны 90 дней</div>
+          <div class="mkt-fbar"><div class="mkt-fbar-fill" style="width:${a90Pct.toFixed(1)}%;background:linear-gradient(90deg,#27AE60,var(--green))">${a90Pct.toFixed(1)}%</div></div>
+          <div class="mkt-fval">${mktFmtNum(fnl.clients_active_90d)}</div>
+          <div class="mkt-fpct">/ ${mktFmtNum(total)}</div>
+        </div>
+        <div class="mkt-fconv">↓ <span class="v">${conv90to30.toFixed(1)}%</span> покупали в этом месяце</div>
+        <div class="mkt-fstep">
+          <div class="mkt-flbl">Активны 30 дней</div>
+          <div class="mkt-fbar"><div class="mkt-fbar-fill" style="width:${a30Pct.toFixed(1)}%;background:linear-gradient(90deg,#1ABC9C,var(--teal))">${a30Pct.toFixed(1)}%</div></div>
+          <div class="mkt-fval">${mktFmtNum(fnl.clients_active_30d)}</div>
+          <div class="mkt-fpct">/ ${mktFmtNum(total)}</div>
+        </div>
+        <div class="mkt-fconv">↓ <span class="v">${conv30toLoyal.toFixed(1)}%</span> регулярные покупатели</div>
+        <div class="mkt-fstep">
+          <div class="mkt-flbl">Лояльное ядро (5+ чеков)</div>
+          <div class="mkt-fbar"><div class="mkt-fbar-fill" style="width:${loyalPct.toFixed(1)}%;background:linear-gradient(90deg,#9B59B6,#b07cc7)">${loyalPct.toFixed(1)}%</div></div>
+          <div class="mkt-fval">${mktFmtNum(fnl.clients_loyal_5_plus)}</div>
+          <div class="mkt-fpct">/ ${mktFmtNum(total)}</div>
+        </div>
+        <div class="mkt-fnote">
+          <b>Главная утечка:</b> между 1-м и 2-м визитом — теряем <span class="danger">${(100-conv1to2).toFixed(1)}%</span> новых клиентов (${mktFmtNum(fnl.clients_one_check)} из ${mktFmtNum(total)}). Это самая большая точка роста.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="ctitle"><span>🎯 RFM сегменты</span><span class="right">для рассылок</span></div>
+        ${mktSegRow('var(--gold)', 'VIP', '5+ чеков, активны 60д', d.rfm.vip, total)}
+        ${mktSegRow('var(--amber)', 'At risk', '3+ чеков, отвалились 60-120д', d.rfm.at_risk, total)}
+        ${mktSegRow('var(--blue)', 'Dormant valuable', 'сильный чек, спят 90-180д', d.rfm.dormant_valuable, total)}
+        ${mktSegRow('var(--green)', 'New', 'первая покупка, до 30д', d.rfm.new_first_purchase, total)}
+        ${mktSegRow('var(--red)', 'Lost', '1 чек, ушли 180+д назад', d.rfm.lost_one_time, total)}
+        ${mktSegRow('var(--text3)', 'Other', '', d.rfm.other, total)}
+        <div style="margin-top:14px">
+          <div class="ctitle" style="margin-bottom:8px">🏅 Группы лояльности <span class="mkt-tag-no-history">только сейчас</span></div>
+          ${mktSegRow('#888', 'Новичок 3%', '', d.loyalty.novichok, total)}
+          ${mktSegRow('var(--blue)', 'Трейни 5%', '', d.loyalty.treyni, total)}
+          ${mktSegRow('var(--gold)', 'Айдол 10%', '', d.loyalty.idol, total)}
+          ${mktSegRow('var(--purple)', 'Легенда 7%', '', d.loyalty.legenda, total)}
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 5: Dynamics charts -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="ctitle">
+        <span>📈 Динамика за <span id="mkt-dyn-lbl">${MKT_STATE.period} дней</span></span>
+        <span class="right">по дням</span>
+      </div>
+      <div class="g2">
+        <div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Рост базы клиентов</div>
+          <div class="mkt-chart-h150"><canvas id="mktChartTotal"></canvas></div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Активные за 30 дней</div>
+          <div class="mkt-chart-h150"><canvas id="mktChartActive"></canvas></div>
+        </div>
+      </div>
+      <div class="g2" style="margin-top:6px;margin-bottom:0">
+        <div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Repeat rate, %</div>
+          <div class="mkt-chart-h150"><canvas id="mktChartRepeat"></canvas></div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Новые регистрации</div>
+          <div class="mkt-chart-h150"><canvas id="mktChartNewReg"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 6: Triggered campaigns -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="ctitle">
+        <span>🚀 Триггерные кампании <span class="mkt-tag-no-history">текущий снапшот</span></span>
+        <span class="right">готовые сегменты для рассылок</span>
+      </div>
+      <div class="g3" style="margin-bottom:0">
+        ${mktCampCard('🔥', 'Самая горячая', 'Сгорание подарков', d.campaigns.burning_gift_clients, 'сумма: ' + mktFmtMoney(d.campaigns.burning_gift_amount), true)}
+        ${mktCampCard('🥈', 'Высокий шанс', 'Второй визит (7-30 дней)', d.campaigns.second_visit_clients, 'окно для возврата', false)}
+        ${mktCampCard('💔', 'Реактивация', 'Winback (90-180д + LTV выше медианы)', d.campaigns.winback_clients, '~25% обычно возвращаются', false)}
+      </div>
+      <div class="g3" style="margin-top:10px;margin-bottom:0">
+        ${mktCampCard('🎂', 'Срочно', 'ДР через 7 дней', d.campaigns.birthday_7d_clients, 'персональный промокод', false)}
+        ${mktCampCard('🎂', 'В планах', 'ДР через 30 дней', d.campaigns.birthday_30d_clients, 'для месячного календаря', false)}
+        ${mktCampCard('⚠️', 'Зомби-база', 'Спят 180+ дней', d.health.clients_dormant_180_plus, 'сложно вернуть', false)}
+      </div>
+    </div>
+
+    <!-- Row 7: Bonuses + LTV + Health -->
+    <div class="g3">
+      <div class="card">
+        <div class="ctitle"><span>💰 Бонусные балансы</span><span class="mkt-tag-no-history">только сейчас</span></div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:10px;border-bottom:1px solid var(--border)">
+            <span style="font-size:11px;color:var(--text2)">Всего в обороте</span>
+            <span style="font-family:'Cormorant Garamond',serif;font-size:24px;color:var(--gold);font-weight:700">${mktFmtMoney(d.balances.total)}</span>
+          </div>
+          ${mktBalRow('🎁 Подарок (welcome)', d.balances.gift)}
+          ${mktBalRow('💵 Накопительный', d.balances.accumulated)}
+          ${mktBalRow('🎉 Промо', d.balances.promo)}
+          <div style="margin-top:8px;padding-top:10px;border-top:1px solid var(--border);font-size:10px;color:var(--text3)">
+            С балансом: <b style="color:var(--text)">${mktFmtNum(d.balances.clients_with_gift)}</b> с подарком · <b style="color:var(--text)">${mktFmtNum(d.balances.clients_with_accumulated)}</b> с накопит.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="ctitle">💎 LTV распределение</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${mktLtvRow('Total (вся база)', (d.money.ltv_total/1000000).toFixed(1) + ' млн ₽', 'var(--gold2)')}
+          ${mktLtvRow('Mean (среднее)', mktFmtMoney(d.money.ltv_mean))}
+          ${mktLtvRow('Median (медиана)', mktFmtMoney(d.money.ltv_median), 'var(--gold)')}
+          ${mktLtvRow('P75 (75-й процентиль)', mktFmtMoney(d.money.ltv_p75))}
+          <div style="display:flex;justify-content:space-between;font-size:11px;padding-top:8px;border-top:1px solid var(--border)">
+            <span style="color:var(--text2)">Средний чек по сети</span>
+            <span style="font-family:'JetBrains Mono',monospace;color:var(--gold)">${mktFmtMoney(d.money.avg_check)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="ctitle">🏥 Здоровье данных CRM</div>
+        ${mktHealthRow('Дата рождения', d.health.pct_with_birth_date, 'var(--green)')}
+        ${mktHealthRow('Email', d.health.pct_with_email, 'var(--amber)')}
+        ${mktHealthRow('Пол', d.health.pct_with_gender, 'var(--red)')}
+        <div style="margin-top:14px;padding:10px 12px;background:var(--card2);border-radius:8px;font-size:10px;color:var(--text2);line-height:1.55">
+          <div style="color:var(--gold);font-weight:600;margin-bottom:4px;font-size:11px">⚠️ Аномалии</div>
+          <b>${d.health.anomaly_zero_revenue_with_balance}</b> клиентов имеют положительный баланс при нулевой выручке (тестовые карты или отмены).<br>
+          <b>${mktFmtNum(d.health.clients_dormant_180_plus)}</b> клиентов спят 180+ дней — кандидаты на «зомби-список».
+        </div>
+      </div>
+    </div>
+
+    <div class="mkt-foot">
+      <b>Источник:</b> ${escapeHtml(d.meta.source)} · Снапшот <b>${escapeHtml(d.meta.snapshot_date)}</b> · Обновляется ежедневно в 06:45 ·
+      <span class="mkt-tag-no-history" style="margin:0 4px">только сейчас</span> — данные доступны только из текущего CRM-снапшота
+    </div>
+  `;
+
+  // Графики динамики
+  mktDrawDynamics();
+}
+
+function mktSegRow(color, name, desc, val, total) {
+  const pct = total > 0 ? (val / total * 100) : 0;
+  return `
+    <div class="mkt-srow">
+      <div class="mkt-sdot" style="background:${color}"></div>
+      <div class="mkt-sname">${escapeHtml(name)}${desc ? '<span class="desc">' + escapeHtml(desc) + '</span>' : ''}</div>
+      <div class="mkt-sval">${mktFmtNum(val)}</div>
+      <div class="mkt-spct">${pct.toFixed(1)}%</div>
+    </div>`;
+}
+
+function mktCampCard(ico, tag, name, val, sub, isHot) {
+  return `
+    <div class="mkt-camp ${isHot ? 'hot' : ''}">
+      <div class="mkt-camp-head">
+        <div class="mkt-camp-icon">${ico}</div>
+        <div class="mkt-camp-tag ${isHot ? 'hot' : ''}">${escapeHtml(tag)}</div>
+      </div>
+      <div>
+        <div class="mkt-camp-sub">${escapeHtml(name)}</div>
+        <div class="mkt-camp-val">${mktFmtNum(val)}</div>
+        <div class="mkt-camp-money">${escapeHtml(sub)}</div>
+      </div>
+      <div class="mkt-camp-cta" title="Запустится после интеграции с каналом отправки">скоро · скачать список →</div>
+    </div>`;
+}
+
+function mktBalRow(name, val) {
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:11px;color:var(--text2)">${escapeHtml(name)}</span>
+      <span style="font-family:'JetBrains Mono',monospace;color:var(--gold2);font-weight:600">${mktFmtMoney(val)}</span>
+    </div>`;
+}
+
+function mktLtvRow(name, val, color='var(--text)') {
+  return `
+    <div style="display:flex;justify-content:space-between;font-size:11px">
+      <span style="color:var(--text2)">${escapeHtml(name)}</span>
+      <span style="font-family:'JetBrains Mono',monospace;color:${color};font-weight:500">${val}</span>
+    </div>`;
+}
+
+function mktHealthRow(name, pct, color) {
+  if (pct === null || pct === undefined) {
+    return `
+      <div class="mkt-hrow">
+        <div class="mkt-hlbl">${escapeHtml(name)}</div>
+        <div class="mkt-hbar"><div class="mkt-hbar-fill" style="width:0;background:var(--text3)"></div></div>
+        <div class="mkt-hval" style="color:var(--text3)">—</div>
+      </div>`;
+  }
+  return `
+    <div class="mkt-hrow">
+      <div class="mkt-hlbl">${escapeHtml(name)}</div>
+      <div class="mkt-hbar"><div class="mkt-hbar-fill" style="width:${pct.toFixed(1)}%;background:${color}"></div></div>
+      <div class="mkt-hval" style="color:${color}">${pct.toFixed(1)}%</div>
+    </div>`;
+}
+
+function mktBuildInsights(d) {
+  const out = [];
+  // Сгорание
+  if (d.campaigns.burning_gift_clients > 0) {
+    out.push(`
+      <div class="mkt-insight ins-red">
+        <span class="ins-ico">🔥</span>
+        <div>
+          <b>${mktFmtMoney(d.campaigns.burning_gift_amount)}</b> подарочных бонусов зависли у <b>${mktFmtNum(d.campaigns.burning_gift_clients)} клиентов</b>, которые не покупали 60+ дней. Это потенциал для триггерной рассылки с дедлайном.
+          <span class="ins-action">Действие: push-уведомление «Ваш подарок сгорает через 7 дней»</span>
+        </div>
+      </div>`);
+  }
+  // Второй визит
+  if (d.campaigns.second_visit_clients > 0) {
+    out.push(`
+      <div class="mkt-insight ins-amber">
+        <span class="ins-ico">🥈</span>
+        <div>
+          <b>${mktFmtNum(d.campaigns.second_visit_clients)} клиентов с одним чеком</b> покупали 7-30 дней назад — горячий момент для возврата на второй визит.
+          <span class="ins-action">Действие: персональный купон «10% на второй заказ»</span>
+        </div>
+      </div>`);
+  }
+  // Один чек
+  if (d.funnel.clients_one_check > 0 && d.funnel.clients_total > 0) {
+    const pct = (d.funnel.clients_one_check / d.funnel.clients_total * 100);
+    out.push(`
+      <div class="mkt-insight ins-blue">
+        <span class="ins-ico">📉</span>
+        <div>
+          <b>${pct.toFixed(0)}% базы (${mktFmtNum(d.funnel.clients_one_check)} клиентов)</b> сделали только один чек за всё время. Основная точка роста — превратить новичков в постоянных.
+          <span class="ins-action">Действие: welcome-серия из 3 писем + бонус на 2-й заказ</span>
+        </div>
+      </div>`);
+  }
+  // ДР
+  if ((d.campaigns.birthday_7d_clients > 0) || (d.campaigns.birthday_30d_clients > 0)) {
+    out.push(`
+      <div class="mkt-insight ins-gold">
+        <span class="ins-ico">🎂</span>
+        <div>
+          У <b>${mktFmtNum(d.campaigns.birthday_7d_clients)}</b> клиентов день рождения в ближайшие 7 дней, у <b>${mktFmtNum(d.campaigns.birthday_30d_clients)}</b> — в ближайшие 30. Готовая аудитория для именной кампании.
+          <span class="ins-action">Действие: персональное поздравление + промокод на десерт</span>
+        </div>
+      </div>`);
+  }
+  return out.join('');
+}
+
+function mktDrawDynamics() {
+  const data = MKT_STATE.data;
+  // Phase 2.10.1: endpoint теперь возвращает sparkline (5 полей за 365 дней).
+  // Старое поле sparkline_dau оставлено для обратной совместимости, fallback на него.
+  const series = (data && data.sparkline) || (data && data.sparkline_dau) || [];
+  if (!series.length) {
+    return;
+  }
+  const days = MKT_STATE.period;
+  // Берём последние N дней (или сколько есть, если запрошенный период длиннее истории)
+  const slice = series.slice(-days);
+  const realDays = slice.length - 1; // фактическое расстояние first→last в днях
+
+  const labels = slice.map(p => {
+    const parts = p.date.split('-');
+    return parts[2] + '.' + parts[1];
+  });
+
+  // Новые имена полей (как в макете и mart_crm_overview).
+  // Если endpoint ещё старый и отдаёт {dau, total, new_today} — fallback.
+  const total   = slice.map(p => p.clients_total      ?? p.total      ?? 0);
+  const active  = slice.map(p => p.clients_active_30d ?? p.dau        ?? 0);
+  const newReg  = slice.map(p => p.new_registrations_today ?? p.new_today ?? 0);
+  const repeat  = slice.map(p => p.repeat_rate_pct ?? data.kpi.repeat_rate_pct);
+  const ltvMed  = slice.map(p => p.ltv_median      ?? data.kpi.ltv_median);
+
+  mktDrawLine('mktChartTotal',  labels, total,  '#D4A84B');
+  mktDrawLine('mktChartActive', labels, active, '#2ECC71');
+  mktDrawLine('mktChartRepeat', labels, repeat, '#4A9EF5');
+  mktDrawLine('mktChartNewReg', labels, newReg, '#9B59B6');
+
+  const lbl = document.getElementById('mkt-dyn-lbl');
+  if (lbl) lbl.textContent = days === 365 ? 'год' : days + ' дней';
+
+  // Дельты на KPI-карточках. Используем realDays для подписи —
+  // если в slice меньше точек чем запрошено (нет столько истории), не врём.
+  if (slice.length >= 2) {
+    const first = slice[0];
+    const last  = slice[slice.length - 1];
+    const dTotal  = (last.clients_total      ?? last.total      ?? 0) - (first.clients_total      ?? first.total      ?? 0);
+    const dActive = (last.clients_active_30d ?? last.dau        ?? 0) - (first.clients_active_30d ?? first.dau        ?? 0);
+    const dRepeat = (last.repeat_rate_pct ?? null) !== null && (first.repeat_rate_pct ?? null) !== null
+                  ? (last.repeat_rate_pct - first.repeat_rate_pct) : null;
+    const dLtv    = (last.ltv_median ?? null) !== null && (first.ltv_median ?? null) !== null
+                  ? (last.ltv_median - first.ltv_median) : null;
+
+    mktUpdateDelta('mkt-kd-total', dTotal,  '',     realDays);
+    mktUpdateDelta('mkt-kd-act',   dActive, '',     realDays);
+    if (dRepeat !== null) mktUpdateDeltaPct('mkt-kd-rep', dRepeat, realDays);
+    if (dLtv    !== null) mktUpdateDelta('mkt-kd-ltv', dLtv, ' ₽', realDays);
+  }
+}
+
+// Спец-форматтер для % — десятые п.п.
+function mktUpdateDeltaPct(elId, delta, days) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (Math.abs(delta) < 0.05) {
+    el.className = 'kdelta nt';
+    el.innerHTML = '— стабильно к ' + days + 'д назад';
+  } else if (delta > 0) {
+    el.className = 'kdelta up';
+    el.innerHTML = '▲ +' + delta.toFixed(1) + ' п.п. за ' + days + 'д';
+  } else {
+    el.className = 'kdelta dn';
+    el.innerHTML = '▼ −' + Math.abs(delta).toFixed(1) + ' п.п. за ' + days + 'д';
+  }
+}
+
+function mktUpdateDelta(elId, delta, suffix, days) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (delta === 0) {
+    el.className = 'kdelta nt';
+    el.innerHTML = '— стабильно к ' + days + 'д назад';
+  } else if (delta > 0) {
+    el.className = 'kdelta up';
+    el.innerHTML = '▲ +' + Math.round(Math.abs(delta)).toLocaleString('ru') + suffix + ' за ' + days + 'д';
+  } else {
+    el.className = 'kdelta dn';
+    el.innerHTML = '▼ −' + Math.round(Math.abs(delta)).toLocaleString('ru') + suffix + ' за ' + days + 'д';
+  }
+}
+
+function mktDrawLine(canvasId, labels, values, color) {
+  const el = document.getElementById(canvasId);
+  if (!el) return;
+  if (MKT_STATE.charts[canvasId]) MKT_STATE.charts[canvasId].destroy();
+  const ctx = el.getContext('2d');
+  const grad = ctx.createLinearGradient(0,0,0,150);
+  grad.addColorStop(0, color + '60');
+  grad.addColorStop(1, color + '00');
+  MKT_STATE.charts[canvasId] = new Chart(el, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        data: values,
+        borderColor: color,
+        backgroundColor: grad,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointHoverBackgroundColor: color,
+        tension: 0.3,
+        fill: true
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {display: false},
+        tooltip: {
+          backgroundColor: '#1E2D47',
+          borderColor: '#3A5080',
+          borderWidth: 1,
+          titleColor: '#EBF0FA',
+          bodyColor: '#F0C96A',
+          padding: 8
+        }
+      },
+      scales: {
+        x: {ticks: {color: '#4E6A90', font: {size: 9}, maxTicksLimit: 6, autoSkip: true}, grid: {display: false}},
+        y: {ticks: {color: '#4E6A90', font: {size: 9}, maxTicksLimit: 4}, grid: {color: '#2E4068', lineWidth: 0.5}}
+      }
+    }
+  });
+}
+
+// Утилита: используем существующий escapeHtml из dashboard.js (определён выше).
+// Если когда-то в будущем его уберут, тут оставим резервный.
+if (typeof escapeHtml !== 'function') {
+  window.escapeHtml = function(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  };
+}
