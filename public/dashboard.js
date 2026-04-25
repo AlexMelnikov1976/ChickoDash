@@ -4885,7 +4885,6 @@ function mktDraw() {
   }
 
   // ── Insights ──────────────────────────────────────────────────────────
-  // Считаем заранее, чтобы готовые рекомендации с реальными числами
   const insights = mktBuildInsights(d);
 
   // ── Funnel этапы ──────────────────────────────────────────────────────
@@ -4905,35 +4904,35 @@ function mktDraw() {
   root.innerHTML = `
     <!-- Row 2: KPI -->
     <div class="g5">
-      <div class="kcard">
+      <div class="kcard" data-mkt-tip="kpi.clients_total">
         <div class="klbl">База клиентов</div>
         <div class="kval"><span id="mkt-k-total">${mktFmtNum(d.kpi.clients_total)}</span></div>
         <div class="kdelta nt" id="mkt-kd-total">—</div>
         <div class="kbench">Уникальных в CRM</div>
         <div class="kbar bgo" style="width:100%"></div>
       </div>
-      <div class="kcard">
+      <div class="kcard" data-mkt-tip="kpi.active_30d">
         <div class="klbl">Активны 30 дней</div>
         <div class="kval"><span id="mkt-k-act">${mktFmtNum(d.kpi.clients_active_30d)}</span> <span class="u">${mktFmtPct(pct(d.kpi.clients_active_30d))}</span></div>
         <div class="kdelta nt" id="mkt-kd-act">—</div>
         <div class="kbench">Купили за последние 30 дней</div>
         <div class="kbar bg" style="width:75%"></div>
       </div>
-      <div class="kcard">
+      <div class="kcard" data-mkt-tip="kpi.repeat_rate">
         <div class="klbl">Repeat rate</div>
         <div class="kval"><span id="mkt-k-rep">${mktFmtPct(d.kpi.repeat_rate_pct, 1)}</span></div>
         <div class="kdelta nt" id="mkt-kd-rep">—</div>
         <div class="kbench">Доля клиентов с 2+ чеками</div>
         <div class="kbar bb" style="width:84%"></div>
       </div>
-      <div class="kcard">
+      <div class="kcard" data-mkt-tip="kpi.ltv_median">
         <div class="klbl">Медиана LTV</div>
         <div class="kval"><span id="mkt-k-ltv">${mktFmtNum(d.kpi.ltv_median)}</span> <span class="u">₽</span></div>
         <div class="kdelta nt" id="mkt-kd-ltv">—</div>
         <div class="kbench">LTV среднего клиента</div>
         <div class="kbar bgo" style="width:60%"></div>
       </div>
-      <div class="kcard">
+      <div class="kcard" data-mkt-tip="kpi.bal_total">
         <div class="klbl">Бонусы в обороте</div>
         <div class="kval"><span>${(d.kpi.bal_total_sum/1000000).toFixed(2)}</span> <span class="u">млн ₽</span></div>
         <div class="kdelta nt">— только текущий снапшот</div>
@@ -4955,59 +4954,59 @@ function mktDraw() {
           <span>🪜 Воронка удержания</span>
           <span class="right">от регистрации до лояльного ядра</span>
         </div>
-        <div class="mkt-fstep">
+        <div class="mkt-fstep" data-mkt-tip="funnel.clients_total">
           <div class="mkt-flbl">Вся база</div>
           <div class="mkt-fbar"><div class="mkt-fbar-fill" style="width:100%;background:linear-gradient(90deg,var(--gold),var(--gold2))">100%</div></div>
           <div class="mkt-fval">${mktFmtNum(fnl.clients_total)}</div>
           <div class="mkt-fpct"></div>
         </div>
         <div class="mkt-fconv">↓ <span class="v">${conv1to2.toFixed(1)}%</span> вернулись хотя бы 2 раза</div>
-        <div class="mkt-fstep">
+        <div class="mkt-fstep" data-mkt-tip="funnel.clients_repeat">
           <div class="mkt-flbl">Купили 2+ раз</div>
           <div class="mkt-fbar"><div class="mkt-fbar-fill" style="width:${repeatPct.toFixed(1)}%;background:linear-gradient(90deg,#2980b9,var(--blue))">${repeatPct.toFixed(1)}%</div></div>
           <div class="mkt-fval">${mktFmtNum(fnl.clients_repeat)}</div>
           <div class="mkt-fpct">/ ${mktFmtNum(total)}</div>
         </div>
         <div class="mkt-fconv">↓ <span class="v">${conv2to90.toFixed(1)}%</span> остались активными 90д</div>
-        <div class="mkt-fstep">
+        <div class="mkt-fstep" data-mkt-tip="funnel.active_90d">
           <div class="mkt-flbl">Активны 90 дней</div>
           <div class="mkt-fbar"><div class="mkt-fbar-fill" style="width:${a90Pct.toFixed(1)}%;background:linear-gradient(90deg,#27AE60,var(--green))">${a90Pct.toFixed(1)}%</div></div>
           <div class="mkt-fval">${mktFmtNum(fnl.clients_active_90d)}</div>
           <div class="mkt-fpct">/ ${mktFmtNum(total)}</div>
         </div>
         <div class="mkt-fconv">↓ <span class="v">${conv90to30.toFixed(1)}%</span> покупали в этом месяце</div>
-        <div class="mkt-fstep">
+        <div class="mkt-fstep" data-mkt-tip="funnel.active_30d">
           <div class="mkt-flbl">Активны 30 дней</div>
           <div class="mkt-fbar"><div class="mkt-fbar-fill" style="width:${a30Pct.toFixed(1)}%;background:linear-gradient(90deg,#1ABC9C,var(--teal))">${a30Pct.toFixed(1)}%</div></div>
           <div class="mkt-fval">${mktFmtNum(fnl.clients_active_30d)}</div>
           <div class="mkt-fpct">/ ${mktFmtNum(total)}</div>
         </div>
         <div class="mkt-fconv">↓ <span class="v">${conv30toLoyal.toFixed(1)}%</span> регулярные покупатели</div>
-        <div class="mkt-fstep">
+        <div class="mkt-fstep" data-mkt-tip="funnel.loyal_5_plus">
           <div class="mkt-flbl">Лояльное ядро (5+ чеков)</div>
           <div class="mkt-fbar"><div class="mkt-fbar-fill" style="width:${loyalPct.toFixed(1)}%;background:linear-gradient(90deg,#9B59B6,#b07cc7)">${loyalPct.toFixed(1)}%</div></div>
           <div class="mkt-fval">${mktFmtNum(fnl.clients_loyal_5_plus)}</div>
           <div class="mkt-fpct">/ ${mktFmtNum(total)}</div>
         </div>
-        <div class="mkt-fnote">
+        <div class="mkt-fnote" data-mkt-tip="funnel.one_check">
           <b>Главная утечка:</b> между 1-м и 2-м визитом — теряем <span class="danger">${(100-conv1to2).toFixed(1)}%</span> новых клиентов (${mktFmtNum(fnl.clients_one_check)} из ${mktFmtNum(total)}). Это самая большая точка роста.
         </div>
       </div>
 
       <div class="card">
         <div class="ctitle"><span>🎯 RFM сегменты</span><span class="right">для рассылок</span></div>
-        ${mktSegRow('var(--gold)', 'VIP', '5+ чеков, активны 60д', d.rfm.vip, total)}
-        ${mktSegRow('var(--amber)', 'At risk', '3+ чеков, отвалились 60-120д', d.rfm.at_risk, total)}
-        ${mktSegRow('var(--blue)', 'Dormant valuable', 'сильный чек, спят 90-180д', d.rfm.dormant_valuable, total)}
-        ${mktSegRow('var(--green)', 'New', 'первая покупка, до 30д', d.rfm.new_first_purchase, total)}
-        ${mktSegRow('var(--red)', 'Lost', '1 чек, ушли 180+д назад', d.rfm.lost_one_time, total)}
-        ${mktSegRow('var(--text3)', 'Other', '', d.rfm.other, total)}
+        ${mktSegRow('var(--gold)', 'VIP', '5+ чеков, активны 60д', d.rfm.vip, total, 'rfm.vip')}
+        ${mktSegRow('var(--amber)', 'At risk', '3+ чеков, отвалились 60-120д', d.rfm.at_risk, total, 'rfm.at_risk')}
+        ${mktSegRow('var(--blue)', 'Dormant valuable', 'сильный чек, спят 90-180д', d.rfm.dormant_valuable, total, 'rfm.dormant_valuable')}
+        ${mktSegRow('var(--green)', 'New', 'первая покупка, до 30д', d.rfm.new_first_purchase, total, 'rfm.new_first_purchase')}
+        ${mktSegRow('var(--red)', 'Lost', '1 чек, ушли 180+д назад', d.rfm.lost_one_time, total, 'rfm.lost_one_time')}
+        ${mktSegRow('var(--text3)', 'Other', '', d.rfm.other, total, 'rfm.other')}
         <div style="margin-top:14px">
           <div class="ctitle" style="margin-bottom:8px">🏅 Группы лояльности <span class="mkt-tag-no-history">только сейчас</span></div>
-          ${mktSegRow('#888', 'Новичок 3%', '', d.loyalty.novichok, total)}
-          ${mktSegRow('var(--blue)', 'Трейни 5%', '', d.loyalty.treyni, total)}
-          ${mktSegRow('var(--gold)', 'Айдол 10%', '', d.loyalty.idol, total)}
-          ${mktSegRow('var(--purple)', 'Легенда 7%', '', d.loyalty.legenda, total)}
+          ${mktSegRow('#888', 'Новичок 3%', '', d.loyalty.novichok, total, 'loyalty.novichok')}
+          ${mktSegRow('var(--blue)', 'Трейни 5%', '', d.loyalty.treyni, total, 'loyalty.treyni')}
+          ${mktSegRow('var(--gold)', 'Айдол 10%', '', d.loyalty.idol, total, 'loyalty.idol')}
+          ${mktSegRow('var(--purple)', 'Легенда 7%', '', d.loyalty.legenda, total, 'loyalty.legenda')}
         </div>
       </div>
     </div>
@@ -5019,21 +5018,21 @@ function mktDraw() {
         <span class="right">по дням</span>
       </div>
       <div class="g2">
-        <div>
+        <div data-mkt-tip="chart.growth">
           <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Рост базы клиентов</div>
           <div class="mkt-chart-h150"><canvas id="mktChartTotal"></canvas></div>
         </div>
-        <div>
+        <div data-mkt-tip="chart.active_30d">
           <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Активные за 30 дней</div>
           <div class="mkt-chart-h150"><canvas id="mktChartActive"></canvas></div>
         </div>
       </div>
       <div class="g2" style="margin-top:6px;margin-bottom:0">
-        <div>
+        <div data-mkt-tip="chart.repeat_rate">
           <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Repeat rate, %</div>
           <div class="mkt-chart-h150"><canvas id="mktChartRepeat"></canvas></div>
         </div>
-        <div>
+        <div data-mkt-tip="chart.registrations">
           <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Новые регистрации</div>
           <div class="mkt-chart-h150"><canvas id="mktChartNewReg"></canvas></div>
         </div>
@@ -5047,14 +5046,14 @@ function mktDraw() {
         <span class="right">готовые сегменты для рассылок</span>
       </div>
       <div class="g3" style="margin-bottom:0">
-        ${mktCampCard('🔥', 'Самая горячая', 'Сгорание подарков', d.campaigns.burning_gift_clients, 'сумма: ' + mktFmtMoney(d.campaigns.burning_gift_amount), true)}
-        ${mktCampCard('🥈', 'Высокий шанс', 'Второй визит (7-30 дней)', d.campaigns.second_visit_clients, 'окно для возврата', false)}
-        ${mktCampCard('💔', 'Реактивация', 'Winback (90-180д + LTV выше медианы)', d.campaigns.winback_clients, '~25% обычно возвращаются', false)}
+        ${mktCampCard('🔥', 'Самая горячая', 'Сгорание подарков', d.campaigns.burning_gift_clients, 'сумма: ' + mktFmtMoney(d.campaigns.burning_gift_amount), true, 'camp.burning_gift')}
+        ${mktCampCard('🥈', 'Высокий шанс', 'Второй визит (7-30 дней)', d.campaigns.second_visit_clients, 'окно для возврата', false, 'camp.second_visit')}
+        ${mktCampCard('💔', 'Реактивация', 'Winback (90-180д + LTV выше медианы)', d.campaigns.winback_clients, '~25% обычно возвращаются', false, 'camp.winback')}
       </div>
       <div class="g3" style="margin-top:10px;margin-bottom:0">
-        ${mktCampCard('🎂', 'Срочно', 'ДР через 7 дней', d.campaigns.birthday_7d_clients, 'персональный промокод', false)}
-        ${mktCampCard('🎂', 'В планах', 'ДР через 30 дней', d.campaigns.birthday_30d_clients, 'для месячного календаря', false)}
-        ${mktCampCard('⚠️', 'Зомби-база', 'Спят 180+ дней', d.health.clients_dormant_180_plus, 'сложно вернуть', false)}
+        ${mktCampCard('🎂', 'Срочно', 'ДР через 7 дней', d.campaigns.birthday_7d_clients, 'персональный промокод', false, 'camp.birthday_7d')}
+        ${mktCampCard('🎂', 'В планах', 'ДР через 30 дней', d.campaigns.birthday_30d_clients, 'для месячного календаря', false, 'camp.birthday_30d')}
+        ${mktCampCard('⚠️', 'Зомби-база', 'Спят 180+ дней', d.health.clients_dormant_180_plus, 'сложно вернуть', false, 'health.dormant_180')}
       </div>
     </div>
 
@@ -5063,15 +5062,15 @@ function mktDraw() {
       <div class="card">
         <div class="ctitle"><span>💰 Бонусные балансы</span><span class="mkt-tag-no-history">только сейчас</span></div>
         <div style="display:flex;flex-direction:column;gap:10px">
-          <div style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:10px;border-bottom:1px solid var(--border)">
+          <div data-mkt-tip="bal.total" style="display:flex;justify-content:space-between;align-items:baseline;padding-bottom:10px;border-bottom:1px solid var(--border)">
             <span style="font-size:11px;color:var(--text2)">Всего в обороте</span>
             <span style="font-family:'Cormorant Garamond',serif;font-size:24px;color:var(--gold);font-weight:700">${mktFmtMoney(d.balances.total)}</span>
           </div>
-          ${mktBalRow('🎁 Подарок (welcome)', d.balances.gift)}
-          ${mktBalRow('💵 Накопительный', d.balances.accumulated)}
-          ${mktBalRow('🎉 Промо', d.balances.promo)}
+          ${mktBalRow('🎁 Подарок (welcome)', d.balances.gift, 'bal.gift')}
+          ${mktBalRow('💵 Накопительный', d.balances.accumulated, 'bal.accumulated')}
+          ${mktBalRow('🎉 Промо', d.balances.promo, 'bal.promo')}
           <div style="margin-top:8px;padding-top:10px;border-top:1px solid var(--border);font-size:10px;color:var(--text3)">
-            С балансом: <b style="color:var(--text)">${mktFmtNum(d.balances.clients_with_gift)}</b> с подарком · <b style="color:var(--text)">${mktFmtNum(d.balances.clients_with_accumulated)}</b> с накопит.
+            С балансом: <b style="color:var(--text)" data-mkt-tip="bal.with_gift">${mktFmtNum(d.balances.clients_with_gift)}</b> с подарком · <b style="color:var(--text)" data-mkt-tip="bal.with_accumulated">${mktFmtNum(d.balances.clients_with_accumulated)}</b> с накопит.
           </div>
         </div>
       </div>
@@ -5079,11 +5078,11 @@ function mktDraw() {
       <div class="card">
         <div class="ctitle">💎 LTV распределение</div>
         <div style="display:flex;flex-direction:column;gap:8px">
-          ${mktLtvRow('Total (вся база)', (d.money.ltv_total/1000000).toFixed(1) + ' млн ₽', 'var(--gold2)')}
-          ${mktLtvRow('Mean (среднее)', mktFmtMoney(d.money.ltv_mean))}
-          ${mktLtvRow('Median (медиана)', mktFmtMoney(d.money.ltv_median), 'var(--gold)')}
-          ${mktLtvRow('P75 (75-й процентиль)', mktFmtMoney(d.money.ltv_p75))}
-          <div style="display:flex;justify-content:space-between;font-size:11px;padding-top:8px;border-top:1px solid var(--border)">
+          ${mktLtvRow('Total (вся база)', (d.money.ltv_total/1000000).toFixed(1) + ' млн ₽', 'var(--gold2)', 'money.ltv_total')}
+          ${mktLtvRow('Mean (среднее)', mktFmtMoney(d.money.ltv_mean), 'var(--text)', 'money.ltv_mean')}
+          ${mktLtvRow('Median (медиана)', mktFmtMoney(d.money.ltv_median), 'var(--gold)', 'money.ltv_median')}
+          ${mktLtvRow('P75 (75-й процентиль)', mktFmtMoney(d.money.ltv_p75), 'var(--text)', 'money.ltv_p75')}
+          <div data-mkt-tip="money.avg_check" style="display:flex;justify-content:space-between;font-size:11px;padding-top:8px;border-top:1px solid var(--border)">
             <span style="color:var(--text2)">Средний чек по сети</span>
             <span style="font-family:'JetBrains Mono',monospace;color:var(--gold)">${mktFmtMoney(d.money.avg_check)}</span>
           </div>
@@ -5092,10 +5091,10 @@ function mktDraw() {
 
       <div class="card">
         <div class="ctitle">🏥 Здоровье данных CRM</div>
-        ${mktHealthRow('Дата рождения', d.health.pct_with_birth_date, 'var(--green)')}
-        ${mktHealthRow('Email', d.health.pct_with_email, 'var(--amber)')}
-        ${mktHealthRow('Пол', d.health.pct_with_gender, 'var(--red)')}
-        <div style="margin-top:14px;padding:10px 12px;background:var(--card2);border-radius:8px;font-size:10px;color:var(--text2);line-height:1.55">
+        ${mktHealthRow('Дата рождения', d.health.pct_with_birth_date, 'var(--green)', 'health.birth_date')}
+        ${mktHealthRow('Email', d.health.pct_with_email, 'var(--amber)', 'health.email')}
+        ${mktHealthRow('Пол', d.health.pct_with_gender, 'var(--red)', 'health.gender')}
+        <div data-mkt-tip="health.anomaly" style="margin-top:14px;padding:10px 12px;background:var(--card2);border-radius:8px;font-size:10px;color:var(--text2);line-height:1.55">
           <div style="color:var(--gold);font-weight:600;margin-bottom:4px;font-size:11px">⚠️ Аномалии</div>
           <b>${d.health.anomaly_zero_revenue_with_balance}</b> клиентов имеют положительный баланс при нулевой выручке (тестовые карты или отмены).<br>
           <b>${mktFmtNum(d.health.clients_dormant_180_plus)}</b> клиентов спят 180+ дней — кандидаты на «зомби-список».
@@ -5113,10 +5112,11 @@ function mktDraw() {
   mktDrawDynamics();
 }
 
-function mktSegRow(color, name, desc, val, total) {
+function mktSegRow(color, name, desc, val, total, tipKey) {
   const pct = total > 0 ? (val / total * 100) : 0;
+  const tipAttr = tipKey ? ` data-mkt-tip="${tipKey}"` : '';
   return `
-    <div class="mkt-srow">
+    <div class="mkt-srow"${tipAttr}>
       <div class="mkt-sdot" style="background:${color}"></div>
       <div class="mkt-sname">${escapeHtml(name)}${desc ? '<span class="desc">' + escapeHtml(desc) + '</span>' : ''}</div>
       <div class="mkt-sval">${mktFmtNum(val)}</div>
@@ -5124,9 +5124,10 @@ function mktSegRow(color, name, desc, val, total) {
     </div>`;
 }
 
-function mktCampCard(ico, tag, name, val, sub, isHot) {
+function mktCampCard(ico, tag, name, val, sub, isHot, tipKey) {
+  const tipAttr = tipKey ? ` data-mkt-tip="${tipKey}"` : '';
   return `
-    <div class="mkt-camp ${isHot ? 'hot' : ''}">
+    <div class="mkt-camp ${isHot ? 'hot' : ''}"${tipAttr}>
       <div class="mkt-camp-head">
         <div class="mkt-camp-icon">${ico}</div>
         <div class="mkt-camp-tag ${isHot ? 'hot' : ''}">${escapeHtml(tag)}</div>
@@ -5140,33 +5141,36 @@ function mktCampCard(ico, tag, name, val, sub, isHot) {
     </div>`;
 }
 
-function mktBalRow(name, val) {
+function mktBalRow(name, val, tipKey) {
+  const tipAttr = tipKey ? ` data-mkt-tip="${tipKey}"` : '';
   return `
-    <div style="display:flex;justify-content:space-between;align-items:center">
+    <div style="display:flex;justify-content:space-between;align-items:center"${tipAttr}>
       <span style="font-size:11px;color:var(--text2)">${escapeHtml(name)}</span>
       <span style="font-family:'JetBrains Mono',monospace;color:var(--gold2);font-weight:600">${mktFmtMoney(val)}</span>
     </div>`;
 }
 
-function mktLtvRow(name, val, color='var(--text)') {
+function mktLtvRow(name, val, color='var(--text)', tipKey) {
+  const tipAttr = tipKey ? ` data-mkt-tip="${tipKey}"` : '';
   return `
-    <div style="display:flex;justify-content:space-between;font-size:11px">
+    <div style="display:flex;justify-content:space-between;font-size:11px"${tipAttr}>
       <span style="color:var(--text2)">${escapeHtml(name)}</span>
       <span style="font-family:'JetBrains Mono',monospace;color:${color};font-weight:500">${val}</span>
     </div>`;
 }
 
-function mktHealthRow(name, pct, color) {
+function mktHealthRow(name, pct, color, tipKey) {
+  const tipAttr = tipKey ? ` data-mkt-tip="${tipKey}"` : '';
   if (pct === null || pct === undefined) {
     return `
-      <div class="mkt-hrow">
+      <div class="mkt-hrow"${tipAttr}>
         <div class="mkt-hlbl">${escapeHtml(name)}</div>
         <div class="mkt-hbar"><div class="mkt-hbar-fill" style="width:0;background:var(--text3)"></div></div>
         <div class="mkt-hval" style="color:var(--text3)">—</div>
       </div>`;
   }
   return `
-    <div class="mkt-hrow">
+    <div class="mkt-hrow"${tipAttr}>
       <div class="mkt-hlbl">${escapeHtml(name)}</div>
       <div class="mkt-hbar"><div class="mkt-hbar-fill" style="width:${pct.toFixed(1)}%;background:${color}"></div></div>
       <div class="mkt-hval" style="color:${color}">${pct.toFixed(1)}%</div>
