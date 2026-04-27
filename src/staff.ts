@@ -186,7 +186,7 @@ export async function handleStaffList(request: Request, env: Env): Promise<Respo
         \`Имя\` AS employee_name,
         any(\`Роль\`) AS role_primary,
         any(\`Группа\`) AS group_primary,
-        countDistinctIf(\`Дата\`, toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')) AS shifts_count,
+        uniqIf(toDate(\`Дата\`), toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')) AS shifts_count,
         sumIf(toFloat64(\`РабВремяЧас\`), toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')) AS hours_total,
         sumIf(toFloat64(\`Начислено\`), toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')) AS payroll_total,
         maxIf(\`Дата\`, toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')) AS last_shift,

@@ -3804,6 +3804,18 @@ async function renderStaff() {
   html.push(renderStaffLosses(data.losses));
 
   // Block 2 — Штат (таблица сотрудников) внизу
+  // Мержим revenue_per_hour из performance.matrix по employee_name
+  if (data.list && data.list.employees && data.performance && data.performance.matrix) {
+    const perfMap = new Map(data.performance.matrix.map(p => [p.employee_name, p]));
+    data.list.employees.forEach(e => {
+      const p = perfMap.get(e.employee_name);
+      if (p) {
+        e.revenue_per_hour_rub = p.revenue_per_hour_rub;
+        e.checks_per_hour = p.checks_total && p.hours_total > 0 ? +(p.checks_total / p.hours_total).toFixed(2) : null;
+        e.avg_check_rub = p.checks_total > 0 ? Math.round(p.revenue_total_rub / p.checks_total) : null;
+      }
+    });
+  }
   html.push('<div class="staff-section-title">👥 Штат и смены<span class="hint">Активные сотрудники (уволенные исключены)</span></div>');
   html.push(renderStaffEmployeesTable(data.list));
 
