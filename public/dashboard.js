@@ -4088,14 +4088,19 @@ function renderStaffRatings(data) {
 
   // Метка качества данных
   const reviewNote = totalRev > 0
-    ? '<span class="staff-rating-note">За период: ' + totalRev + ' отзыв' + (totalRev === 1 ? '' : totalRev < 5 ? 'а' : 'ов') + ' за ' + daysRev + ' дн.</span>'
-    : '<span class="staff-rating-note accent-warn">Оценок за период нет — рейтинг по операционным показателям</span>';
+    ? '<span class="staff-rating-note" data-staff-tip="rating.summary">За период: ' + totalRev + ' отзыв' + (totalRev === 1 ? '' : totalRev < 5 ? 'а' : 'ов') + ' за ' + daysRev + ' дн.</span>'
+    : '<span class="staff-rating-note accent-warn" data-staff-tip="rating.summary">Оценок за период нет — рейтинг по операционным показателям</span>';
 
   const GROUP_LABELS = { management: '👔 Менеджмент', hall: '🏪 Зал (кассиры / официанты)', other: '🍳 Кухня / Бар / Клининг' };
   const GROUP_HINT = {
     management: 'Гостевой балл 35 + Сильные смены 30 + Потери 20 + Гриль 15',
     hall: 'Гостевой балл 40 + Выручка/час 35 + Средний чек 25',
     other: 'Гостевой балл 60 + Явка/часы 40',
+  };
+  const GROUP_TIP = {
+    management: 'rating.group.management',
+    hall: 'rating.group.hall',
+    other: 'rating.group.other',
   };
 
   // Группируем
@@ -4120,10 +4125,20 @@ function renderStaffRatings(data) {
     );
   }
 
+  const COMP_TIP = {
+    'Гость':  'rating.comp.guest',
+    '₽/ч':   'rating.comp.rph',
+    'Чек':   'rating.comp.avg_check',
+    'Смены': 'rating.comp.strong_shifts',
+    'Потери':'rating.comp.losses',
+    'Гриль': 'rating.comp.grill',
+    'Явка':  'rating.comp.hours',
+  };
+
   function compBadge(label, pts, total) {
     if (pts === null || pts === undefined) return '';
-    const pct = total > 0 ? Math.round(pts / total * 100) : 0;
-    return '<span class="staff-comp-badge" title="' + label + ': ' + pts + ' из ' + total + '">' + label + ' ' + pts + '</span>';
+    const tipKey = COMP_TIP[label] ? ' data-staff-tip="' + COMP_TIP[label] + '"' : '';
+    return '<span class="staff-comp-badge"' + tipKey + ' title="' + label + ': ' + pts + ' из ' + total + '">' + label + ' ' + pts + '</span>';
   }
 
   function renderGroup(groupKey) {
@@ -4131,6 +4146,7 @@ function renderStaffRatings(data) {
     if (!rows || !rows.length) return '';
     const label = GROUP_LABELS[groupKey];
     const hint = GROUP_HINT[groupKey];
+    const tipKey = GROUP_TIP[groupKey] || '';
 
     const rowHtml = rows.map(function(r) {
       const score = r.rating || 0;
@@ -4175,7 +4191,7 @@ function renderStaffRatings(data) {
 
     return (
       '<div class="staff-rating-group">' +
-        '<div class="staff-rating-group-title">' + label + '<span class="hint">' + hint + '</span></div>' +
+        '<div class="staff-rating-group-title" data-staff-tip="' + tipKey + '">' + label + '<span class="hint">' + hint + '</span></div>' +
         '<div class="staff-table-scroll">' +
           '<table class="staff-table">' +
             '<thead><tr>' +
@@ -4203,7 +4219,7 @@ function renderStaffRatings(data) {
     }).join('');
     badDaysHtml = (
       '<div class="staff-rating-group">' +
-        '<div class="staff-rating-group-title" style="color:var(--red)">🚨 Дни с плохими оценками<span class="hint">Средний балл < 3★ — кто работал в эти смены</span></div>' +
+        '<div class="staff-rating-group-title" style="color:var(--red)" data-staff-tip="rating.bad_days">🚨 Дни с плохими оценками<span class="hint">Средний балл < 3★ — кто работал в эти смены</span></div>' +
         '<div class="staff-table-scroll">' +
           '<table class="staff-table">' +
             '<thead><tr><th>Дата</th><th>Балл</th><th>Отзывов</th><th>Работали</th></tr></thead>' +

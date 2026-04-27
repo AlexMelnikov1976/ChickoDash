@@ -1,0 +1,65 @@
+/* Chicko Analytics — Staff ratings tooltip styles
+ * Phase 2.11 (2026-04-27)
+ * Hover-driven, desktop-only, isolated under #staff-tooltip
+ */
+
+#staff-tooltip {
+  position: fixed;
+  z-index: 9999;
+  max-width: 360px;
+  min-width: 220px;
+  padding: 12px 14px;
+  background: #1f2937;
+  color: #f3f4f6;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.28);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+#staff-tooltip.staff-tip-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+#staff-tooltip .staff-tip-title {
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9ca3af;
+  margin: 0 0 8px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+#staff-tooltip .staff-tip-row {
+  margin-top: 6px;
+}
+
+#staff-tooltip .staff-tip-row:first-of-type {
+  margin-top: 0;
+}
+
+#staff-tooltip .staff-tip-row b {
+  display: inline-block;
+  min-width: 64px;
+  color: #d1d5db;
+  font-weight: 600;
+}
+
+/* Подсказка только desktop */
+@media (hover: none), (max-width: 640px) {
+  #staff-tooltip { display: none !important; }
+}
+
+/* Курсор-помощник на элементах с подсказкой */
+[data-staff-tip] {
+  cursor: help;
+}
