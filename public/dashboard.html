@@ -69,7 +69,7 @@
     <div class="ntab"        data-tab="compare"   onclick="goTab(this)">⚡ Сравнение</div>
     <div class="ntab"        data-tab="analysis"  onclick="goTab(this)">🧮 Анализ</div>
     <div class="ntab"        data-tab="menu"      onclick="goTab(this)">📋 Меню</div>
-    <div class="ntab locked"  data-tab="staff"     onclick="goTab(this)">👥 Персонал <span class="lock-badge">🔒</span></div>
+    <div class="ntab"          data-tab="staff"     onclick="goTab(this)">👥 Персонал</div>
     <div class="ntab"        data-tab="marketing" onclick="goTab(this)">💎 Маркетинг</div>
     <!-- dev tab hidden for users -->
   </div>
@@ -383,15 +383,14 @@
 
 <!-- ══ STAFF ══ Phase 2.9.2 -->
 <div class="panel" id="p-staff">
-  <div style="text-align:center;padding:80px 20px">
-    <div style="font-size:48px;margin-bottom:14px">🔒</div>
-    <div style="font-family:'Cormorant Garamond',serif;font-size:32px;color:var(--gold);margin-bottom:8px;font-weight:700">Скоро</div>
-    <div style="color:var(--text2);font-size:13px;max-width:480px;margin:0 auto;line-height:1.6">
-      Раздел «Персонал» временно недоступен.<br>
-      Готовим: ТОП официантов, KPI смен, выработка, эффективность по точкам.
+  <div class="mkt-banner">
+    <span class="mkt-banner-ico">📍</span>
+    <div>
+      <b>Персонал доступен только для ресторана в Калининграде.</b>
+      Данные из iikoWeb подключены к одной точке. По мере подключения других ресторанов раздел заработает для них автоматически.
     </div>
-    <div style="margin-top:16px;color:var(--text3);font-size:11px">Q2 2026</div>
   </div>
+  <div id="staffRoot"></div>
 </div>
 
 <!-- ══ MARKETING ══ Phase 2.10 -->

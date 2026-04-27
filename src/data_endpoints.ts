@@ -21,6 +21,7 @@
 import { ClickHouseClient } from './clickhouse';
 import {
   authFromCookie,
+  authFromCookieOrServiceKey,
   corsHeadersFor,
   parsePositiveIntStrict,
   parseIsoDate,
@@ -64,7 +65,7 @@ function mkClickhouse(env: Env): ClickHouseClient {
  */
 export async function handleRestaurantsList(request: Request, env: Env): Promise<Response> {
   try {
-    const a = await authFromCookie(request, env);
+    const a = await authFromCookieOrServiceKey(request, env);
     if (a instanceof Response) return a;
 
     const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);
@@ -72,12 +73,29 @@ export async function handleRestaurantsList(request: Request, env: Env): Promise
 
     const url = new URL(request.url);
     const fullHistory = url.searchParams.get('full_history') === '1';
+    const fromDate = url.searchParams.get('from');
+    const toDate = url.searchParams.get('to');
 
-    console.log(`[restaurants] user=${a.user_id} full_history=${fullHistory}`);
+    console.log(`[restaurants] user=${a.user_id} full_history=${fullHistory} from=${fromDate} to=${toDate}`);
 
-    const whereDate = fullHistory
-      ? `report_date >= '2024-01-01'`
-      : `report_date >= today() - 90`;
+    let whereDate: string;
+    let maxExecTime: number;
+    if (fromDate && toDate) {
+      // Поквартальная загрузка: явные границы
+      const safeFrom = parseIsoDate(fromDate);
+      const safeTo = parseIsoDate(toDate);
+      if (!safeFrom || !safeTo) {
+        return jsonResponse({ error: 'Invalid from/to date' }, request, 400);
+      }
+      whereDate = `report_date BETWEEN '${safeFrom}' AND '${safeTo}'`;
+      maxExecTime = 25;
+    } else if (fullHistory) {
+      whereDate = `report_date >= '2025-01-01'`;
+      maxExecTime = 55;
+    } else {
+      whereDate = `report_date >= today() - 90`;
+      maxExecTime = 25;
+    }
 
     const sql = `
       SELECT
@@ -99,6 +117,7 @@ export async function handleRestaurantsList(request: Request, env: Env): Promise
       WHERE ${whereDate}
         AND revenue_total_rub > 0
       ORDER BY restaurant_name, report_date
+      SETTINGS max_execution_time=${maxExecTime}
     `;
 
     const clickhouse = mkClickhouse(env);
@@ -131,7 +150,7 @@ export async function handleRestaurantsList(request: Request, env: Env): Promise
  */
 export async function handleBenchmarks(request: Request, env: Env): Promise<Response> {
   try {
-    const a = await authFromCookie(request, env);
+    const a = await authFromCookieOrServiceKey(request, env);
     if (a instanceof Response) return a;
 
     const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);

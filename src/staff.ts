@@ -157,35 +157,41 @@ export async function handleStaffList(request: Request, env: Env): Promise<Respo
 
     const ch = makeClient(env);
 
-    // Агрегат ресторана за период: выручка + ФОТ по дням.
-    // Берём Чико4 — там уже всё агрегировано по дню.
+    // Агрегат ресторана за период: выручка из mart (единый источник с вкладкой Обзор),
+    // ФОТ из Чико4 (в mart нет payroll).
     const sqlRestaurant = `
       SELECT
-        COUNT(*) AS days_with_data,
-        SUM(toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка)) AS revenue_total,
-        SUM(toFloat64(Начислено)) AS payroll_total
+        countIf(revenue_total_rub > 0) AS days_with_data,
+        SUM(revenue_total_rub)          AS revenue_total,
+        0                               AS payroll_total
+      FROM chicko.mart_restaurant_daily_base
+      WHERE dept_id = ${v.restId}
+        AND report_date BETWEEN '${v.start}' AND '${v.factEnd}'
+    `;
+    const sqlPayroll = `
+      SELECT SUM(toFloat64(\`Начислено\`)) AS payroll_total
       FROM db1.\`Чико4\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
     `;
 
     // Сотрудники за период: агрегат из ЧикоВремя, с last_shift для классификации left/dormant.
     // Считаем часы, смены, ФОТ. last_shift относительно factEnd для фильтра left.
     const sqlEmployees = `
       SELECT
-        Имя AS employee_name,
-        any(Роль) AS role_primary,
-        any(Группа) AS group_primary,
-        COUNT(DISTINCT Дата) AS shifts_count,
-        SUM(toFloat64(РабВремяЧас)) AS hours_total,
-        SUM(toFloat64(Начислено)) AS payroll_total,
-        MAX(Дата) AS last_shift,
-        MIN(Дата) AS first_shift_in_period,
-        toDate('${v.factEnd}') - MAX(Дата) AS days_since_last_shift
+        \`Имя\` AS employee_name,
+        any(\`Роль\`) AS role_primary,
+        any(\`Группа\`) AS group_primary,
+        COUNT(DISTINCT \`Дата\`) AS shifts_count,
+        SUM(toFloat64(\`РабВремяЧас\`)) AS hours_total,
+        SUM(toFloat64(\`Начислено\`)) AS payroll_total,
+        MAX(\`Дата\`) AS last_shift,
+        MIN(\`Дата\`) AS first_shift_in_period,
+        dateDiff('day', MAX(\`Дата\`), toDate32('${v.factEnd}')) AS days_since_last_shift
       FROM db1.\`ЧикоВремя\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
-        AND Имя IS NOT NULL
-        AND Имя != ''
-      GROUP BY Имя
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND \`Имя\` IS NOT NULL
+        AND \`Имя\` != ''
+      GROUP BY \`Имя\`
       HAVING shifts_count > 0
       ORDER BY hours_total DESC
     `;
@@ -194,22 +200,30 @@ export async function handleStaffList(request: Request, env: Env): Promise<Respo
     // Нужен для отличения new от old-dormant.
     const sqlTenure = `
       SELECT
-        Имя AS employee_name,
-        toDate('${v.factEnd}') - MIN(Дата) AS tenure_days
+        \`Имя\` AS employee_name,
+        dateDiff('day', MIN(\`Дата\`), toDate32('${v.factEnd}')) AS tenure_days
       FROM db1.\`ЧикоВремя\`
-      WHERE Имя IS NOT NULL AND Имя != ''
-      GROUP BY Имя
+      WHERE \`Имя\` IS NOT NULL AND \`Имя\` != ''
+      GROUP BY \`Имя\`
     `;
 
-    const [restR, empR, tenureR] = await Promise.all([
+    const sqlWorkdataThrough = `
+      SELECT toString(MAX(toDate(\`Дата\`))) AS last_date
+      FROM db1.\`ЧикоВремя\`
+      WHERE \`Имя\` IS NOT NULL AND \`Имя\` != ''
+    `;
+
+    const [restR, payrollR, empR, tenureR, workdataR] = await Promise.all([
       ch.query(sqlRestaurant),
+      ch.query(sqlPayroll),
       ch.query(sqlEmployees),
       ch.query(sqlTenure),
+      ch.query(sqlWorkdataThrough),
     ]);
 
     const restRow = (restR.data[0] || {}) as Record<string, unknown>;
     const revenueTotal = Math.round(d(restRow.revenue_total));
-    const payrollTotal = Math.round(d(restRow.payroll_total));
+    const payrollTotal = Math.round(d(((payrollR.data[0] || {}) as Record<string, unknown>).payroll_total));
     const daysWithData = Number(restRow.days_with_data) || 0;
 
     // Map tenure
@@ -281,8 +295,8 @@ export async function handleStaffList(request: Request, env: Env): Promise<Respo
     const sqlNoMgr = `
       SELECT COUNT(*) AS cnt
       FROM db1.\`Чико4\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
-        AND (Менеджер IS NULL OR Менеджер = '' OR Менеджер = 'Отсутствовал')
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND (\`Менеджер\` IS NULL OR \`Менеджер\` = '' OR \`Менеджер\` = 'Отсутствовал')
     `;
     const noMgrR = await ch.query(sqlNoMgr);
     const daysWithoutManager = Number((noMgrR.data[0] as Record<string, unknown>)?.cnt) || 0;
@@ -362,8 +376,9 @@ export async function handleStaffList(request: Request, env: Env): Promise<Respo
       meta: {
         mock: false,
         pipeline_status: 'Phase 2.9.1 — real ClickHouse data',
-        source: 'db1.ЧикоВремя + db1.Чико4',
+        source: 'db1.ЧикоВремя + chicko.mart',
         left_staff_threshold_days: LEFT_STAFF_DAYS,
+        workdata_through: String((workdataR.data[0] as Record<string, unknown>)?.last_date || ''),
       },
     }, request);
   } catch (error) {
@@ -400,18 +415,18 @@ export async function handleStaffDetail(request: Request, env: Env): Promise<Res
 
     const sqlEmployees = `
       SELECT
-        Имя AS employee_name,
-        any(Роль) AS role_primary,
-        any(Группа) AS group_primary,
-        COUNT(DISTINCT Дата) AS shifts_count,
-        SUM(toFloat64(РабВремяЧас)) AS hours_total,
-        SUM(toFloat64(Начислено)) AS payroll_total,
-        MAX(Дата) AS last_shift,
-        toDate('${v.factEnd}') - MAX(Дата) AS days_since_last_shift
+        \`Имя\` AS employee_name,
+        any(\`Роль\`) AS role_primary,
+        any(\`Группа\`) AS group_primary,
+        COUNT(DISTINCT \`Дата\`) AS shifts_count,
+        SUM(toFloat64(\`РабВремяЧас\`)) AS hours_total,
+        SUM(toFloat64(\`Начислено\`)) AS payroll_total,
+        MAX(\`Дата\`) AS last_shift,
+        dateDiff('day', MAX(\`Дата\`), toDate32('${v.factEnd}')) AS days_since_last_shift
       FROM db1.\`ЧикоВремя\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
-        AND Имя IS NOT NULL AND Имя != ''
-      GROUP BY Имя
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND \`Имя\` IS NOT NULL AND \`Имя\` != ''
+      GROUP BY \`Имя\`
       HAVING shifts_count > 0
       ORDER BY hours_total DESC
     `;
@@ -429,39 +444,39 @@ export async function handleStaffDetail(request: Request, env: Env): Promise<Res
     // Детали по сотруднику: tenure + timeline смен + атрибуция выручки
     const [tenureR, timelineR, attrR, restAggR] = await Promise.all([
       ch.query(`
-        SELECT toDate('${v.factEnd}') - MIN(Дата) AS tenure_days
+        SELECT dateDiff('day', MIN(\`Дата\`), toDate32('${v.factEnd}')) AS tenure_days
         FROM db1.\`ЧикоВремя\`
-        WHERE Имя = '${empName.replace(/'/g, "''")}'
+        WHERE \`Имя\` = '${empName.replace(/'/g, "''")}'
       `),
       ch.query(`
         SELECT
-          toDate(Дата) AS date,
-          Роль AS role,
-          toFloat64(РабВремяЧас) AS hours,
-          toFloat64(Начислено) AS payroll
+          toDate(\`Дата\`) AS date,
+          \`Роль\` AS role,
+          toFloat64(\`РабВремяЧас\`) AS hours,
+          toFloat64(\`Начислено\`) AS payroll
         FROM db1.\`ЧикоВремя\`
-        WHERE Имя = '${empName.replace(/'/g, "''")}'
-          AND toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
-        ORDER BY Дата DESC
+        WHERE \`Имя\` = '${empName.replace(/'/g, "''")}'
+          AND toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        ORDER BY \`Дата\` DESC
         LIMIT 30
       `),
       // Атрибуция выручки — если этот человек был официантом в ЧикоНов3
       ch.query(`
         SELECT
-          SUM(toFloat64(СреднийЧек) * toFloat64(КолВоЧеков)) AS revenue_total,
-          SUM(toFloat64(КолВоЧеков)) AS checks_total,
-          AVG(toFloat64(СреднийЧек)) AS avg_check
+          SUM(toFloat64(\`СреднийЧек\`) * toFloat64(\`КолВоЧеков\`)) AS revenue_total,
+          SUM(toFloat64(\`КолВоЧеков\`)) AS checks_total,
+          AVG(toFloat64(\`СреднийЧек\`)) AS avg_check
         FROM db1.\`ЧикоНов3\`
-        WHERE Официант = '${empName.replace(/'/g, "''")}'
-          AND toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        WHERE \`Официант\` = '${empName.replace(/'/g, "''")}'
+          AND toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
       `),
       // Агрегат ресторана для contribution
       ch.query(`
         SELECT
-          SUM(toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка)) AS revenue_total,
-          SUM(toFloat64(Начислено)) AS payroll_total
+          SUM(toFloat64(\`ВыручкаБар\`) + toFloat64(\`ВыручкаКухня\`) + toFloat64(\`ВыручкаДоставка\`)) AS revenue_total,
+          SUM(toFloat64(\`Начислено\`)) AS payroll_total
         FROM db1.\`Чико4\`
-        WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
       `),
     ]);
 
@@ -480,9 +495,9 @@ export async function handleStaffDetail(request: Request, env: Env): Promise<Res
     // restHours — отдельно агрегируем, т.к. у сотрудников могут быть часы не в ЧикоВремя
     // для простоты считаем сумму по всем активным сотрудникам
     const sqlRestHours = `
-      SELECT SUM(toFloat64(РабВремяЧас)) AS hours_total
+      SELECT SUM(toFloat64(\`РабВремяЧас\`)) AS hours_total
       FROM db1.\`ЧикоВремя\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
     `;
     const restHoursR = await ch.query(sqlRestHours);
     const restHours = d((restHoursR.data[0] as Record<string, unknown>)?.hours_total);
@@ -574,48 +589,58 @@ export async function handleStaffGroups(request: Request, env: Env): Promise<Res
     // Агрегат по группам: headcount (уникальных активных), часы, ФОТ
     const sqlGroups = `
       SELECT
-        Группа AS group_name,
-        COUNT(DISTINCT Имя) AS headcount,
-        SUM(toFloat64(РабВремяЧас)) AS hours_total,
-        SUM(toFloat64(Начислено)) AS payroll_total
+        \`Группа\` AS group_name,
+        COUNT(DISTINCT \`Имя\`) AS headcount,
+        SUM(toFloat64(\`РабВремяЧас\`)) AS hours_total,
+        SUM(toFloat64(\`Начислено\`)) AS payroll_total
       FROM db1.\`ЧикоВремя\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
-        AND Имя IS NOT NULL AND Имя != ''
-        AND Имя IN (
-          SELECT Имя FROM db1.\`ЧикоВремя\`
-          WHERE Имя IS NOT NULL AND Имя != ''
-          GROUP BY Имя
-          HAVING toDate('${v.factEnd}') - MAX(Дата) <= ${LEFT_STAFF_DAYS}
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND \`Имя\` IS NOT NULL AND \`Имя\` != ''
+        AND \`Имя\` IN (
+          SELECT \`Имя\` FROM db1.\`ЧикоВремя\`
+          WHERE \`Имя\` IS NOT NULL AND \`Имя\` != ''
+          GROUP BY \`Имя\`
+          HAVING dateDiff('day', MAX(\`Дата\`), toDate32('${v.factEnd}')) <= ${LEFT_STAFF_DAYS}
         )
-      GROUP BY Группа
+      GROUP BY \`Группа\`
       ORDER BY hours_total DESC
     `;
 
-    // Ресторан-агрегат из Чико4 (выручка, общий ФОТ, scatter по дням)
+    // Ресторан-агрегат: выручка из mart (единый источник с Обзором), ФОТ из Чико4
     const sqlRestDaily = `
       SELECT
-        toDate(Дата) AS date,
-        toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка) AS revenue,
-        toFloat64(Начислено) AS payroll
+        report_date AS date,
+        revenue_total_rub AS revenue,
+        0 AS payroll
+      FROM chicko.mart_restaurant_daily_base
+      WHERE dept_id = ${v.restId}
+        AND report_date BETWEEN '${v.start}' AND '${v.factEnd}'
+      ORDER BY report_date DESC
+    `;
+    const sqlPayrollDaily = `
+      SELECT
+        toDate(\`Дата\`) AS date,
+        toFloat64(\`Начислено\`) AS payroll
       FROM db1.\`Чико4\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
       ORDER BY date DESC
     `;
 
     // Часы по дням — для корреляции
     const sqlHoursDaily = `
       SELECT
-        toDate(Дата) AS date,
-        SUM(toFloat64(РабВремяЧас)) AS hours
+        toDate(\`Дата\`) AS date,
+        SUM(toFloat64(\`РабВремяЧас\`)) AS hours
       FROM db1.\`ЧикоВремя\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
       GROUP BY date
       ORDER BY date DESC
     `;
 
-    const [grpR, restR, hoursR] = await Promise.all([
+    const [grpR, restR, payrollDailyR, hoursR] = await Promise.all([
       ch.query(sqlGroups),
       ch.query(sqlRestDaily),
+      ch.query(sqlPayrollDaily),
       ch.query(sqlHoursDaily),
     ]);
 
@@ -628,8 +653,9 @@ export async function handleStaffGroups(request: Request, env: Env): Promise<Res
     };
 
     const restDaily = restR.data as Array<Record<string, unknown>>;
+    const payrollDaily = payrollDailyR.data as Array<Record<string, unknown>>;
     const revenueTotal = restDaily.reduce((s, r) => s + d(r.revenue), 0);
-    const payrollTotalFromDaily = restDaily.reduce((s, r) => s + d(r.payroll), 0);
+    const payrollTotalFromDaily = payrollDaily.reduce((s, r) => s + d(r.payroll), 0);
 
     const groups = (grpR.data as Array<Record<string, unknown>>)
       .map(g => {
@@ -738,39 +764,60 @@ export async function handleStaffPerformance(request: Request, env: Env): Promis
 
     // Атрибуция выручки по официантам из ЧикоНов3 + часы из ЧикоВремя.
     // Only officiant roles — они из ЧикоНов3 autoматически.
+    // Используем pre-aggregated подзапросы вместо коррелированных (ClickHouse 25.3).
     const sqlPerf = `
       SELECT
-        n.Официант AS employee_name,
-        any(w.Роль) AS role_primary,
-        SUM(toFloat64(n.СреднийЧек) * toFloat64(n.КолВоЧеков)) AS revenue_total,
-        SUM(toFloat64(n.КолВоЧеков)) AS checks_total,
-        (SELECT SUM(toFloat64(РабВремяЧас))
-         FROM db1.\`ЧикоВремя\`
-         WHERE Имя = n.Официант
-           AND toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
-        ) AS hours_total,
-        (SELECT MAX(Дата)
-         FROM db1.\`ЧикоВремя\`
-         WHERE Имя = n.Официант
-        ) AS last_shift_global
-      FROM db1.\`ЧикоНов3\` n
-      LEFT JOIN db1.\`ЧикоВремя\` w ON w.Имя = n.Официант
-      WHERE toDate(n.Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
-        AND n.Официант IS NOT NULL AND n.Официант != ''
-      GROUP BY n.Официант
-      HAVING revenue_total > 0 AND hours_total > 0
+        n.employee_name AS employee_name,
+        w_role.role_primary AS role_primary,
+        n.revenue_total AS revenue_total,
+        n.checks_total AS checks_total,
+        wh.hours_total AS hours_total,
+        wg.last_shift_global AS last_shift_global
+      FROM (
+        SELECT
+          \`Официант\` AS employee_name,
+          SUM(toFloat64(\`СреднийЧек\`) * toFloat64(\`КолВоЧеков\`)) AS revenue_total,
+          SUM(toFloat64(\`КолВоЧеков\`)) AS checks_total
+        FROM db1.\`ЧикоНов3\`
+        WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+          AND \`Официант\` IS NOT NULL AND \`Официант\` != ''
+        GROUP BY \`Официант\`
+      ) n
+      LEFT JOIN (
+        SELECT
+          \`Имя\` AS employee_name,
+          SUM(toFloat64(\`РабВремяЧас\`)) AS hours_total
+        FROM db1.\`ЧикоВремя\`
+        WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        GROUP BY \`Имя\`
+      ) wh ON wh.employee_name = n.employee_name
+      LEFT JOIN (
+        SELECT
+          \`Имя\` AS employee_name,
+          MAX(\`Дата\`) AS last_shift_global
+        FROM db1.\`ЧикоВремя\`
+        GROUP BY \`Имя\`
+      ) wg ON wg.employee_name = n.employee_name
+      LEFT JOIN (
+        SELECT
+          \`Имя\` AS employee_name,
+          any(\`Роль\`) AS role_primary
+        FROM db1.\`ЧикоВремя\`
+        GROUP BY \`Имя\`
+      ) w_role ON w_role.employee_name = n.employee_name
+      WHERE n.revenue_total > 0 AND wh.hours_total > 0
     `;
 
     // Bad/good shifts из Чико4
     const sqlShifts = `
       SELECT
-        toDate(Дата) AS date,
-        toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка) AS revenue,
-        toFloat64(Начислено) AS payroll,
-        Менеджер AS manager
+        toDate(\`Дата\`) AS date,
+        toFloat64(\`ВыручкаБар\`) + toFloat64(\`ВыручкаКухня\`) + toFloat64(\`ВыручкаДоставка\`) AS revenue,
+        toFloat64(\`Начислено\`) AS payroll,
+        \`Менеджер\` AS manager
       FROM db1.\`Чико4\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
-        AND toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка) > 0
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND toFloat64(\`ВыручкаБар\`) + toFloat64(\`ВыручкаКухня\`) + toFloat64(\`ВыручкаДоставка\`) > 0
     `;
 
     const [perfR, shiftsR] = await Promise.all([
@@ -908,22 +955,22 @@ export async function handleStaffManagers(request: Request, env: Env): Promise<R
     // Strong/weak shifts считаются ПОСЛЕ — когда известны p25/p75 выручки.
     const sqlMgrs = `
       SELECT
-        IFNULL(Менеджер, 'Отсутствовал') AS manager_name,
-        COUNT(DISTINCT toDate(Дата)) AS days_as_manager,
-        SUM(toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка)) AS total_revenue,
-        SUM(toFloat64(Начислено)) AS total_payroll,
+        IFNULL(\`Менеджер\`, 'Отсутствовал') AS manager_name,
+        COUNT(DISTINCT toDate(\`Дата\`)) AS days_as_manager,
+        SUM(toFloat64(\`ВыручкаБар\`) + toFloat64(\`ВыручкаКухня\`) + toFloat64(\`ВыручкаДоставка\`)) AS total_revenue,
+        SUM(toFloat64(\`Начислено\`)) AS total_payroll,
         SUM(
-          toFloat64(ПорчаТовараБар) + toFloat64(ПорчаТовараКухня) + toFloat64(ПорчаВитрина) +
-          toFloat64(ПорчаПоВинеСотрудника) + toFloat64(УдалениеБлюдСоСписанием) + toFloat64(НедостачаИнвентаризации)
+          toFloat64(\`ПорчаТовараБар\`) + toFloat64(\`ПорчаТовараКухня\`) + toFloat64(\`ПорчаВитрина\`) +
+          toFloat64(\`ПорчаПоВинеСотрудника\`) + toFloat64(\`УдалениеБлюдСоСписанием\`) + toFloat64(\`НедостачаИнвентаризации\`)
         ) AS losses_staff,
-        avg(toFloat64(СрЧекОбщий)) AS avg_check_avg,
-        avg(toFloat64(ФудкостОбщий)) AS foodcost_avg,
-        avg(toFloat64(СкидкаОбщий)) AS discount_avg,
-        avg(toFloat64(Оценка2Гис)) AS rating_2gis_avg,
-        avg(toFloat64(ОценкаЯндекс)) AS rating_yandex_avg,
-        MAX(toDate(Дата)) AS last_date_as_manager
+        avg(toFloat64(\`СрЧекОбщий\`)) AS avg_check_avg,
+        avg(toFloat64(\`ФудкостОбщий\`)) AS foodcost_avg,
+        avg(toFloat64(\`СкидкаОбщий\`)) AS discount_avg,
+        avg(toFloat64(\`Оценка2Гис\`)) AS rating_2gis_avg,
+        avg(toFloat64(\`ОценкаЯндекс\`)) AS rating_yandex_avg,
+        MAX(toDate(\`Дата\`)) AS last_date_as_manager
       FROM db1.\`Чико4\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
       GROUP BY manager_name
       HAVING days_as_manager > 0
       ORDER BY days_as_manager DESC
@@ -932,12 +979,12 @@ export async function handleStaffManagers(request: Request, env: Env): Promise<R
     // Для strong/weak — сначала возьмём все смены, посчитаем p25/p75 выручки и p50/p75 FOT%.
     const sqlAllShifts = `
       SELECT
-        toDate(Дата) AS date,
-        IFNULL(Менеджер, 'Отсутствовал') AS manager_name,
-        toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка) AS revenue,
-        toFloat64(Начислено) AS payroll
+        toDate(\`Дата\`) AS date,
+        IFNULL(\`Менеджер\`, 'Отсутствовал') AS manager_name,
+        toFloat64(\`ВыручкаБар\`) + toFloat64(\`ВыручкаКухня\`) + toFloat64(\`ВыручкаДоставка\`) AS revenue,
+        toFloat64(\`Начислено\`) AS payroll
       FROM db1.\`Чико4\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
     `;
 
     const [mgrsR, shiftsR] = await Promise.all([
@@ -1085,38 +1132,38 @@ export async function handleStaffLosses(request: Request, env: Env): Promise<Res
     // Агрегат ресторана: выручка, потери по категориям A/B/C, инвестиции
     const sqlAgg = `
       SELECT
-        SUM(toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка)) AS revenue_total,
-        SUM(toFloat64(ПорчаТовараКухня)) AS losses_kitchen,
-        SUM(toFloat64(ПорчаТовараБар)) AS losses_bar,
-        SUM(toFloat64(ПорчаВитрина)) AS losses_display,
-        SUM(toFloat64(ПорчаПоВинеСотрудника)) AS losses_employee,
-        SUM(toFloat64(УдалениеБлюдСоСписанием)) AS losses_deletion,
-        SUM(toFloat64(НедостачаИнвентаризации)) AS losses_inventory,
+        SUM(toFloat64(\`ВыручкаБар\`) + toFloat64(\`ВыручкаКухня\`) + toFloat64(\`ВыручкаДоставка\`)) AS revenue_total,
+        SUM(toFloat64(\`ПорчаТовараКухня\`)) AS losses_kitchen,
+        SUM(toFloat64(\`ПорчаТовараБар\`)) AS losses_bar,
+        SUM(toFloat64(\`ПорчаВитрина\`)) AS losses_display,
+        SUM(toFloat64(\`ПорчаПоВинеСотрудника\`)) AS losses_employee,
+        SUM(toFloat64(\`УдалениеБлюдСоСписанием\`)) AS losses_deletion,
+        SUM(toFloat64(\`НедостачаИнвентаризации\`)) AS losses_inventory,
         SUM(
-          toFloat64(ПорчаТовараКухня) + toFloat64(ПорчаТовараБар) + toFloat64(ПорчаВитрина) +
-          toFloat64(ПорчаПоВинеСотрудника) + toFloat64(УдалениеБлюдСоСписанием) + toFloat64(НедостачаИнвентаризации)
+          toFloat64(\`ПорчаТовараКухня\`) + toFloat64(\`ПорчаТовараБар\`) + toFloat64(\`ПорчаВитрина\`) +
+          toFloat64(\`ПорчаПоВинеСотрудника\`) + toFloat64(\`УдалениеБлюдСоСписанием\`) + toFloat64(\`НедостачаИнвентаризации\`)
         ) AS category_a_total,
-        SUM(toFloat64(ПитаниеПерсонала)) AS staff_food,
-        SUM(toFloat64(МотивацияПерсонала)) AS motivation,
-        SUM(toFloat64(ПроработкаБар) + toFloat64(ПроработкаКухня) + toFloat64(ПроработкаБрендШеф) + toFloat64(КлиентскийСервис)) AS training,
-        SUM(toFloat64(Представительские)) AS representation,
+        SUM(toFloat64(\`ПитаниеПерсонала\`)) AS staff_food,
+        SUM(toFloat64(\`МотивацияПерсонала\`)) AS motivation,
+        SUM(toFloat64(\`ПроработкаБар\`) + toFloat64(\`ПроработкаКухня\`) + toFloat64(\`ПроработкаБрендШеф\`) + toFloat64(\`КлиентскийСервис\`)) AS training,
+        SUM(toFloat64(\`Представительские\`)) AS representation,
         COUNT(*) AS days
       FROM db1.\`Чико4\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
     `;
 
     // Потери по менеджерам
     const sqlByMgr = `
       SELECT
-        IFNULL(Менеджер, 'Отсутствовал') AS manager,
-        COUNT(DISTINCT toDate(Дата)) AS days,
-        SUM(toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка)) AS revenue_rub,
+        IFNULL(\`Менеджер\`, 'Отсутствовал') AS manager,
+        COUNT(DISTINCT toDate(\`Дата\`)) AS days,
+        SUM(toFloat64(\`ВыручкаБар\`) + toFloat64(\`ВыручкаКухня\`) + toFloat64(\`ВыручкаДоставка\`)) AS revenue_rub,
         SUM(
-          toFloat64(ПорчаТовараКухня) + toFloat64(ПорчаТовараБар) + toFloat64(ПорчаВитрина) +
-          toFloat64(ПорчаПоВинеСотрудника) + toFloat64(УдалениеБлюдСоСписанием) + toFloat64(НедостачаИнвентаризации)
+          toFloat64(\`ПорчаТовараКухня\`) + toFloat64(\`ПорчаТовараБар\`) + toFloat64(\`ПорчаВитрина\`) +
+          toFloat64(\`ПорчаПоВинеСотрудника\`) + toFloat64(\`УдалениеБлюдСоСписанием\`) + toFloat64(\`НедостачаИнвентаризации\`)
         ) AS losses_total_rub
       FROM db1.\`Чико4\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
       GROUP BY manager
       HAVING days > 0
       ORDER BY losses_total_rub DESC
@@ -1125,14 +1172,14 @@ export async function handleStaffLosses(request: Request, env: Env): Promise<Res
     // Потери по дню недели (1=Пн .. 7=Вс в ClickHouse toDayOfWeek)
     const sqlByDow = `
       SELECT
-        toDayOfWeek(toDate(Дата)) AS dow,
-        avg(toFloat64(ВыручкаБар) + toFloat64(ВыручкаКухня) + toFloat64(ВыручкаДоставка)) AS avg_revenue,
+        toDayOfWeek(toDate(\`Дата\`)) AS dow,
+        avg(toFloat64(\`ВыручкаБар\`) + toFloat64(\`ВыручкаКухня\`) + toFloat64(\`ВыручкаДоставка\`)) AS avg_revenue,
         avg(
-          toFloat64(ПорчаТовараКухня) + toFloat64(ПорчаТовараБар) + toFloat64(ПорчаВитрина) +
-          toFloat64(ПорчаПоВинеСотрудника) + toFloat64(УдалениеБлюдСоСписанием) + toFloat64(НедостачаИнвентаризации)
+          toFloat64(\`ПорчаТовараКухня\`) + toFloat64(\`ПорчаТовараБар\`) + toFloat64(\`ПорчаВитрина\`) +
+          toFloat64(\`ПорчаПоВинеСотрудника\`) + toFloat64(\`УдалениеБлюдСоСписанием\`) + toFloat64(\`НедостачаИнвентаризации\`)
         ) AS avg_losses
       FROM db1.\`Чико4\`
-      WHERE toDate(Дата) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
       GROUP BY dow
       ORDER BY dow
     `;

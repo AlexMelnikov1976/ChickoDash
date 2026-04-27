@@ -106,7 +106,7 @@ export function daysBetween(start: string, end: string): number {
  * Максимальный допустимый диапазон дат для аналитических запросов.
  * Чтобы один запрос не выгребал годы данных и не клал ClickHouse.
  */
-export const MAX_DATE_RANGE_DAYS = 400;
+export const MAX_DATE_RANGE_DAYS = 550;  // 2026-04-26: расширено с 400 до 550 для поддержки диапазона с 01.01.2025
 
 // -----------------------------------------------------------------------------
 // Cookie-based auth (Phase 2.4d, 2026-04-21)
@@ -148,6 +148,34 @@ export async function authFromCookie(
   }
 
   return { user_id: payload.user_id, email: payload.email };
+}
+
+/**
+ * Auth для server-to-server вызовов (n8n, автоматические отчёты).
+ *
+ * Проверяет заголовок X-Service-Key против N8N_SERVICE_KEY из env.
+ * Только для GET read-only endpoints. Минимальная длина ключа — 32 символа.
+ * Если ключ не задан в env — fallback недоступен, возвращает null.
+ *
+ * Использование в handler-ах:
+ *
+ *   const a = await authFromCookieOrServiceKey(request, env);
+ *   if (a instanceof Response) return a;
+ */
+export async function authFromCookieOrServiceKey(
+  request: Request,
+  env: Env,
+): Promise<AuthContext | Response> {
+  // Сначала пробуем сервисный ключ (для n8n)
+  const serviceKey = request.headers.get('X-Service-Key');
+  if (serviceKey && env.N8N_SERVICE_KEY && env.N8N_SERVICE_KEY.length >= 32) {
+    if (serviceKey === env.N8N_SERVICE_KEY) {
+      return { user_id: 'n8n-service', email: 'n8n@internal' };
+    }
+    return unauthorized(request, 'Invalid service key');
+  }
+  // Fallback на cookie auth
+  return authFromCookie(request, env);
 }
 
 function unauthorized(request: Request, message: string): Response {

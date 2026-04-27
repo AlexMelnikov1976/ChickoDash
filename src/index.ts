@@ -50,6 +50,7 @@ export interface Env {
   ASSETS: Fetcher; // Phase 2.8: Workers Static Assets binding (public/)
   ANTHROPIC_API_KEY?: string;
   FEEDBACK_WEBHOOK?: string; // n8n webhook URL for feedback → Notion + Telegram
+  N8N_SERVICE_KEY?: string;  // Сервисный ключ для server-to-server вызовов (n8n, отчёты)
 }
 
 // Allowed origins for CORS. Add custom domains here when ready.
@@ -202,10 +203,31 @@ export default {
     // --- Public API endpoints ---
 
     if (url.pathname === '/health') {
-      return jsonResponse({
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-      }, request);
+      const t0 = Date.now();
+      try {
+        const { ClickHouseClient } = await import('./clickhouse');
+        const ch = new ClickHouseClient({
+          host: env.CLICKHOUSE_HOST,
+          user: env.CLICKHOUSE_USER,
+          password: env.CLICKHOUSE_PASSWORD,
+        });
+        await ch.query('SELECT 1');
+        return jsonResponse({
+          status: 'ok',
+          ch: 'ok',
+          ms: Date.now() - t0,
+          timestamp: new Date().toISOString(),
+        }, request);
+      } catch (e) {
+        const err = e as Error;
+        return jsonResponse({
+          status: 'error',
+          ch: 'error',
+          error: err.message,
+          ms: Date.now() - t0,
+          timestamp: new Date().toISOString(),
+        }, request, 503);
+      }
     }
 
     if (url.pathname === '/api/auth/request-link' && request.method === 'POST') {

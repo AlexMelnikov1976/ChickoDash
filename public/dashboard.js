@@ -369,7 +369,7 @@ async function init() {
   // попали без сессии, первый apiGet вернёт 401 → showLogin → throw.
   showLoader('Подключение к данным...');
   try {
-    showLoader('Загрузка истории с 2024 года...');
+    showLoader('Загрузка данных...');
     const rows = await apiRestaurants(false);
     const restMap = {};
     for (const row of rows) {
@@ -413,8 +413,8 @@ async function init() {
         if (_tabEl) goTab(_tabEl);
       }
     } catch(e) {}
-    // Тихая фоновая загрузка истории с 2024 через 2 сек после старта
-    setTimeout(()=>loadFullHistory(true), 2000);
+    // Фоновая загрузка истории с 2025 — стартует сразу после первого рендера
+    setTimeout(()=>loadFullHistory(true), 100);
     // Phase 2.9.3: проверяем, админ ли пользователь. Если да — вставляем вкладку «Активность».
     checkAdminAndShowTab();
   } catch(e) {
@@ -429,24 +429,36 @@ async function loadFullHistory(silent=false) {
   const btn = document.getElementById('loadHistBtn');
   if (btn) { btn.textContent = '⏳ Загрузка...'; btn.disabled = true; }
   try {
-    if(!silent) showLoader('Загрузка истории с 2024 года...');
-    const rows = await apiRestaurants(true);
+    // Грузим 2025 по кварталам параллельно — каждый чанк < 10s, обходим CF 30s subrequest limit
+    const quarters = [
+      ['2025-01-01','2025-03-31'],
+      ['2025-04-01','2025-06-30'],
+      ['2025-07-01','2025-09-30'],
+      ['2025-10-01','2025-12-31'],
+    ];
+    const chunkResults = await Promise.all(
+      quarters.map(([from, to]) =>
+        apiGet('/api/restaurants?from=' + from + '&to=' + to).then(j => j.data || []).catch(() => [])
+      )
+    );
+    const allRows = chunkResults.flat();
     const restMap = {};
-    for (const row of rows) {
+    for (const row of allRows) {
       const id = row.dept_id;
       if (!restMap[id]) restMap[id] = { id:+id, name:row.restaurant_name, city:row.city, ts:[] };
       if(+row.is_anomaly_day!==1) restMap[id].ts.push({ date:row.report_date_str, revenue:+row.revenue_total_rub||0, bar:+row.revenue_bar_rub||0, kitchen:+row.revenue_kitchen_rub||0, delivery:+row.revenue_delivery_rub||0, avgCheck:+row.avg_check_total_rub||0, checks:+row.checks_total||0, itemsPerCheck:0, foodcost:+row.foodcost_total_pct||0, discount:+row.discount_total_pct||0, deliveryPct:+row.delivery_share_pct||0 });
     }
-    // Merge into existing RESTS (update ts for each)
+    // Merge: 2025 ts вставляем перед существующими 90-дневными данными
     for (const id in restMap) {
       const existing = RESTS.find(r => r.id === +id);
-      if (existing) existing.ts = restMap[id].ts;
+      if (existing) {
+        const existingDates = new Set(existing.ts.map(t => t.date));
+        const newTs = restMap[id].ts.filter(t => !existingDates.has(t.date));
+        existing.ts = [...newTs, ...existing.ts].sort((a,b)=>a.date<b.date?-1:1);
+      }
     }
     ALL_DATES = [...new Set(RESTS.flatMap(r => r.ts.map(t => t.date)))].sort();
     MIN_DATE = ALL_DATES[0] || '';
-    // Phase 2.9.4: сохраняем текущий выбор пользователя — buildCalendars()
-    // сбрасывает CAL_STATE на {start:MIN_DATE, end:MAX_DATE}, что после
-    // загрузки полной истории даёт 844-дневный диапазон и ломает menu-analysis.
     const _savedStart = CAL_STATE.global ? CAL_STATE.global.start : null;
     const _savedEnd = CAL_STATE.global ? CAL_STATE.global.end : null;
     buildCalendars();
@@ -456,7 +468,7 @@ async function loadFullHistory(silent=false) {
       updateCalLabel('global');
     }
     if(!silent) hideLoader();
-    if (btn) { btn.textContent = '✅ История загружена (2024–)'; btn.disabled = true; btn.style.color='var(--green)'; }
+    if (btn) { btn.textContent = '✅ История загружена (2025–)'; btn.disabled = true; btn.style.color='var(--green)'; }
     const tsEl=document.getElementById('dataTsVal');
     if(tsEl&&MIN_DATE) {
       const d=new Date(MIN_DATE);
@@ -3743,6 +3755,11 @@ async function renderStaff() {
     return;
   }
 
+  if (!R.city || !R.city.toLowerCase().includes('калининград')) {
+    root.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--text2);font-size:13px;line-height:1.7">Данные iikoWeb подключены только для Калининграда.<br><span style="color:var(--text3);font-size:11px">Для ' + (R.city || R.name) + ' раздел будет доступен после подключения интеграции.</span></div>';
+    return;
+  }
+
   root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">Загрузка данных по персоналу…</div>';
 
   const data = await loadStaffAll();
@@ -3810,17 +3827,26 @@ function renderStaffMockBanner(list) {
 
 function renderStaffPayrollWarning(list) {
   if (!list || !list.meta) return '';
-  const validFrom = list.meta.payroll_data_valid_from;
-  if (!validFrom) return '';
-  const st = CAL_STATE.global;
-  if (!st || !st.start) return '';
-  if (st.start >= validFrom) return '';
+  const parts = [];
 
+  const validFrom = list.meta.payroll_data_valid_from;
+  const st = CAL_STATE.global;
+  if (validFrom && st && st.start && st.start < validFrom) {
+    parts.push('Данные начислений валидны с <b>' + escapeHtml(validFrom) + '</b>. ' +
+      'Показатели ФОТ% и эффективной ставки за часть периода до этой даты могут быть неполны.');
+  }
+
+  const workdataThrough = list.meta.workdata_through;
+  if (workdataThrough && st && st.end && st.end > workdataThrough) {
+    parts.push('Данные по часам и сменам доступны по <b>' + escapeHtml(workdataThrough) + '</b>. ' +
+      'Показатели часов и численности за выбранный период неполны — данные iikoWeb загружаются с задержкой ~7 дней.');
+  }
+
+  if (!parts.length) return '';
   return (
     '<div class="staff-payroll-warning">' +
       '<span>ℹ</span>' +
-      '<div>Данные начислений валидны с <b>' + escapeHtml(validFrom) + '</b>. ' +
-      'Показатели ФОТ% и эффективной ставки за часть периода до этой даты могут быть неполны.</div>' +
+      '<div>' + parts.join('<br>') + '</div>' +
     '</div>'
   );
 }
