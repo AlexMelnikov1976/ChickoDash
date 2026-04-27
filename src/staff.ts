@@ -1174,9 +1174,6 @@ export async function handleStaffRatings(request: Request, env: Env): Promise<Re
     const v = await validateCommon(request, env);
     if (v instanceof Response) return v;
 
-    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${v.user_id}`, RATE_LIMIT_DATA, request);
-    if (rl) return rl;
-
     console.log(`[staff-ratings] user=${v.user_id} rest=${v.restId} ${v.start}..${v.factEnd}`);
 
     const ch = makeClient(env);
