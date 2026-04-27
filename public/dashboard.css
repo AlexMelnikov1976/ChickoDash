@@ -2025,4 +2025,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 .mkt-chart-h150{height:150px;position:relative}
 .mkt-error{padding:30px 20px;text-align:center;color:#f4a49e;background:rgba(231,76,60,.08);border:1px solid rgba(231,76,60,.3);border-radius:8px;font-size:12px}
 
+/* Staff Ratings (Phase 2.11) */
+.staff-ratings-wrap{display:flex;flex-direction:column;gap:16px}
+.staff-rating-header{font-size:11px;color:var(--text2);padding:4px 0}
+.staff-rating-note{font-size:11px}
+.accent-warn{color:var(--accent-gold)!important}
+.staff-rating-group{background:var(--card);border-radius:10px;padding:14px 16px}
+.staff-rating-group-title{font-size:12px;font-weight:600;color:var(--text1);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.staff-rating-bar-wrap{width:100%;height:6px;background:var(--card2);border-radius:3px;overflow:hidden}
+.staff-rating-bar-fill{height:100%;border-radius:3px;transition:width .5s}
+.staff-comp-badge{display:inline-block;font-size:9px;background:rgba(78,106,144,.2);color:var(--text2);padding:2px 5px;border-radius:4px;margin-right:3px;white-space:nowrap}
+.staff-rating-guest{font-size:10px;color:var(--accent-gold);margin-right:6px}
+.staff-rating-stat{font-size:10px;color:var(--text2);margin-right:6px}
+
 /* end of file */

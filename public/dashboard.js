@@ -3722,15 +3722,16 @@ async function loadStaffAll() {
                '&start=' + encodeURIComponent(st.start) +
                '&end=' + encodeURIComponent(st.end);
 
-    const [list, groups, performance, managers, losses] = await Promise.all([
+    const [list, groups, performance, managers, losses, ratings] = await Promise.all([
       apiGet('/api/staff-list' + qs).catch(e => { console.error('[staff-list]', e.message); return null; }),
       apiGet('/api/staff-groups' + qs).catch(e => { console.error('[staff-groups]', e.message); return null; }),
       apiGet('/api/staff-performance' + qs).catch(e => { console.error('[staff-perf]', e.message); return null; }),
       apiGet('/api/staff-managers' + qs).catch(e => { console.error('[staff-mgrs]', e.message); return null; }),
       apiGet('/api/staff-losses' + qs).catch(e => { console.error('[staff-loss]', e.message); return null; }),
+      apiGet('/api/staff-ratings' + qs).catch(e => { console.error('[staff-ratings]', e.message); return null; }),
     ]);
 
-    STAFF_STATE.raw = { list, groups, performance, managers, losses };
+    STAFF_STATE.raw = { list, groups, performance, managers, losses, ratings };
     STAFF_STATE.loadedFor = key;
     return STAFF_STATE.raw;
   } catch (e) {
@@ -3790,6 +3791,10 @@ async function renderStaff() {
   html.push('<div class="staff-section-title">💰 ФОТ и группы<span class="hint">Производственные группы + корреляция часы × выручка</span></div>');
   html.push(renderStaffGroups(data.groups));
   html.push(renderStaffCorrelation(data.groups));
+
+  // Block — Рейтинг сотрудников
+  html.push('<div class="staff-section-title">⭐ Рейтинг сотрудников<span class="hint">Балл 0–100 по группам: гостевые оценки + операционные показатели</span></div>');
+  html.push(renderStaffRatings(data.ratings));
 
   // Block 4 — Производительность
   html.push('<div class="staff-section-title">⚡ Производительность<span class="hint">Kasavana-Smith матрица для ролей с атрибуцией выручки</span></div>');
@@ -4069,6 +4074,156 @@ function renderStaffCorrelation(groupsData) {
 }
 
 // ——— Block 4: Производительность ————————————————————————————————————————
+
+// ——— Рейтинг сотрудников ———————————————————————————————————————————————————
+
+function renderStaffRatings(data) {
+  if (!data || !data.ratings || !data.ratings.length) {
+    return '<div class="staff-empty">Недостаточно данных для рейтинга за выбранный период.</div>';
+  }
+
+  const sum = data.summary || {};
+  const totalRev = sum.total_reviews || 0;
+  const daysRev = sum.days_with_reviews || 0;
+
+  // Метка качества данных
+  const reviewNote = totalRev > 0
+    ? '<span class="staff-rating-note">За период: ' + totalRev + ' отзыв' + (totalRev === 1 ? '' : totalRev < 5 ? 'а' : 'ов') + ' за ' + daysRev + ' дн.</span>'
+    : '<span class="staff-rating-note accent-warn">Оценок за период нет — рейтинг по операционным показателям</span>';
+
+  const GROUP_LABELS = { management: '👔 Менеджмент', hall: '🏪 Зал (кассиры / официанты)', other: '🍳 Кухня / Бар / Клининг' };
+  const GROUP_HINT = {
+    management: 'Гостевой балл 35 + Сильные смены 30 + Потери 20 + Гриль 15',
+    hall: 'Гостевой балл 40 + Выручка/час 35 + Средний чек 25',
+    other: 'Гостевой балл 60 + Явка/часы 40',
+  };
+
+  // Группируем
+  const byGroup = { management: [], hall: [], other: [] };
+  data.ratings.forEach(function(r) {
+    const g = r.staff_group || 'other';
+    if (byGroup[g]) byGroup[g].push(r);
+  });
+
+  function ratingColor(score) {
+    if (score >= 75) return '#4caf82';
+    if (score >= 50) return 'var(--accent-gold)';
+    return 'var(--red)';
+  }
+
+  function ratingBar(score) {
+    const color = ratingColor(score);
+    return (
+      '<div class="staff-rating-bar-wrap">' +
+        '<div class="staff-rating-bar-fill" style="width:' + score + '%;background:' + color + '"></div>' +
+      '</div>'
+    );
+  }
+
+  function compBadge(label, pts, total) {
+    if (pts === null || pts === undefined) return '';
+    const pct = total > 0 ? Math.round(pts / total * 100) : 0;
+    return '<span class="staff-comp-badge" title="' + label + ': ' + pts + ' из ' + total + '">' + label + ' ' + pts + '</span>';
+  }
+
+  function renderGroup(groupKey) {
+    const rows = byGroup[groupKey];
+    if (!rows || !rows.length) return '';
+    const label = GROUP_LABELS[groupKey];
+    const hint = GROUP_HINT[groupKey];
+
+    const rowHtml = rows.map(function(r) {
+      const score = r.rating || 0;
+      const c = r.components || {};
+      const s = r.stats || {};
+      const guestStr = s.guest_score_avg !== null && s.guest_score_avg !== undefined
+        ? '★ ' + s.guest_score_avg.toFixed(1) + ' (' + (s.days_with_reviews || 0) + ' дн.)'
+        : '—';
+
+      let compHtml = '';
+      if (groupKey === 'hall') {
+        compHtml = compBadge('Гость', c.guest, 40) + compBadge('₽/ч', c.rph, 35) + compBadge('Чек', c.avg_check, 25);
+      } else if (groupKey === 'management') {
+        compHtml = compBadge('Гость', c.guest, 35) + compBadge('Смены', c.strong_shifts, 30) + compBadge('Потери', c.losses, 20) + compBadge('Гриль', c.grill, 15);
+      } else {
+        compHtml = compBadge('Гость', c.guest, 60) + compBadge('Явка', c.hours, 40);
+      }
+
+      let statsHtml = '<span class="staff-rating-guest">' + guestStr + '</span>';
+      if (groupKey === 'hall' && s.revenue_per_hour) {
+        statsHtml += '<span class="staff-rating-stat">' + Math.round(s.revenue_per_hour).toLocaleString('ru') + ' ₽/ч</span>';
+      }
+      if (groupKey === 'management') {
+        if (s.grill_pct !== null && s.grill_pct !== undefined) {
+          const grillColor = s.grill_pct >= s.grill_target_pct ? '#4caf82' : 'var(--accent-gold)';
+          statsHtml += '<span class="staff-rating-stat" style="color:' + grillColor + '">Гриль ' + s.grill_pct.toFixed(1) + '%</span>';
+        }
+        statsHtml += '<span class="staff-rating-stat">Потери ' + (s.loss_pct || 0).toFixed(2) + '%</span>';
+      }
+
+      return (
+        '<tr>' +
+          '<td class="name-cell">' + escapeHtml(r.employee_name) + '</td>' +
+          '<td class="small" style="color:var(--text2)">' + escapeHtml(r.role_primary || '—') + '</td>' +
+          '<td class="num" style="font-weight:600;color:' + ratingColor(score) + '">' + score + '</td>' +
+          '<td style="min-width:120px">' + ratingBar(score) + '</td>' +
+          '<td class="small">' + compHtml + '</td>' +
+          '<td class="small">' + statsHtml + '</td>' +
+        '</tr>'
+      );
+    }).join('');
+
+    return (
+      '<div class="staff-rating-group">' +
+        '<div class="staff-rating-group-title">' + label + '<span class="hint">' + hint + '</span></div>' +
+        '<div class="staff-table-scroll">' +
+          '<table class="staff-table">' +
+            '<thead><tr>' +
+              '<th>Сотрудник</th><th>Роль</th><th class="num">Балл</th><th>Прогресс</th><th>Компоненты</th><th>Показатели</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rowHtml + '</tbody>' +
+          '</table>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // Плохие дни
+  let badDaysHtml = '';
+  if (data.bad_days && data.bad_days.length) {
+    const rows = data.bad_days.slice(0, 5).map(function(bd) {
+      return (
+        '<tr>' +
+          '<td class="small">' + escapeHtml(bd.date) + '</td>' +
+          '<td class="num" style="color:var(--red)">★ ' + bd.day_score.toFixed(1) + '</td>' +
+          '<td class="small">' + bd.total_reviews + ' отз.</td>' +
+          '<td class="small" style="color:var(--text2)">' + escapeHtml(bd.staff.join(', ')) + '</td>' +
+        '</tr>'
+      );
+    }).join('');
+    badDaysHtml = (
+      '<div class="staff-rating-group">' +
+        '<div class="staff-rating-group-title" style="color:var(--red)">🚨 Дни с плохими оценками<span class="hint">Средний балл < 3★ — кто работал в эти смены</span></div>' +
+        '<div class="staff-table-scroll">' +
+          '<table class="staff-table">' +
+            '<thead><tr><th>Дата</th><th>Балл</th><th>Отзывов</th><th>Работали</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody>' +
+          '</table>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  return (
+    '<div class="staff-ratings-wrap">' +
+      '<div class="staff-rating-header">' + reviewNote + '</div>' +
+      badDaysHtml +
+      renderGroup('management') +
+      renderGroup('hall') +
+      renderGroup('other') +
+    '</div>'
+  );
+}
 
 function renderStaffPerformance(perfData) {
   if (!perfData || !perfData.matrix) return '';

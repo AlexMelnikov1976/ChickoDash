@@ -28,6 +28,7 @@ import {
   handleStaffPerformance,
   handleStaffManagers,
   handleStaffLosses,
+  handleStaffRatings,
 } from './staff';
 import { handleAdminMe, handleAdminActivity } from './admin';
 import { handleMarketingOverview } from './marketing';
@@ -334,6 +335,11 @@ export default {
     }
     if (url.pathname === "/api/staff-losses" && request.method === "GET") {
       const _r = await handleStaffLosses(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+    if (url.pathname === "/api/staff-ratings" && request.method === "GET") {
+      const _r = await handleStaffRatings(request, env);
       _logReq(request, env, ctx, _r, _t0);
       return _r;
     }

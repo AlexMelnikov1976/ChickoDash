@@ -994,7 +994,16 @@ export async function handleStaffManagers(request: Request, env: Env): Promise<R
         toDate(\`Дата\`) AS date,
         IFNULL(\`Менеджер\`, 'Отсутствовал') AS manager_name,
         toFloat64(\`ВыручкаБар\`) + toFloat64(\`ВыручкаКухня\`) + toFloat64(\`ВыручкаДоставка\`) AS revenue,
-        toFloat64(\`Начислено\`) AS payroll
+        toFloat64(\`Начислено\`) AS payroll,
+        toFloat64(\`Оценка2Гис\`) AS rating_2gis,
+        toFloat64(\`ОценкаЯндекс\`) AS rating_yandex,
+        toFloat64(\`КлиентскийСервис\`) AS client_service,
+        toFloat64(\`Звезд_0\`) AS stars_0,
+        toFloat64(\`Звезд_1\`) AS stars_1,
+        toFloat64(\`Звезд_2\`) AS stars_2,
+        toFloat64(\`Звезд_3\`) AS stars_3,
+        toFloat64(\`Звезд_4\`) AS stars_4,
+        toFloat64(\`Звезд_5\`) AS stars_5
       FROM db1.\`Чико4\`
       WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
     `;
@@ -1010,6 +1019,10 @@ export async function handleStaffManagers(request: Request, env: Env): Promise<R
       revenue: d(r.revenue),
       payroll: d(r.payroll),
       fot_pct: d(r.revenue) > 0 ? (d(r.payroll) / d(r.revenue)) * 100 : 0,
+      rating_2gis: d(r.rating_2gis),
+      rating_yandex: d(r.rating_yandex),
+      client_service: d(r.client_service),
+      stars: [d(r.stars_0), d(r.stars_1), d(r.stars_2), d(r.stars_3), d(r.stars_4), d(r.stars_5)],
     }));
 
     // Квантили
@@ -1121,10 +1134,447 @@ export async function handleStaffManagers(request: Request, env: Env): Promise<R
       },
       period: { start: v.start, end: v.end, days: v.daysInPeriod, fact_end: v.factEnd, days_fact: v.daysFact },
       meta: { mock: false, pipeline_status: 'Phase 2.9.1' },
+      _debug_shifts_sample: allShifts.slice(0, 15),
     }, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[staff-managers] error: ${err.message}`, err.stack);
+    return jsonResponse({ error: 'Request failed', detail: err.message }, request, 500);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// GET /api/staff-ratings — рейтинг сотрудников 0-100 по группам
+// -----------------------------------------------------------------------------
+//
+// Формулы по группам:
+//
+//   Зал (Кассир / официант):
+//     guest_score  40 — средний балл дней, когда сотрудник работал И были оценки
+//     rph_score    35 — выручка/час vs медиана группы
+//     check_score  25 — ср.чек vs медиана группы
+//
+//   Менеджмент:
+//     guest_score  35 — балл дней ПОД ЕГО УПРАВЛЕНИЕМ (он = Менеджер в Чико4)
+//     strong_score 30 — доля сильных смен
+//     loss_score   20 — потери % (чем ниже тем выше балл)
+//     grill_score  15 — доля гриля в выручке vs цель GRILL_TARGET_PCT
+//
+//   Кухня / Бар / Клининг:
+//     guest_score  60 — балл дней когда работал
+//     hours_score  40 — часы vs среднее по группе
+//
+// Гостевой балл дня = (1*n1+2*n2+3*n3+4*n4+5*n5)/(n1+..+n5), только если >0 оценок.
+// Гостевой балл сотрудника = среднее day_score по дням когда работал И были оценки.
+// Нормировка: 0 оценок за период → guest_score = null, не учитывается в рейтинге
+// (остальные компоненты масштабируются на 100).
+
+export async function handleStaffRatings(request: Request, env: Env): Promise<Response> {
+  try {
+    const v = await validateCommon(request, env);
+    if (v instanceof Response) return v;
+
+    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${v.user_id}`, RATE_LIMIT_DATA, request);
+    if (rl) return rl;
+
+    console.log(`[staff-ratings] user=${v.user_id} rest=${v.restId} ${v.start}..${v.factEnd}`);
+
+    const ch = makeClient(env);
+
+    // 1. Смены каждого сотрудника по дням (ЧикоВремя)
+    const sqlShifts = `
+      SELECT
+        \`Имя\` AS employee_name,
+        any(\`Роль\`) AS role_primary,
+        any(\`Группа\`) AS group_primary,
+        toDate(\`Дата\`) AS shift_date,
+        SUM(toFloat64(\`РабВремяЧас\`)) AS hours
+      FROM db1.\`ЧикоВремя\`
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND \`Имя\` IS NOT NULL AND \`Имя\` != ''
+        AND \`Имя\` NOT LIKE '%iiko%'
+      GROUP BY employee_name, shift_date
+    `;
+
+    // 2. Продажи официантов за весь период (ЧикоНов3)
+    const sqlSales = `
+      SELECT
+        \`Официант\` AS employee_name,
+        SUM(toFloat64(\`СреднийЧек\`) * toFloat64(\`КолВоЧеков\`)) AS revenue_total,
+        SUM(toFloat64(\`КолВоЧеков\`)) AS checks_total
+      FROM db1.\`ЧикоНов3\`
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+        AND \`Официант\` IS NOT NULL AND \`Официант\` != ''
+        AND \`Официант\` NOT LIKE '%iiko%'
+      GROUP BY employee_name
+    `;
+
+    // 3. Ежедневные оценки + менеджер + выручка (Чико4)
+    const sqlDaily = `
+      SELECT
+        toDate(\`Дата\`) AS date,
+        IFNULL(\`Менеджер\`, '') AS manager_name,
+        toFloat64(\`ВыручкаБар\`) + toFloat64(\`ВыручкаКухня\`) + toFloat64(\`ВыручкаДоставка\`) AS revenue,
+        toFloat64(\`Звезд_1\`) AS s1,
+        toFloat64(\`Звезд_2\`) AS s2,
+        toFloat64(\`Звезд_3\`) AS s3,
+        toFloat64(\`Звезд_4\`) AS s4,
+        toFloat64(\`Звезд_5\`) AS s5,
+        toFloat64(\`ПорчаТовараБар\`) + toFloat64(\`ПорчаТовараКухня\`) + toFloat64(\`ПорчаВитрина\`) +
+          toFloat64(\`ПорчаПоВинеСотрудника\`) + toFloat64(\`УдалениеБлюдСоСписанием\`) + toFloat64(\`НедостачаИнвентаризации\`) AS losses,
+        toFloat64(\`Начислено\`) AS payroll
+      FROM db1.\`Чико4\`
+      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
+    `;
+
+    // 4. Гриль по дням
+    const sqlGrill = `
+      SELECT
+        toString(report_date) AS date,
+        SUM(revenue_rub) AS grill_revenue
+      FROM chicko.dish_sales
+      WHERE dept_uuid = (
+        SELECT DISTINCT dept_uuid FROM chicko.mart_restaurant_daily_base WHERE dept_id = ${v.restId} LIMIT 1
+      )
+        AND report_date BETWEEN '${v.start}' AND '${v.factEnd}'
+        AND dish_group IN ('Гриль Новый', 'Гриль-меню Допы')
+        AND qty > 0
+      GROUP BY report_date
+      ORDER BY report_date
+    `;
+
+    const [shiftsR, salesR, dailyR, grillR] = await Promise.all([
+      ch.query(sqlShifts),
+      ch.query(sqlSales),
+      ch.query(sqlDaily),
+      ch.query(sqlGrill).catch(() => ({ data: [], rows: 0 })),
+    ]);
+
+    // --- Подготовка данных ---
+
+    // Дневные оценки: date → {day_score, total_reviews, revenue, manager, losses, payroll}
+    interface DayInfo {
+      day_score: number | null;
+      total_reviews: number;
+      revenue: number;
+      manager: string;
+      losses: number;
+      payroll: number;
+    }
+    const dayMap = new Map<string, DayInfo>();
+    for (const row of dailyR.data as Array<Record<string, unknown>>) {
+      const s1=d(row.s1), s2=d(row.s2), s3=d(row.s3), s4=d(row.s4), s5=d(row.s5);
+      const total = s1+s2+s3+s4+s5;
+      const day_score = total > 0 ? (1*s1+2*s2+3*s3+4*s4+5*s5)/total : null;
+      dayMap.set(String(row.date), {
+        day_score,
+        total_reviews: total,
+        revenue: d(row.revenue),
+        manager: String(row.manager_name),
+        losses: d(row.losses),
+        payroll: d(row.payroll),
+      });
+    }
+
+    // Гриль по дням: date → grill_revenue
+    const grillMap = new Map<string, number>();
+    for (const row of grillR.data as Array<Record<string, unknown>>) {
+      grillMap.set(String(row.date), d(row.grill_revenue));
+    }
+
+    // Смены по сотруднику: name → {role, group, dates: Set, hours_total}
+    interface EmpShift { role: string; group: string; dates: Set<string>; hours_total: number; }
+    const empShifts = new Map<string, EmpShift>();
+    for (const row of shiftsR.data as Array<Record<string, unknown>>) {
+      const name = String(row.employee_name);
+      const date = String(row.shift_date).slice(0, 10);
+      const existing = empShifts.get(name);
+      if (existing) {
+        existing.dates.add(date);
+        existing.hours_total += d(row.hours);
+      } else {
+        empShifts.set(name, {
+          role: String(row.role_primary || ''),
+          group: String(row.group_primary || ''),
+          dates: new Set([date]),
+          hours_total: d(row.hours),
+        });
+      }
+    }
+
+    // Продажи: name → {revenue_total, checks_total}
+    const salesMap = new Map<string, { revenue: number; checks: number }>();
+    for (const row of salesR.data as Array<Record<string, unknown>>) {
+      salesMap.set(String(row.employee_name), {
+        revenue: d(row.revenue_total),
+        checks: d(row.checks_total),
+      });
+    }
+
+    // Определяем группу сотрудника
+    const GRILL_TARGET_PCT = 3.0; // целевая доля гриля в выручке %
+
+    function getGroup(role: string): 'hall' | 'management' | 'other' {
+      const r = role.toLowerCase();
+      if (r.includes('кассир') || r.includes('официант')) return 'hall';
+      if (r.includes('менеджер')) return 'management';
+      return 'other';
+    }
+
+    // Гостевой балл для набора дат (сотрудники зала и кухни/бара)
+    function calcGuestScore(dates: Set<string>): { score: number | null; days_with_reviews: number; total_reviews: number } {
+      const scores: number[] = [];
+      let totalRev = 0;
+      for (const date of dates) {
+        const day = dayMap.get(date);
+        if (day && day.day_score !== null) {
+          scores.push(day.day_score);
+          totalRev += day.total_reviews;
+        }
+      }
+      if (!scores.length) return { score: null, days_with_reviews: 0, total_reviews: totalRev };
+      const avg = scores.reduce((s, x) => s + x, 0) / scores.length;
+      return { score: avg, days_with_reviews: scores.length, total_reviews: totalRev };
+    }
+
+    // Нормировка: значение → балл от 0 до maxPts
+    // ratio = val / median; ratio >= 1.5 → maxPts; ratio <= 0.5 → 0
+    function normByMedian(val: number, med: number, maxPts: number): number {
+      if (med <= 0) return maxPts / 2;
+      const ratio = val / med;
+      const clamped = Math.max(0, Math.min(1, (ratio - 0.5)));
+      return +(clamped * maxPts).toFixed(1);
+    }
+
+    // Нормировка гостевого балла: 1.0→0, 5.0→maxPts
+    function normGuest(score: number | null, maxPts: number): number | null {
+      if (score === null) return null;
+      return +(Math.max(0, Math.min(maxPts, ((score - 1) / 4) * maxPts)).toFixed(1));
+    }
+
+    // --- Считаем метрики по группам ---
+
+    // Медианы для группы Зал: rph и avg_check
+    const hallRph: number[] = [];
+    const hallCheck: number[] = [];
+    for (const [name, shift] of empShifts) {
+      if (getGroup(shift.role) !== 'hall') continue;
+      const sales = salesMap.get(name);
+      if (!sales) continue;
+      if (shift.hours_total > 0) hallRph.push(sales.revenue / shift.hours_total);
+      if (sales.checks > 0) hallCheck.push(sales.revenue / sales.checks);
+    }
+    const rphMedianHall = median(hallRph);
+    const checkMedianHall = median(hallCheck);
+
+    // Медианы для других групп: hours_total per person
+    const otherHours: number[] = [];
+    for (const [, shift] of empShifts) {
+      if (getGroup(shift.role) !== 'other') continue;
+      otherHours.push(shift.hours_total);
+    }
+    const hoursMedianOther = median(otherHours);
+
+    // Менеджеры: сильные смены, потери, гриль
+    // p25/p75 revenue для сильных смен
+    const dayRevs = Array.from(dayMap.values()).map(d => d.revenue).filter(x => x > 0).sort((a,b)=>a-b);
+    const dayFots = Array.from(dayMap.values())
+      .filter(d => d.revenue > 0)
+      .map(d => (d.payroll / d.revenue) * 100)
+      .sort((a,b)=>a-b);
+    const revP75 = dayRevs[Math.floor(dayRevs.length * 0.75)] || 0;
+    const fotP50 = dayFots[Math.floor(dayFots.length * 0.50)] || 0;
+
+    // Потери % медиана по менеджерам
+    const mgrLossPcts: number[] = [];
+    const mgrMap = new Map<string, { days: string[]; strong: number; losses: number; revenue: number; grillRev: number }>();
+    for (const [date, day] of dayMap) {
+      const mgr = day.manager;
+      if (!mgr) continue;
+      const existing = mgrMap.get(mgr) || { days: [], strong: 0, losses: 0, revenue: 0, grillRev: 0 };
+      existing.days.push(date);
+      existing.losses += day.losses;
+      existing.revenue += day.revenue;
+      existing.grillRev += grillMap.get(date) || 0;
+      if (day.revenue > revP75 && day.revenue > 0 && (day.payroll/day.revenue*100) < fotP50) existing.strong++;
+      mgrMap.set(mgr, existing);
+    }
+    for (const m of mgrMap.values()) {
+      if (m.revenue > 0) mgrLossPcts.push((m.losses / m.revenue) * 100);
+    }
+    const lossMedianMgr = median(mgrLossPcts) || 0.1;
+
+    // --- Строим рейтинги ---
+    const ratings: Array<Record<string, unknown>> = [];
+
+    for (const [name, shift] of empShifts) {
+      const group = getGroup(shift.role);
+      const sales = salesMap.get(name);
+      const { score: guestScore, days_with_reviews, total_reviews } = calcGuestScore(shift.dates);
+      const hasGuest = guestScore !== null;
+
+      if (group === 'hall') {
+        const rph = sales && shift.hours_total > 0 ? sales.revenue / shift.hours_total : 0;
+        const avgCheck = sales && sales.checks > 0 ? sales.revenue / sales.checks : 0;
+        const gPts = normGuest(guestScore, 40);
+        const rphPts = normByMedian(rph, rphMedianHall, 35);
+        const chkPts = normByMedian(avgCheck, checkMedianHall, 25);
+
+        // Если нет гостевых оценок — масштабируем остальные на 100
+        let total: number;
+        if (!hasGuest) {
+          total = rphPts + chkPts > 0
+            ? Math.round(((rphPts + chkPts) / 60) * 100)
+            : 0;
+        } else {
+          total = Math.round((gPts || 0) + rphPts + chkPts);
+        }
+
+        ratings.push({
+          employee_name: name,
+          role_primary: shift.role,
+          group_primary: shift.group,
+          staff_group: 'hall',
+          rating: Math.min(100, total),
+          components: {
+            guest: gPts,
+            rph: rphPts,
+            avg_check: chkPts,
+          },
+          stats: {
+            hours_total: +shift.hours_total.toFixed(1),
+            revenue_per_hour: Math.round(rph),
+            avg_check_rub: Math.round(avgCheck),
+            guest_score_avg: guestScore !== null ? +guestScore.toFixed(2) : null,
+            days_with_reviews,
+            total_reviews,
+          },
+        });
+
+      } else if (group === 'management') {
+        const mgrData = mgrMap.get(name);
+        const mgrDays = mgrData?.days.length || 0;
+        const strongPct = mgrDays > 0 ? (mgrData!.strong / mgrDays) * 100 : 0;
+        const lossPct = mgrData && mgrData.revenue > 0 ? (mgrData.losses / mgrData.revenue) * 100 : 0;
+        const grillPct = mgrData && mgrData.revenue > 0 ? (mgrData.grillRev / mgrData.revenue) * 100 : 0;
+
+        // Гостевой балл — только дни под управлением этого менеджера
+        const mgrDates = new Set<string>(mgrData?.days || []);
+        const mgrGuest = calcGuestScore(mgrDates);
+        const gPts = normGuest(mgrGuest.score, 35);
+        const strongPts = +Math.min(30, strongPct * 0.6).toFixed(1);
+        // Потери: 0% → 20pts, median% → 10pts, >2× median → 0pts
+        const lossRatio = lossMedianMgr > 0 ? lossPct / lossMedianMgr : 0;
+        const lossPts = +Math.max(0, Math.min(20, 20 - lossRatio * 10)).toFixed(1);
+        // Гриль: достиг цели → 15pts, 0% → 0pts
+        const grillPts = +Math.min(15, (grillPct / GRILL_TARGET_PCT) * 15).toFixed(1);
+
+        const hasG = mgrGuest.score !== null;
+        let total: number;
+        if (!hasG) {
+          const sub = strongPts + lossPts + grillPts;
+          total = sub > 0 ? Math.round((sub / 65) * 100) : 0;
+        } else {
+          total = Math.round((gPts || 0) + strongPts + lossPts + grillPts);
+        }
+
+        ratings.push({
+          employee_name: name,
+          role_primary: shift.role,
+          group_primary: shift.group,
+          staff_group: 'management',
+          rating: Math.min(100, total),
+          components: {
+            guest: gPts,
+            strong_shifts: strongPts,
+            losses: lossPts,
+            grill: grillPts,
+          },
+          stats: {
+            hours_total: +shift.hours_total.toFixed(1),
+            days_as_manager: mgrDays,
+            strong_shifts_pct: +strongPct.toFixed(1),
+            loss_pct: +lossPct.toFixed(2),
+            grill_pct: +grillPct.toFixed(2),
+            grill_target_pct: GRILL_TARGET_PCT,
+            guest_score_avg: mgrGuest.score !== null ? +mgrGuest.score.toFixed(2) : null,
+            days_with_reviews: mgrGuest.days_with_reviews,
+            total_reviews: mgrGuest.total_reviews,
+          },
+        });
+
+      } else {
+        // Кухня / Бар / Клининг
+        const gPts = normGuest(guestScore, 60);
+        const hoursPts = normByMedian(shift.hours_total, hoursMedianOther, 40);
+
+        let total: number;
+        if (!hasGuest) {
+          total = Math.round((shift.hours_total / Math.max(hoursMedianOther, 1)) * 50);
+          total = Math.min(100, total);
+        } else {
+          total = Math.min(100, Math.round((gPts || 0) + hoursPts));
+        }
+
+        ratings.push({
+          employee_name: name,
+          role_primary: shift.role,
+          group_primary: shift.group,
+          staff_group: 'other',
+          rating: Math.min(100, total),
+          components: {
+            guest: gPts,
+            hours: hoursPts,
+          },
+          stats: {
+            hours_total: +shift.hours_total.toFixed(1),
+            guest_score_avg: guestScore !== null ? +guestScore.toFixed(2) : null,
+            days_with_reviews,
+            total_reviews,
+          },
+        });
+      }
+    }
+
+    // Сортировка: по группе (management, hall, other), внутри — по рейтингу desc
+    const groupOrder: Record<string, number> = { management: 0, hall: 1, other: 2 };
+    ratings.sort((a, b) => {
+      const ga = groupOrder[a.staff_group as string] ?? 3;
+      const gb = groupOrder[b.staff_group as string] ?? 3;
+      if (ga !== gb) return ga - gb;
+      return (b.rating as number) - (a.rating as number);
+    });
+
+    // Сводка по дням с плохими оценками (1-2★) + кто работал
+    const badDays: Array<{ date: string; day_score: number; total_reviews: number; staff: string[] }> = [];
+    for (const [date, day] of dayMap) {
+      if (day.day_score !== null && day.day_score < 3) {
+        const staff = Array.from(empShifts.entries())
+          .filter(([, s]) => s.dates.has(date))
+          .map(([n]) => n);
+        badDays.push({ date, day_score: +day.day_score.toFixed(2), total_reviews: day.total_reviews, staff });
+      }
+    }
+    badDays.sort((a, b) => a.day_score - b.day_score);
+
+    return jsonResponse({
+      ratings,
+      bad_days: badDays,
+      summary: {
+        total_employees: ratings.length,
+        days_with_reviews: Array.from(dayMap.values()).filter(d => d.total_reviews > 0).length,
+        total_reviews: Array.from(dayMap.values()).reduce((s, d) => s + d.total_reviews, 0),
+        grill_target_pct: GRILL_TARGET_PCT,
+        rph_median_hall: Math.round(rphMedianHall),
+        check_median_hall: Math.round(checkMedianHall),
+      },
+      period: { start: v.start, end: v.end, days: v.daysInPeriod, fact_end: v.factEnd, days_fact: v.daysFact },
+      meta: { mock: false, pipeline_status: 'Phase 2.11' },
+    }, request);
+
+  } catch (error) {
+    const err = error as Error;
+    console.error(`[staff-ratings] error: ${err.message}`, err.stack);
     return jsonResponse({ error: 'Request failed', detail: err.message }, request, 500);
   }
 }
