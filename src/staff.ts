@@ -195,6 +195,8 @@ export async function handleStaffList(request: Request, env: Env): Promise<Respo
       FROM db1.\`ЧикоВремя\`
       WHERE \`Имя\` IS NOT NULL
         AND \`Имя\` != ''
+        AND \`Имя\` NOT LIKE '%iikoTransport%'
+        AND \`Имя\` NOT LIKE '%iiko%'
         AND toDate(\`Дата\`) <= today()
       GROUP BY \`Имя\`
       HAVING dateDiff('day', MAX(\`Дата\`), toDate32('${v.factEnd}')) <= ${LEFT_STAFF_DAYS}
@@ -209,6 +211,7 @@ export async function handleStaffList(request: Request, env: Env): Promise<Respo
         dateDiff('day', MIN(\`Дата\`), toDate32('${v.factEnd}')) AS tenure_days
       FROM db1.\`ЧикоВремя\`
       WHERE \`Имя\` IS NOT NULL AND \`Имя\` != ''
+        AND \`Имя\` NOT LIKE '%iiko%'
       GROUP BY \`Имя\`
     `;
 
@@ -786,6 +789,8 @@ export async function handleStaffPerformance(request: Request, env: Env): Promis
         FROM db1.\`ЧикоНов3\`
         WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
           AND \`Официант\` IS NOT NULL AND \`Официант\` != ''
+          AND \`Официант\` NOT LIKE '%iikoTransport%'
+          AND \`Официант\` NOT LIKE '%iiko%'
         GROUP BY \`Официант\`
       ) n
       LEFT JOIN (
