@@ -176,23 +176,28 @@ export async function handleStaffList(request: Request, env: Env): Promise<Respo
 
     // Сотрудники за период: агрегат из ЧикоВремя, с last_shift для классификации left/dormant.
     // Считаем часы, смены, ФОТ. last_shift относительно factEnd для фильтра left.
+    // Сотрудники активные в последние LEFT_STAFF_DAYS дней до factEnd.
+    // sumIf/countIf считают метрики только за выбранный период — честно дают 0
+    // когда период попадает в зону лага ЧикоВремя (~7 дней).
+    // Глобальный MAX(Дата) в HAVING гарантирует, что видим команду даже когда
+    // выбранный период ещё не попал в ЧикоВремя.
     const sqlEmployees = `
       SELECT
         \`Имя\` AS employee_name,
         any(\`Роль\`) AS role_primary,
         any(\`Группа\`) AS group_primary,
-        COUNT(DISTINCT \`Дата\`) AS shifts_count,
-        SUM(toFloat64(\`РабВремяЧас\`)) AS hours_total,
-        SUM(toFloat64(\`Начислено\`)) AS payroll_total,
-        MAX(\`Дата\`) AS last_shift,
+        countDistinctIf(\`Дата\`, toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')) AS shifts_count,
+        sumIf(toFloat64(\`РабВремяЧас\`), toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')) AS hours_total,
+        sumIf(toFloat64(\`Начислено\`), toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')) AS payroll_total,
+        maxIf(\`Дата\`, toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')) AS last_shift,
         MIN(\`Дата\`) AS first_shift_in_period,
         dateDiff('day', MAX(\`Дата\`), toDate32('${v.factEnd}')) AS days_since_last_shift
       FROM db1.\`ЧикоВремя\`
-      WHERE toDate(\`Дата\`) BETWEEN toDate('${v.start}') AND toDate('${v.factEnd}')
-        AND \`Имя\` IS NOT NULL
+      WHERE \`Имя\` IS NOT NULL
         AND \`Имя\` != ''
+        AND toDate(\`Дата\`) <= today()
       GROUP BY \`Имя\`
-      HAVING shifts_count > 0
+      HAVING dateDiff('day', MAX(\`Дата\`), toDate32('${v.factEnd}')) <= ${LEFT_STAFF_DAYS}
       ORDER BY hours_total DESC
     `;
 
@@ -805,7 +810,7 @@ export async function handleStaffPerformance(request: Request, env: Env): Promis
         FROM db1.\`ЧикоВремя\`
         GROUP BY \`Имя\`
       ) w_role ON w_role.employee_name = n.employee_name
-      WHERE n.revenue_total > 0 AND wh.hours_total > 0
+      WHERE n.revenue_total > 0
     `;
 
     // Bad/good shifts из Чико4
@@ -835,10 +840,12 @@ export async function handleStaffPerformance(request: Request, env: Env): Promis
     }
     const rawPerf = perfR.data as unknown as PerfRow[];
 
-    // Фильтруем left по last_shift
+    // Фильтруем left по last_shift.
+    // Если last_shift_global пуст (нет данных в ЧикоВремя, но есть продажи
+    // в ЧикоНов3) — включаем сотрудника: он работает, просто ещё не в графике.
     const filteredPerf = rawPerf.filter(p => {
       const lastDate = String(p.last_shift_global || '').slice(0, 10);
-      if (!lastDate) return false;
+      if (!lastDate) return true;
       const daysSince = daysBetween(lastDate, v.factEnd);
       return daysSince <= LEFT_STAFF_DAYS;
     });
