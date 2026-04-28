@@ -123,7 +123,7 @@ export async function handleOwnerHistory(request: Request, env: Env): Promise<Re
       const lookupSql = `
         SELECT DISTINCT dept_id
         FROM chicko.mart_restaurant_daily_base
-        WHERE LOWER(city) = 'калининград'
+        WHERE LOWER(city) LIKE 'калининград%'
         LIMIT 1
         SETTINGS max_execution_time=10
       `;
