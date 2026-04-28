@@ -33,6 +33,12 @@ import {
 import { handleAdminMe, handleAdminActivity } from './admin';
 import { handleMarketingOverview } from './marketing';
 import {
+  handleOwnerMe,
+  handleOwnerHistory,
+  handleOwnerCostsGet,
+  handleOwnerCostsPost,
+} from './owner';
+import {
   requireJwtSecret,
   rateLimitOrResponse,
   RATE_LIMIT_FEEDBACK,
@@ -201,6 +207,21 @@ export default {
       return handleDashboard(request, env.ASSETS, HTML_SECURITY_HEADERS);
     }
 
+    // --- Owner P&L (изолированный раздел, доступ только is_owner) ---
+    // HTML отдаём с теми же security headers, что и основной дашборд.
+    // Сама проверка owner-доступа — на уровне /api/owner/*; HTML открыт
+    // (внутри он сам зовёт /api/owner/me и редиректит при 403/401).
+    if (url.pathname === '/owner-pnl' && request.method === 'GET') {
+      const assetUrl = new URL(url);
+      assetUrl.pathname = '/owner-pnl.html';
+      const r = await env.ASSETS.fetch(new Request(assetUrl.toString(), request));
+      if (r.status !== 200) return r;
+      const headers = new Headers(r.headers);
+      headers.set('Cache-Control', 'no-store');
+      for (const [k, v] of Object.entries(HTML_SECURITY_HEADERS)) headers.set(k, v);
+      return new Response(r.body, { status: r.status, headers });
+    }
+
     // --- Public API endpoints ---
 
     if (url.pathname === '/health') {
@@ -359,6 +380,28 @@ export default {
     // --- Marketing (Phase 2.10) ---
     if (url.pathname === "/api/marketing-overview" && request.method === "GET") {
       const _r = await handleMarketingOverview(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+
+    // --- Owner P&L (изолированный раздел, только is_owner) ---
+    if (url.pathname === "/api/owner/me" && request.method === "GET") {
+      const _r = await handleOwnerMe(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+    if (url.pathname === "/api/owner/history" && request.method === "GET") {
+      const _r = await handleOwnerHistory(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+    if (url.pathname === "/api/owner/costs" && request.method === "GET") {
+      const _r = await handleOwnerCostsGet(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+    if (url.pathname === "/api/owner/costs" && request.method === "POST") {
+      const _r = await handleOwnerCostsPost(request, env);
       _logReq(request, env, ctx, _r, _t0);
       return _r;
     }

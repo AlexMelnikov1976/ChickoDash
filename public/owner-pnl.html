@@ -1,0 +1,1226 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>CHIKO · Owner</title>
+<style>
+:root {
+  --bg:#0f1117; --bg2:#1a1d27; --bg3:#22263a; --border:#2e3450;
+  --fact:#2ecc71; --plan:#e67e22; --fore:#4f8ef7; --scen:#7c5cbf;
+  --red:#e74c3c; --yellow:#f1c40f; --text:#e8eaf0; --muted:#8890a8;
+  --r:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:13px}
+
+/* ACCESS */
+#pin-overlay{
+  position:fixed;inset:0;background:rgba(10,12,20,0.97);
+  display:flex;align-items:center;justify-content:center;z-index:9999;
+}
+.pin-box{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:40px;text-align:center;width:320px}
+.pin-logo{font-size:26px;font-weight:900;background:linear-gradient(135deg,#4f8ef7,#7c5cbf);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}
+.pin-sub{color:var(--muted);font-size:12px;margin-bottom:28px}
+.pin-dots{display:flex;gap:12px;justify-content:center;margin-bottom:24px}
+.pin-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);transition:.2s}
+.pin-dot.filled{background:var(--fore);border-color:var(--fore)}
+.pin-dot.error{background:var(--red);border-color:var(--red)}
+.pin-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.pin-btn{
+  padding:14px;border-radius:10px;border:1px solid var(--border);
+  background:var(--bg3);color:var(--text);font-size:16px;font-weight:600;cursor:pointer;transition:.2s
+}
+.pin-btn:hover{background:var(--border);border-color:var(--fore)}
+.pin-err{color:var(--red);font-size:11px;margin-top:12px;min-height:16px}
+
+/* HEADER */
+.hdr{background:var(--bg2);border-bottom:1px solid var(--border);padding:11px 20px;display:flex;align-items:center;gap:12px}
+.hdr-logo{font-size:18px;font-weight:900;background:linear-gradient(135deg,#4f8ef7,#7c5cbf);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hdr-badge{font-size:10px;font-weight:700;padding:3px 9px;border-radius:12px;background:rgba(231,76,60,0.15);border:1px solid rgba(231,76,60,0.4);color:#e74c3c}
+.period-btns{display:flex;gap:4px;margin-left:auto}
+.pbtn{padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--muted);font-size:11px;font-weight:600;cursor:pointer;transition:.15s}
+.pbtn.active{background:var(--fore);border-color:var(--fore);color:#fff}
+.pbtn:hover:not(.active){border-color:var(--fore);color:var(--text)}
+.hdr-period{font-size:11px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);padding:4px 12px;border-radius:6px}
+
+/* LAYOUT */
+.layout{display:grid;grid-template-columns:360px 1fr;height:calc(100vh - 48px);overflow:hidden}
+.left{overflow-y:auto;padding:14px;background:var(--bg2);border-right:1px solid var(--border)}
+.right{overflow-y:auto;padding:14px 18px}
+
+/* KPI ROW */
+.kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px}
+.kc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:11px 13px}
+.kc-lbl{font-size:10px;color:var(--muted);margin-bottom:4px;line-height:1.3}
+.kc-val{font-size:16px;font-weight:800;line-height:1.1;margin-bottom:3px}
+.kc-sub{font-size:10px;color:var(--muted)}
+.kc-dyn{font-size:10px;font-weight:700;margin-top:3px;display:flex;gap:6px}
+.dyn-tag{padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700}
+.dyn-up{background:rgba(46,204,113,.15);color:var(--fact)}
+.dyn-dn{background:rgba(231,76,60,.15);color:var(--red)}
+.dyn-eq{background:rgba(79,142,247,.1);color:var(--fore)}
+
+/* MONTH BLOCK */
+.mblock{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:14px}
+.mblock-title{font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.mrow{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(46,52,80,.4)}
+.mrow:last-child{border-bottom:none}
+.mrow-name{font-size:11px;color:var(--muted)}
+.mrow-val{font-size:12px;font-weight:700}
+.mrow-val.fact{color:var(--fact)}
+.mrow-val.plan{color:var(--plan)}
+.mrow-val.fore{color:var(--fore)}
+.mrow-val.scen{color:var(--scen)}
+.mrow-val.red{color:var(--red)}
+.tempo-bar{height:4px;background:var(--border);border-radius:2px;margin-top:3px;overflow:hidden}
+.tempo-fill{height:100%;border-radius:2px;transition:width .4s}
+
+/* SCENARIO SLIDERS */
+.scen-block{background:var(--bg3);border:1px solid rgba(124,92,191,.2);border-radius:var(--r);padding:12px;margin-bottom:14px}
+.scen-title{font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--scen);margin-bottom:10px}
+.sl{margin-bottom:10px}
+.sl-lbl{display:flex;justify-content:space-between;margin-bottom:3px}
+.sl-name{font-size:11px;color:var(--text)}
+.sl-val{font-size:11px;font-weight:700;color:var(--scen);background:rgba(124,92,191,.1);padding:1px 7px;border-radius:3px;min-width:65px;text-align:right}
+input[type=range]{width:100%;height:3px;-webkit-appearance:none;background:var(--border);border-radius:2px;outline:none;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--scen);box-shadow:0 0 0 3px rgba(124,92,191,.2)}
+.scen-divider{height:1px;background:var(--border);margin:10px 0}
+.menu-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.menu-cat{font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+
+/* SAVE BTNS */
+.btn-row{display:flex;gap:6px;margin-bottom:14px}
+.btn{padding:7px 14px;border-radius:7px;border:none;cursor:pointer;font-size:11px;font-weight:700;transition:.2s}
+.btn-save{background:var(--scen);color:#fff}
+.btn-save:hover{background:#6a4daf}
+.btn-clear{background:var(--bg3);color:var(--muted);border:1px solid var(--border)}
+.btn-clear:hover{color:var(--text);border-color:var(--plan)}
+
+/* CHART */
+.chart-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:14px}
+.chart-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.chart-title{font-size:12px;font-weight:700}
+.chart-legend{display:flex;gap:12px}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
+.leg-line{width:20px;height:2px;border-radius:1px}
+.leg-line.dashed{background:repeating-linear-gradient(90deg,currentColor 0,currentColor 4px,transparent 4px,transparent 8px)}
+canvas#chart{width:100%;display:block}
+
+/* PNL TABLE */
+.pnl-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:14px}
+.sec-title{font-size:12px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.sec-title::after{content:'';flex:1;height:1px;background:var(--border)}
+table.pnl{width:100%;border-collapse:collapse}
+table.pnl td{padding:5px 7px;border-bottom:1px solid rgba(46,52,80,.3)}
+table.pnl tr:hover{background:rgba(255,255,255,.02)}
+table.pnl thead td{font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);padding:4px 7px;border-bottom:2px solid var(--border)}
+.cn{font-size:11px;color:var(--text);width:36%}
+.cn.i{padding-left:20px;color:var(--muted);font-size:10px}
+.cv{text-align:right;font-size:11px;font-weight:700;width:16%}
+.cv.plan{color:var(--plan)}
+.cv.fore{color:var(--fore)}
+.cv.dp{color:var(--fact)}
+.cv.dn{color:var(--red)}
+.pct-col{width:7%;text-align:right;font-size:10px;color:var(--muted)}
+tr.sub td{border-top:1px solid rgba(79,142,247,.2)}
+tr.sub .cn{font-weight:700;font-size:11px}
+tr.sub .cv{font-size:13px;font-weight:800}
+tr.tot td{border-top:2px solid var(--border)!important}
+tr.tot .cn{font-weight:900;font-size:12px}
+tr.tot .cv{font-size:14px;font-weight:900}
+.sep-td{font-size:9px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);padding:8px 7px 3px!important}
+
+/* WATERFALL */
+.wf-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:14px}
+.wf-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.wf-name{font-size:10px;color:var(--muted);width:130px;flex-shrink:0;text-align:right}
+.wf-track{flex:1;height:18px;background:var(--bg3);border-radius:3px;position:relative;overflow:hidden}
+.wf-bar{height:100%;border-radius:3px;position:absolute;top:0;transition:width .4s,left .4s}
+.wf-amt{font-size:10px;font-weight:700;width:90px;flex-shrink:0}
+
+/* DRIVERS */
+.drv-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:14px}
+.drv-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.drv-name{font-size:11px;color:var(--text);width:160px;flex-shrink:0}
+.drv-bar-wrap{flex:1;height:10px;background:var(--bg3);border-radius:5px;overflow:hidden}
+.drv-bar{height:100%;border-radius:5px;transition:width .4s}
+.drv-val{font-size:11px;font-weight:700;width:90px;text-align:right}
+
+/* YOY/MOM grid */
+.dyn-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.dyn-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px}
+.dyn-card-lbl{font-size:10px;color:var(--muted);margin-bottom:4px}
+.dyn-card-val{font-size:16px;font-weight:800}
+.dyn-card-sub{font-size:10px;color:var(--muted);margin-top:3px}
+
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+</style>
+</head>
+<body>
+
+<!-- PIN -->
+<div id="pin-overlay">
+  <div class="pin-box">
+    <div class="pin-logo">CHIKO</div>
+    <div class="pin-sub">Раздел владельца · Введите PIN</div>
+    <div class="pin-dots" id="pin-dots">
+      <div class="pin-dot" id="d0"></div>
+      <div class="pin-dot" id="d1"></div>
+      <div class="pin-dot" id="d2"></div>
+      <div class="pin-dot" id="d3"></div>
+    </div>
+    <div class="pin-grid" id="pin-grid"></div>
+    <div class="pin-err" id="pin-err"></div>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="app" style="display:none">
+
+  <div class="hdr">
+    <div class="hdr-logo">CHIKO</div>
+    <div class="hdr-badge">OWNER</div>
+    <div class="hdr-period" id="hdr-period">Апрель 2026</div>
+    <div class="period-btns">
+      <button class="pbtn" onclick="setPeriod('week')">Неделя</button>
+      <button class="pbtn active" onclick="setPeriod('month')">Месяц</button>
+      <button class="pbtn" onclick="setPeriod('quarter')">Квартал</button>
+      <button class="pbtn" onclick="setPeriod('year')">Год</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <!-- LEFT -->
+    <div class="left">
+
+      <!-- Month block -->
+      <div class="mblock">
+        <div class="mblock-title">📅 Факт + прогноз месяца</div>
+        <div class="mrow">
+          <span class="mrow-name">Факт выручка (прошедшие дни)</span>
+          <span class="mrow-val fact" id="m-fact">—</span>
+        </div>
+        <div class="mrow">
+          <span class="mrow-name">План месяца</span>
+          <span class="mrow-val plan" id="m-plan">—</span>
+        </div>
+        <div class="mrow">
+          <span class="mrow-name">Остаток по сценарию</span>
+          <span class="mrow-val scen" id="m-rem">—</span>
+        </div>
+        <div class="mrow">
+          <span class="mrow-name">Итог месяц (факт + прогноз)</span>
+          <span class="mrow-val fore" id="m-total">—</span>
+        </div>
+        <div class="mrow" style="flex-direction:column;align-items:flex-start">
+          <div style="display:flex;justify-content:space-between;width:100%">
+            <span class="mrow-name">Темп к плану (MTD)</span>
+            <span class="mrow-val" id="m-tempo">—</span>
+          </div>
+          <div class="tempo-bar" style="width:100%;margin-top:5px">
+            <div class="tempo-fill" id="m-tempo-bar" style="width:0%"></div>
+          </div>
+        </div>
+        <div class="mrow">
+          <span class="mrow-name">Сценарий / день (остаток)</span>
+          <span class="mrow-val scen" id="m-perday">—</span>
+        </div>
+        <div class="mrow">
+          <span class="mrow-name">План MTD</span>
+          <span class="mrow-val plan" id="m-plan-mtd">—</span>
+        </div>
+      </div>
+
+      <!-- Save buttons -->
+      <div class="btn-row">
+        <button class="btn btn-save" onclick="saveScenario()">💾 Сохранить сценарий как план</button>
+        <button class="btn btn-clear" onclick="clearCustomPlan()">↺ Авто-план</button>
+      </div>
+
+      <!-- Scenario sliders -->
+      <div class="scen-block">
+        <div class="scen-title">⚙️ Сценарий (остаток месяца)</div>
+
+        <div class="sl">
+          <div class="sl-lbl"><span class="sl-name">Чеков/день — будни</span><span class="sl-val" id="sv-wkd">120</span></div>
+          <input type="range" id="ss-wkd" min="50" max="300" value="120" oninput="updateScen()">
+        </div>
+        <div class="sl">
+          <div class="sl-lbl"><span class="sl-name">Чеков/день — выходные</span><span class="sl-val" id="sv-wke">150</span></div>
+          <input type="range" id="ss-wke" min="50" max="350" value="150" oninput="updateScen()">
+        </div>
+        <div class="sl">
+          <div class="sl-lbl"><span class="sl-name">Средний чек, ₽</span><span class="sl-val" id="sv-avg">660 ₽</span></div>
+          <input type="range" id="ss-avg" min="400" max="1200" step="10" value="660" oninput="updateScen()">
+        </div>
+        <div class="sl">
+          <div class="sl-lbl"><span class="sl-name">Скидки, %</span><span class="sl-val" id="sv-disc">3%</span></div>
+          <input type="range" id="ss-disc" min="0" max="15" step="0.5" value="3" oninput="updateScen()">
+        </div>
+
+        <div class="scen-divider"></div>
+        <div class="sl">
+          <div class="sl-lbl"><span class="sl-name">Фудкост, %</span><span class="sl-val" id="sv-fc">32%</span></div>
+          <input type="range" id="ss-fc" min="20" max="55" step="0.5" value="32" oninput="updateScen()">
+        </div>
+        <div class="sl">
+          <div class="sl-lbl"><span class="sl-name">ФОТ % от выручки</span><span class="sl-val" id="sv-fot">18%</span></div>
+          <input type="range" id="ss-fot" min="10" max="40" step="0.5" value="18" oninput="updateScen()">
+        </div>
+        <div class="sl">
+          <div class="sl-lbl"><span class="sl-name">Доля доставки, %</span><span class="sl-val" id="sv-del">15%</span></div>
+          <input type="range" id="ss-del" min="0" max="40" value="15" oninput="updateScen()">
+        </div>
+
+        <div class="scen-divider"></div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:8px;font-weight:700;letter-spacing:.5px;text-transform:uppercase">Изменение цен меню, %</div>
+        <div class="menu-grid">
+          <div>
+            <div class="menu-cat">⭐ Star (35%)</div>
+            <div class="sl-lbl"><span class="sl-name" style="font-size:10px">Δ цена</span><span class="sl-val" id="sv-star">0%</span></div>
+            <input type="range" id="ss-star" min="-10" max="20" value="0" oninput="updateScen()">
+          </div>
+          <div>
+            <div class="menu-cat">🐴 Plowhorse (40%)</div>
+            <div class="sl-lbl"><span class="sl-name" style="font-size:10px">Δ цена</span><span class="sl-val" id="sv-plw">0%</span></div>
+            <input type="range" id="ss-plw" min="-10" max="20" value="0" oninput="updateScen()">
+          </div>
+          <div>
+            <div class="menu-cat">❓ Puzzle (15%)</div>
+            <div class="sl-lbl"><span class="sl-name" style="font-size:10px">Δ цена</span><span class="sl-val" id="sv-pzl">0%</span></div>
+            <input type="range" id="ss-pzl" min="-10" max="20" value="0" oninput="updateScen()">
+          </div>
+          <div>
+            <div class="menu-cat">🐕 Dog (10%)</div>
+            <div class="sl-lbl"><span class="sl-name" style="font-size:10px">Δ цена</span><span class="sl-val" id="sv-dog">0%</span></div>
+            <input type="range" id="ss-dog" min="-10" max="20" value="0" oninput="updateScen()">
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT -->
+    <div class="right">
+
+      <!-- KPI ROW -->
+      <div class="kpi-row" id="kpi-row"></div>
+
+      <!-- YoY / MoM -->
+      <div class="dyn-grid" id="dyn-grid"></div>
+
+      <!-- CHART -->
+      <div class="chart-wrap">
+        <div class="chart-hdr">
+          <div class="chart-title">📈 Выручка по периодам — <span id="chart-period-lbl">-3 месяца / +6 месяцев</span></div>
+          <div class="chart-legend">
+            <div class="leg-item"><div class="leg-line" style="background:var(--plan)"></div>План</div>
+            <div class="leg-item"><div class="leg-line" style="background:var(--fact)"></div>Факт</div>
+            <div class="leg-item"><div class="leg-line dashed" style="color:var(--fore)"></div>Прогноз</div>
+          </div>
+        </div>
+        <canvas id="chart" height="200"></canvas>
+      </div>
+
+      <!-- P&L -->
+      <div class="pnl-wrap">
+        <div class="sec-title">P&L · <span id="pnl-period-lbl">Апрель 2026</span></div>
+        <table class="pnl">
+          <thead><tr>
+            <td class="cn">Статья</td>
+            <td class="pct-col">% выр.</td>
+            <td class="cv plan">План</td>
+            <td class="cv fore">Факт+Прогноз</td>
+            <td class="cv">Δ ₽</td>
+            <td class="cv">Δ %</td>
+          </tr></thead>
+          <tbody id="pnl-body"></tbody>
+        </table>
+      </div>
+
+      <!-- WATERFALL -->
+      <div class="wf-wrap">
+        <div class="sec-title">💧 Мост прибыли (факт+прогноз vs план)</div>
+        <div id="wf-body"></div>
+      </div>
+
+      <!-- DRIVERS -->
+      <div class="drv-wrap">
+        <div class="sec-title">🔍 Разбор по драйверам — за счёт чего Δ выручки</div>
+        <div id="drv-body"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+// AUTH GATE — сервер решает по cookie (is_owner)
+// ═══════════════════════════════════════════════
+// PIN-overlay переиспользуем как «загрузка / нет доступа». Сами кнопки
+// PIN остаются в DOM, но не читаются — auth теперь чисто серверная.
+function pinKey(){ /* no-op — PIN отключён, доступ по cookie */ }
+
+function showAccessDenied(msg){
+  const ov = document.getElementById('pin-overlay');
+  ov.innerHTML = '<div class="pin-box">'
+    + '<div class="pin-logo">CHIKO · Owner</div>'
+    + '<div class="pin-sub">' + (msg || 'Доступ запрещён') + '</div>'
+    + '<div style="margin-top:18px"><a href="/" style="color:var(--fore);font-size:12px">← на главный дашборд</a></div>'
+    + '</div>';
+  ov.style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+
+function showLoading(msg){
+  const ov = document.getElementById('pin-overlay');
+  ov.innerHTML = '<div class="pin-box">'
+    + '<div class="pin-logo">CHIKO · Owner</div>'
+    + '<div class="pin-sub">' + (msg || 'Загрузка данных…') + '</div>'
+    + '</div>';
+  ov.style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+
+function showApp(){
+  document.getElementById('pin-overlay').style.display='none';
+  document.getElementById('app').style.display='block';
+  initDashboard();
+}
+
+// ═══════════════════════════════════════════════
+// DATA (real, from /api/owner/history — Калининград)
+// ═══════════════════════════════════════════════
+const SEASONAL = [0.82,0.85,0.95,1.0,1.08,1.18,1.22,1.20,1.06,0.96,0.88,1.28];
+
+// TODAY/HISTORY заполняются async-bootstrap из API. До initDashboard их
+// никто читать не должен — initDashboard вызывается только после load.
+let TODAY = new Date().toISOString().slice(0,10);
+let TODAY_D = new Date(TODAY);
+let HISTORY = [];
+let byDate = {};
+
+// ═══════════════════════════════════════════════
+// AUTO-PLAN (median comparable weekdays + seasonal + trend)
+// ═══════════════════════════════════════════════
+function autoPlanDay(iso, history){
+  const d = new Date(iso);
+  const dow = d.getDay();
+  const m = d.getMonth();
+  // comparable: same weekday, only past data, last 8
+  const comp = history.filter(h => {
+    const hd = new Date(h.date);
+    return hd.getDay()===dow && h.date < iso;
+  }).slice(-8);
+  if(!comp.length) return 75000;
+  const revs = comp.map(x=>x.revenue).sort((a,b)=>a-b);
+  const mid = Math.floor(revs.length/2);
+  const median = revs.length%2===0 ? (revs[mid-1]+revs[mid])/2 : revs[mid];
+  // trend (last 4 vs prev 4)
+  let trend = 1;
+  if(comp.length>=4){
+    const h2 = comp.length>>1;
+    const rec = comp.slice(-h2).reduce((s,x)=>s+x.revenue,0)/h2;
+    const old = comp.slice(0,h2).reduce((s,x)=>s+x.revenue,0)/h2;
+    if(old>0) trend = Math.min(Math.max(rec/old, 0.85), 1.20);
+  }
+  // seasonal relative to average
+  const avgSeas = SEASONAL.reduce((a,b)=>a+b,0)/12;
+  const seasonFactor = SEASONAL[m]/avgSeas;
+  return Math.round(median * trend * seasonFactor / 500)*500;
+}
+
+// Build monthly plans
+function buildMonthlyPlan(year, month, history, customPlan){
+  if(customPlan && customPlan[`${year}-${String(month+1).padStart(2,'0')}`]){
+    return customPlan[`${year}-${String(month+1).padStart(2,'0')}`];
+  }
+  const days = daysInMonth(year, month);
+  let total = 0;
+  for(let d=1;d<=days;d++){
+    const iso = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    total += autoPlanDay(iso, history);
+  }
+  return Math.round(total/1000)*1000;
+}
+
+function daysInMonth(y,m){ return new Date(y,m+1,0).getDate(); }
+
+// ═══════════════════════════════════════════════
+// P&L CALC
+// ═══════════════════════════════════════════════
+// NORMS — нормативы и постоянные затраты. Дефолты из УпрЧико,
+// перезаписываются ответом /api/owner/costs (если владелец менял).
+let NORMS = { foodcost:32, franchise:4, writeoff:1.5, hozy:1, acquiring:1.5,
+  deliveryShare:15, deliveryCost:33, staffFixed:250000, mgmtFixed:120000,
+  salaryTax:16, rent:200000, utilities:50000 };
+
+function calcPnL(revenue, norms){
+  const n = {...NORMS, ...norms};
+  const delRev = revenue * n.deliveryShare/100;
+  const fc = revenue * n.foodcost/100;
+  const fr = revenue * n.franchise/100;
+  const wo = revenue * n.writeoff/100;
+  const hz = revenue * n.hozy/100;
+  const aq = revenue * n.acquiring/100;
+  const dc = delRev * n.deliveryCost/100;
+  const varC = fc+fr+wo+hz+aq+dc;
+  const grossP = revenue - varC;
+  const staffTotal = n.staffFixed + n.mgmtFixed;
+  const stax = staffTotal * n.salaryTax/100;
+  const staffC = staffTotal + stax;
+  const ebitda = grossP - staffC;
+  const fixedC = n.rent + n.utilities;
+  const opP = ebitda - fixedC;
+  const minTax = revenue*0.01;
+  const usn = opP>0 ? Math.max(opP*0.15, minTax) : minTax;
+  const net = opP - usn;
+  const rent = n.rent; const utilities = n.utilities;
+  return { revenue, delRev, fc, fr, wo, hz, aq, dc, varC, grossP, staffTotal, stax, staffC, ebitda, rent, utilities, fixedC, opP, usn, net };
+}
+
+// ═══════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════
+let periodMode = 'month';
+let customPlan = JSON.parse(localStorage.getItem('chiko_custom_plan')||'{}');
+
+function getScen(){
+  return {
+    wkd: +document.getElementById('ss-wkd').value,
+    wke: +document.getElementById('ss-wke').value,
+    avg: +document.getElementById('ss-avg').value,
+    disc: +document.getElementById('ss-disc').value,
+    foodcost: +document.getElementById('ss-fc').value,
+    fotPct: +document.getElementById('ss-fot').value,
+    del: +document.getElementById('ss-del').value,
+    star: +document.getElementById('ss-star').value,
+    plw: +document.getElementById('ss-plw').value,
+    pzl: +document.getElementById('ss-pzl').value,
+    dog: +document.getElementById('ss-dog').value,
+  };
+}
+
+function saveScenario(){
+  const sc = getScen();
+  // compute what forecast revenue would be for rest of month and save as plan
+  const now = new Date(TODAY);
+  const yr = now.getFullYear(), mo = now.getMonth();
+  const key = `${yr}-${String(mo+1).padStart(2,'0')}`;
+  const forecastRev = calcForecastRevenue(sc);
+  const factRev = getFactRevenue(yr, mo);
+  customPlan[key] = Math.round((factRev + forecastRev)/1000)*1000;
+  localStorage.setItem('chiko_custom_plan', JSON.stringify(customPlan));
+  renderAll();
+  alert('Сценарий сохранён как план месяца');
+}
+
+function clearCustomPlan(){
+  const now = new Date(TODAY);
+  const yr = now.getFullYear(), mo = now.getMonth();
+  const key = `${yr}-${String(mo+1).padStart(2,'0')}`;
+  delete customPlan[key];
+  localStorage.setItem('chiko_custom_plan', JSON.stringify(customPlan));
+  renderAll();
+}
+
+// ═══════════════════════════════════════════════
+// PERIOD HELPERS
+// ═══════════════════════════════════════════════
+function getFactRevenue(yr, mo){
+  return HISTORY.filter(d => {
+    const dd = new Date(d.date);
+    return dd.getFullYear()===yr && dd.getMonth()===mo;
+  }).reduce((s,d)=>s+d.revenue,0);
+}
+
+function getFactRevenueUpToToday(yr, mo){
+  return HISTORY.filter(d => {
+    const dd = new Date(d.date);
+    return dd.getFullYear()===yr && dd.getMonth()===mo && d.date <= TODAY;
+  }).reduce((s,d)=>s+d.revenue,0);
+}
+
+function calcForecastRevenue(sc){
+  const now = new Date(TODAY);
+  const yr = now.getFullYear(), mo = now.getMonth();
+  const days = daysInMonth(yr, mo);
+  // menu price effect
+  const menuEffect = 1 + (sc.star*0.35 + sc.plw*0.40 + sc.pzl*0.15 + sc.dog*0.10)/100;
+  const effAvg = sc.avg * menuEffect * (1 - sc.disc/100);
+  let total = 0;
+  for(let d = now.getDate()+1; d <= days; d++){
+    const iso = `${yr}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dow = new Date(iso).getDay();
+    const isWe = dow===0||dow===6;
+    const checks = isWe ? sc.wke : sc.wkd;
+    total += checks * effAvg;
+  }
+  return Math.round(total/500)*500;
+}
+
+function getDaysRemaining(){
+  const now = new Date(TODAY);
+  const yr = now.getFullYear(), mo = now.getMonth();
+  const days = daysInMonth(yr, mo);
+  return days - now.getDate();
+}
+
+// ═══════════════════════════════════════════════
+// PERIOD: get data window
+// ═══════════════════════════════════════════════
+function getPeriodData(){
+  const now = new Date(TODAY);
+  const yr = now.getFullYear(), mo = now.getMonth();
+
+  if(periodMode === 'month'){
+    const planRev = buildMonthlyPlan(yr, mo, HISTORY, customPlan);
+    const factRev = getFactRevenueUpToToday(yr, mo);
+    const sc = getScen();
+    const foreRev = factRev + calcForecastRevenue(sc);
+    // yoy
+    const prevYrFact = getFactRevenue(yr-1, mo);
+    // mom
+    const prevMo = mo===0?11:mo-1;
+    const prevMoYr = mo===0?yr-1:yr;
+    const prevMoFact = getFactRevenue(prevMoYr, prevMo);
+    return { planRev, factRev, foreRev, prevYrFact, prevMoFact,
+      label: `${['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'][mo]} ${yr}` };
+  }
+
+  if(periodMode === 'quarter'){
+    const qStart = Math.floor(mo/3)*3;
+    let planRev=0, factRev=0, foreRev=0, prevYrFact=0, prevMoFact=0;
+    for(let m=qStart;m<qStart+3;m++){
+      planRev += buildMonthlyPlan(yr, m, HISTORY, customPlan);
+      factRev += getFactRevenue(yr, m);
+      const sc = getScen();
+      if(m===mo) foreRev = factRev + calcForecastRevenue(sc);
+    }
+    if(!foreRev) foreRev = factRev;
+    const prevQ = qStart===0?9:qStart-3;
+    const prevQYr = qStart===0?yr-1:yr;
+    for(let m=prevQ;m<prevQ+3;m++) prevMoFact += getFactRevenue(prevQYr, m);
+    for(let m=qStart;m<qStart+3;m++) prevYrFact += getFactRevenue(yr-1, m);
+    return { planRev, factRev, foreRev, prevYrFact, prevMoFact,
+      label: `Q${Math.floor(mo/3)+1} ${yr}` };
+  }
+
+  if(periodMode === 'year'){
+    let planRev=0, factRev=0, prevYrFact=0;
+    for(let m=0;m<12;m++){
+      planRev += buildMonthlyPlan(yr, m, HISTORY, customPlan);
+      factRev += getFactRevenue(yr, m);
+      prevYrFact += getFactRevenue(yr-1, m);
+    }
+    const sc = getScen();
+    const foreRev = factRev + calcForecastRevenue(sc);
+    return { planRev, factRev, foreRev, prevYrFact, prevMoFact: getFactRevenue(yr, mo===0?11:mo-1),
+      label: String(yr) };
+  }
+
+  // week
+  const dayOfWeek = now.getDay();
+  const weekStart = new Date(now); weekStart.setDate(now.getDate() - (dayOfWeek===0?6:dayOfWeek-1));
+  let planRev=0, factRev=0, foreRev=0;
+  for(let i=0;i<7;i++){
+    const d = new Date(weekStart); d.setDate(weekStart.getDate()+i);
+    const iso = d.toISOString().slice(0,10);
+    planRev += autoPlanDay(iso, HISTORY);
+    if(iso <= TODAY && byDate[iso]) factRev += byDate[iso].revenue;
+  }
+  foreRev = factRev + calcForecastRevenue(getScen())/4; // rough
+  return { planRev, factRev, foreRev, prevYrFact: planRev*0.88, prevMoFact: planRev*0.94,
+    label: `Нед. ${weekStart.toLocaleDateString('ru')}` };
+}
+
+// ═══════════════════════════════════════════════
+// RENDER KPI
+// ═══════════════════════════════════════════════
+function fmt(n){ return Math.round(n).toLocaleString('ru-RU'); }
+function fmtM(n){ n=Math.round(n); if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+' М₽'; return fmt(n)+' ₽'; }
+function fmtS(n){ n=Math.round(n); if(Math.abs(n)>=1e6) return (n/1e6).toFixed(1)+'М'; if(Math.abs(n)>=1e3) return (n/1e3).toFixed(0)+'К'; return String(n); }
+function p1(v){ return v.toFixed(1)+'%'; }
+function pctOf(a,r){ return r>0?a/r*100:0; }
+
+function renderKPIs(){
+  const pd = getPeriodData();
+  const sc = getScen();
+  const fotNorm = { ...NORMS, foodcost: sc.foodcost };
+  fotNorm.staffFixed = Math.round(pd.foreRev * sc.fotPct/100 * 0.65);
+  fotNorm.mgmtFixed  = Math.round(pd.foreRev * sc.fotPct/100 * 0.35);
+  fotNorm.deliveryShare = sc.del;
+
+  const planPnL = calcPnL(pd.planRev, {});
+  const forePnL = calcPnL(pd.foreRev, fotNorm);
+
+  const deltaRev = pd.foreRev - pd.planRev;
+  const yoyPct = pd.prevYrFact>0 ? (pd.foreRev/pd.prevYrFact-1)*100 : 0;
+  const momPct = pd.prevMoFact>0 ? (pd.foreRev/pd.prevMoFact-1)*100 : 0;
+
+  const cards = [
+    { lbl:'Выручка · Факт+Прогноз', val:fmtM(pd.foreRev), color:'var(--fore)',
+      sub:'план: '+fmtM(pd.planRev), dyn:[
+        {lbl:'YoY',v:yoyPct},{lbl:'MoM',v:momPct}
+      ]},
+    { lbl:'Маржа до постоянных', val:p1(pctOf(forePnL.grossP, pd.foreRev)), color:'var(--fact)',
+      sub:fmtM(forePnL.grossP), dyn:[
+        {lbl:'план '+p1(pctOf(planPnL.grossP, pd.planRev)),v:pctOf(forePnL.grossP,pd.foreRev)-pctOf(planPnL.grossP,pd.planRev)}
+      ]},
+    { lbl:'EBITDA', val:fmtM(forePnL.ebitda), color: forePnL.ebitda>=0?'var(--fact)':'var(--red)',
+      sub:p1(pctOf(forePnL.ebitda, pd.foreRev))+' от выручки', dyn:[
+        {lbl:'план',v:forePnL.ebitda-planPnL.ebitda}
+      ]},
+    { lbl:'Чистая прибыль', val:fmtM(forePnL.net), color: forePnL.net>=0?'var(--fact)':'var(--red)',
+      sub:p1(pctOf(forePnL.net, pd.foreRev))+' от выручки', dyn:[
+        {lbl:'план',v:forePnL.net-planPnL.net}
+      ]},
+    { lbl:'Δ к плану', val:(deltaRev>=0?'+':'')+fmtM(deltaRev), color: deltaRev>=0?'var(--fact)':'var(--red)',
+      sub:p1(pctOf(Math.abs(deltaRev), pd.planRev))+' '+(deltaRev>=0?'сверх':'недобор'), dyn:[]},
+  ];
+
+  document.getElementById('kpi-row').innerHTML = cards.map(c=>`
+    <div class="kc">
+      <div class="kc-lbl">${c.lbl}</div>
+      <div class="kc-val" style="color:${c.color}">${c.val}</div>
+      <div class="kc-sub">${c.sub}</div>
+      <div class="kc-dyn">${c.dyn.map(d=>{
+        const cls = Math.abs(d.v)<0.5?'dyn-eq':d.v>0?'dyn-up':'dyn-dn';
+        const s = typeof d.v==='number' && Math.abs(d.v)>1000 ? (d.v>0?'+':'')+fmtS(d.v)+'₽'
+          : (d.v>0?'+':'')+d.v.toFixed(1)+'%';
+        return `<span class="dyn-tag ${cls}">${d.lbl}: ${s}</span>`;
+      }).join('')}</div>
+    </div>`).join('');
+}
+
+function renderDynGrid(){
+  const pd = getPeriodData();
+  const yoy = pd.prevYrFact>0?(pd.foreRev/pd.prevYrFact-1)*100:0;
+  const mom = pd.prevMoFact>0?(pd.foreRev/pd.prevMoFact-1)*100:0;
+  const yoyColor = yoy>=0?'var(--fact)':'var(--red)';
+  const momColor = mom>=0?'var(--fact)':'var(--red)';
+
+  // avg checks for current period
+  const now = new Date(TODAY);
+  const curFacts = HISTORY.filter(d => new Date(d.date).getMonth()===now.getMonth() && new Date(d.date).getFullYear()===now.getFullYear());
+  const avgCheckCur = curFacts.length ? curFacts.reduce((s,d)=>s+d.avgCheck,0)/curFacts.length : 0;
+  const prevYrFacts = HISTORY.filter(d => new Date(d.date).getMonth()===now.getMonth() && new Date(d.date).getFullYear()===now.getFullYear()-1);
+  const avgCheckYoy = prevYrFacts.length ? prevYrFacts.reduce((s,d)=>s+d.avgCheck,0)/prevYrFacts.length : 0;
+  const yoyAvg = avgCheckYoy>0?(avgCheckCur/avgCheckYoy-1)*100:0;
+
+  document.getElementById('dyn-grid').innerHTML = `
+    <div class="dyn-card">
+      <div class="dyn-card-lbl">YoY · Выручка vs прошлый год</div>
+      <div class="dyn-card-val" style="color:${yoyColor}">${yoy>=0?'+':''}${p1(yoy)}</div>
+      <div class="dyn-card-sub">Прогноз ${fmtM(pd.foreRev)} vs прош. год ${fmtM(pd.prevYrFact)}</div>
+    </div>
+    <div class="dyn-card">
+      <div class="dyn-card-lbl">MoM · vs предыдущий период</div>
+      <div class="dyn-card-val" style="color:${momColor}">${mom>=0?'+':''}${p1(mom)}</div>
+      <div class="dyn-card-sub">Ср. чек YoY: ${yoyAvg>=0?'+':''}${p1(yoyAvg)} (${fmt(avgCheckCur)} ₽)</div>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════
+// MONTH BLOCK
+// ═══════════════════════════════════════════════
+function renderMonthBlock(){
+  const now = new Date(TODAY);
+  const yr = now.getFullYear(), mo = now.getMonth();
+  const sc = getScen();
+  const planRev = buildMonthlyPlan(yr, mo, HISTORY, customPlan);
+  const factRev = getFactRevenueUpToToday(yr, mo);
+  const foreRem = calcForecastRevenue(sc);
+  const total = factRev + foreRem;
+  const daysRem = getDaysRemaining();
+  const daysPassed = now.getDate();
+  const daysTotal = daysInMonth(yr, mo);
+  // Plan MTD = plan * (days passed / total days)
+  const planMTD = Math.round(planRev * daysPassed / daysTotal);
+  const tempoPct = planMTD > 0 ? Math.min(factRev / planMTD * 100, 150) : 0;
+  const perDay = daysRem > 0 ? Math.round(foreRem / daysRem) : 0;
+  const deltaTotal = total - planRev;
+
+  set('m-fact', fmtM(factRev), 'fact');
+  set('m-plan', fmtM(planRev), 'plan');
+  set('m-rem', fmtM(foreRem), 'scen');
+  set('m-total', fmtM(total) + (deltaTotal>=0?' ↑':' ↓'), deltaTotal>=0?'fore':'red');
+  set('m-tempo', p1(tempoPct), tempoPct>=100?'fact':tempoPct>=90?'':'red');
+  set('m-perday', fmtM(perDay)+'/день', 'scen');
+  set('m-plan-mtd', fmtM(planMTD), 'plan');
+
+  const bar = document.getElementById('m-tempo-bar');
+  const pct = Math.min(tempoPct, 100);
+  bar.style.width = pct+'%';
+  bar.style.background = tempoPct>=100?'var(--fact)':tempoPct>=90?'var(--yellow)':'var(--red)';
+}
+
+function set(id, val, cls){
+  const el = document.getElementById(id);
+  el.textContent = val;
+  el.className = 'mrow-val' + (cls?' '+cls:'');
+}
+
+// ═══════════════════════════════════════════════
+// CHART
+// ═══════════════════════════════════════════════
+function getChartBuckets(mode){
+  const now = new Date(TODAY);
+  const MONTHS_RU = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const sc = getScen();
+  const buckets = [];
+
+  if(mode === 'month'){
+    for(let i=-3;i<=6;i++){
+      const d = new Date(now.getFullYear(), now.getMonth()+i, 1);
+      const yr = d.getFullYear(), mo = d.getMonth();
+      const isCur = yr===now.getFullYear() && mo===now.getMonth();
+      const isFuture = i>0;
+      const plan = buildMonthlyPlan(yr, mo, HISTORY, customPlan);
+      let fact = 0, forecast = 0;
+      if(isCur){
+        fact = getFactRevenueUpToToday(yr, mo);
+        forecast = fact + calcForecastRevenue(sc);
+      } else if(!isFuture){
+        fact = getFactRevenue(yr, mo);
+      } else {
+        forecast = plan;
+      }
+      buckets.push({ label: MONTHS_RU[mo]+(mo===0?' '+yr:''), plan, fact, forecast, isCur, isFuture });
+    }
+  } else if(mode === 'week'){
+    const dow = now.getDay();
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - (dow===0?6:dow-1));
+    weekStart.setHours(0,0,0,0);
+    for(let i=-3;i<=6;i++){
+      const wStart = new Date(weekStart);
+      wStart.setDate(weekStart.getDate() + i*7);
+      let plan=0, fact=0;
+      let allFuture=true, allPast=true;
+      for(let d=0;d<7;d++){
+        const day = new Date(wStart); day.setDate(wStart.getDate()+d);
+        const iso = day.toISOString().slice(0,10);
+        plan += autoPlanDay(iso, HISTORY);
+        if(iso <= TODAY){ allFuture = false; if(byDate[iso]) fact += byDate[iso].revenue; }
+        if(iso > TODAY) allPast = false;
+      }
+      const isCur = i===0;
+      const isFuture = allFuture;
+      const forecast = isFuture ? plan : (isCur ? fact + Math.round(calcForecastRevenue(sc)/4.3) : 0);
+      buckets.push({
+        label: wStart.getDate()+'.'+String(wStart.getMonth()+1).padStart(2,'0'),
+        plan, fact, forecast, isCur, isFuture
+      });
+    }
+  } else if(mode === 'quarter'){
+    const curQ = Math.floor(now.getMonth()/3);
+    for(let i=-3;i<=6;i++){
+      const qDate = new Date(now.getFullYear(), curQ*3 + i*3, 1);
+      const qy = qDate.getFullYear(); const qm = qDate.getMonth();
+      const qNum = Math.floor(qm/3)+1;
+      let plan=0, fact=0;
+      for(let m=0;m<3;m++){
+        plan += buildMonthlyPlan(qy, qm+m, HISTORY, customPlan);
+        fact += getFactRevenue(qy, qm+m);
+      }
+      const isCur = i===0;
+      const isFuture = i>0;
+      const forecast = isFuture ? plan : (isCur ? getFactRevenueUpToToday(qy, now.getMonth()) + calcForecastRevenue(sc) + (fact - getFactRevenue(qy, now.getMonth())) : 0);
+      buckets.push({ label: 'Q'+qNum+' '+String(qy).slice(2), plan, fact: isCur?fact:fact, forecast, isCur, isFuture });
+    }
+  } else { // year
+    for(let i=-3;i<=6;i++){
+      const yr = now.getFullYear()+i;
+      let plan=0, fact=0;
+      for(let m=0;m<12;m++){
+        plan += buildMonthlyPlan(yr, m, HISTORY, customPlan);
+        fact += getFactRevenue(yr, m);
+      }
+      const isCur = i===0;
+      const isFuture = i>0;
+      const forecast = isFuture ? plan : (isCur ? fact + calcForecastRevenue(sc) : 0);
+      buckets.push({ label: String(yr), plan, fact, forecast, isCur, isFuture });
+    }
+  }
+
+  return buckets;
+}
+
+function renderChart(){
+  const canvas = document.getElementById('chart');
+  const W = canvas.offsetWidth; const H = 200;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  // chart title label
+  const lblMap = {
+    'month':'-3 месяца / +6 месяцев',
+    'week':'-3 недели / +6 недель',
+    'quarter':'-3 квартала / +6 кварталов',
+    'year':'-3 года / +6 лет'
+  };
+  const lblEl = document.getElementById('chart-period-lbl');
+  if(lblEl) lblEl.textContent = lblMap[periodMode] || '';
+
+  const buckets = getChartBuckets(periodMode);
+  const allVals = [];
+  buckets.forEach(b=>{ allVals.push(b.plan, b.fact, b.forecast); });
+  const maxV = Math.max(...allVals.filter(v=>v>0))*1.18 || 1; // запас сверху для подписей
+  // Высота немного больше — чтобы влезли подписи над столбцами.
+  const H2 = 240;
+  canvas.height = H2;
+  const PAD = {t:14,b:32,l:54,r:10};
+  const cH = H2 - PAD.t - PAD.b;
+  const groupW = (W - PAD.l - PAD.r) / buckets.length;
+  const toY = v => PAD.t + cH - (v/maxV)*cH;
+  const toX = i => PAD.l + i*groupW + groupW/2;
+
+  ctx.clearRect(0,0,W,H2);
+
+  // grid
+  ctx.strokeStyle='rgba(46,52,80,.5)'; ctx.lineWidth=1;
+  [0.25,0.5,0.75,1].forEach(f=>{
+    const y = PAD.t + cH*(1-f);
+    ctx.beginPath(); ctx.moveTo(PAD.l,y); ctx.lineTo(W-PAD.r,y); ctx.stroke();
+    ctx.fillStyle='rgba(136,144,168,.5)'; ctx.font='9px Segoe UI'; ctx.textAlign='right';
+    ctx.fillText(fmtS(maxV*f), PAD.l-4, y+3);
+  });
+
+  // baseline
+  ctx.strokeStyle='rgba(46,52,80,.9)';
+  ctx.beginPath(); ctx.moveTo(PAD.l, PAD.t+cH); ctx.lineTo(W-PAD.r, PAD.t+cH); ctx.stroke();
+
+  // grouped bars: plan / fact / forecast
+  // Внутри одного bucket — три столбика рядом: план (orange), факт (green),
+  // прогноз (blue). Если значение 0 — столбик пропускаем, но место сохраняем,
+  // чтобы порядок не съезжал.
+  const series = [
+    { key:'plan',     color:'rgba(230,126,34,0.85)',  border:'rgba(230,126,34,1)' },
+    { key:'fact',     color:'rgba(46,204,113,0.85)',  border:'rgba(46,204,113,1)' },
+    { key:'forecast', color:'rgba(79,142,247,0.85)',  border:'rgba(79,142,247,1)' },
+  ];
+  const innerPad = groupW * 0.12;        // отступ между группами
+  const innerW = groupW - innerPad*2;
+  const barW = innerW / 3 * 0.92;        // зазор между столбиками внутри группы
+  const barGap = (innerW - barW*3) / 2;
+
+  buckets.forEach((b,i)=>{
+    const x0 = PAD.l + i*groupW + innerPad;
+    series.forEach((s, si)=>{
+      const v = b[s.key];
+      if(!(v>0)) return;
+      const x = x0 + si*(barW + barGap);
+      const y = toY(v);
+      const bH = (PAD.t + cH) - y;
+      ctx.fillStyle = s.color;
+      ctx.fillRect(x, y, barW, bH);
+      ctx.strokeStyle = s.border; ctx.lineWidth = 1;
+      ctx.strokeRect(x+0.5, y+0.5, barW-1, bH-1);
+
+      // value label над столбиком
+      ctx.fillStyle = '#e8eaf0';
+      ctx.font = 'bold 9px Segoe UI';
+      ctx.textAlign = 'center';
+      ctx.fillText(fmtS(v), x + barW/2, y - 3);
+    });
+  });
+
+  // today marker
+  const curIdx = buckets.findIndex(b=>b.isCur);
+  if(curIdx>=0){
+    const tx = toX(curIdx);
+    ctx.beginPath(); ctx.strokeStyle='rgba(241,196,15,.6)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+    ctx.moveTo(tx, PAD.t); ctx.lineTo(tx, PAD.t+cH); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle='rgba(241,196,15,.85)'; ctx.font='bold 9px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText('сейчас', tx, PAD.t+8);
+  }
+
+  // x labels
+  ctx.fillStyle='rgba(136,144,168,.85)'; ctx.font='10px Segoe UI'; ctx.textAlign='center';
+  buckets.forEach((b,i)=>{ ctx.fillText(b.label, toX(i), H2-4); });
+}
+
+// ═══════════════════════════════════════════════
+// P&L TABLE
+// ═══════════════════════════════════════════════
+function renderPnL(){
+  const pd = getPeriodData();
+  const sc = getScen();
+  const fotNorm = { ...NORMS, foodcost: sc.foodcost, deliveryShare: sc.del };
+  fotNorm.staffFixed = Math.round(pd.foreRev * sc.fotPct/100 * 0.65);
+  fotNorm.mgmtFixed  = Math.round(pd.foreRev * sc.fotPct/100 * 0.35);
+
+  const P = calcPnL(pd.planRev, {});
+  const F = calcPnL(pd.foreRev, fotNorm);
+  const r = P.revenue;
+
+  function row(name, indent, pv, fv){
+    const dp = fv-pv, dpct = pv!==0?(fv/pv-1)*100:0;
+    const dpColor = dp>=0?'var(--fact)':'var(--red)';
+    const pct = pctOf(Math.abs(pv),r);
+    const neg = v => v<0?`(${fmt(-v)})`:fmt(v);
+    return `<tr>
+      <td class="cn ${indent?'i':''}">${name}</td>
+      <td class="pct-col">${p1(pct)}</td>
+      <td class="cv plan">${neg(pv)} ₽</td>
+      <td class="cv fore">${neg(fv)} ₽</td>
+      <td class="cv ${dp>=0?'dp':'dn'}">${dp>=0?'+':''}${fmt(dp)} ₽</td>
+      <td class="cv ${dp>=0?'dp':'dn'}">${dp>=0?'+':''}${dpct.toFixed(1)}%</td>
+    </tr>`;
+  }
+  function sub(name,pv,fv){ const t=row(name,false,pv,fv); return t.replace('<tr>','<tr class="sub">'); }
+  function tot(name,pv,fv){ const t=row(name,false,pv,fv); return t.replace('<tr>','<tr class="tot">'); }
+  function sep(lbl){ return `<tr><td colspan="6" class="sep-td">${lbl}</td></tr>`; }
+
+  let h='';
+  h+=sep('📈 Выручка');
+  h+=row('Выручка (нетто)',false,P.revenue,F.revenue);
+  h+=row('в т.ч. доставка',true,P.delRev,F.delRev);
+  h+=sep('📦 Переменные затраты');
+  h+=row('Фудкост',true,-P.fc,-F.fc);
+  h+=row('Франшиза',true,-P.fr,-F.fr);
+  h+=row('Списание',true,-P.wo,-F.wo);
+  h+=row('Хозяйственные',true,-P.hz,-F.hz);
+  h+=row('Эквайринг+банк',true,-P.aq,-F.aq);
+  h+=row('Расходы доставка',true,-P.dc,-F.dc);
+  h+=sub('Валовая прибыль',P.grossP,F.grossP);
+  h+=sep('👥 ФОТ');
+  h+=row('ФОТ персонал',true,-P.staffTotal,-F.staffTotal);
+  h+=row('Налоги на ЗП',true,-P.stax,-F.stax);
+  h+=sub('EBITDA',P.ebitda,F.ebitda);
+  h+=sep('🏢 Постоянные');
+  h+=row('Аренда',true,-P.rent,-F.rent);
+  h+=row('Коммунальные',true,-P.utilities,-F.utilities);
+  h+=sub('Прибыль до УСН',P.opP,F.opP);
+  h+=sep('🏛 Налог');
+  h+=row('УСН',true,-P.usn,-F.usn);
+  h+=tot('💰 ЧИСТАЯ ПРИБЫЛЬ',P.net,F.net);
+
+  document.getElementById('pnl-body').innerHTML = h;
+  document.getElementById('pnl-period-lbl').textContent = getPeriodData().label;
+}
+
+// ═══════════════════════════════════════════════
+// WATERFALL
+// ═══════════════════════════════════════════════
+function renderWaterfall(){
+  const pd = getPeriodData();
+  const sc = getScen();
+  const fotNorm = { ...NORMS, foodcost: sc.foodcost, deliveryShare: sc.del };
+  fotNorm.staffFixed = Math.round(pd.foreRev * sc.fotPct/100 * 0.65);
+  fotNorm.mgmtFixed  = Math.round(pd.foreRev * sc.fotPct/100 * 0.35);
+  const P = calcPnL(pd.planRev, {});
+  const F = calcPnL(pd.foreRev, fotNorm);
+
+  const items = [
+    { name:'Выручка',     delta: F.revenue - P.revenue,   base: P.net },
+    { name:'Фудкост',     delta: -(F.fc - P.fc),          base: null  },
+    { name:'Переменные',  delta: -(F.varC - P.varC - (F.fc-P.fc)), base:null},
+    { name:'ФОТ',         delta: -(F.staffC - P.staffC),  base: null  },
+    { name:'Постоянные',  delta: -(F.fixedC - P.fixedC),  base: null  },
+    { name:'УСН',         delta: -(F.usn - P.usn),        base: null  },
+    { name:'Чист. прибыль', delta:0, base: F.net },
+  ];
+
+  const maxAbs = Math.max(Math.abs(P.net), Math.abs(F.net),
+    ...items.map(i=>Math.abs(i.delta)));
+
+  const html = items.map(item=>{
+    const pct = Math.min(Math.abs(item.delta||item.base||0)/maxAbs*100, 100);
+    const isBase = item.base !== null && item.delta === 0;
+    const v = isBase ? item.base : item.delta;
+    const color = isBase ? 'var(--fore)' : v>0?'var(--fact)':'var(--red)';
+    const left = v<0 ? (50-pct/2)+'%' : '50%';
+    const width = pct/2+'%';
+    const sign = v>0?'+':'';
+    return `<div class="wf-row">
+      <div class="wf-name">${item.name}</div>
+      <div class="wf-track">
+        <div class="wf-bar" style="background:${color};left:${left};width:${width}"></div>
+        <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--border)"></div>
+      </div>
+      <div class="wf-amt" style="color:${color}">${isBase?fmtS(v)+'₽':sign+fmtS(v)+'₽'}</div>
+    </div>`;
+  }).join('');
+  document.getElementById('wf-body').innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════
+// DRIVERS
+// ═══════════════════════════════════════════════
+function renderDrivers(){
+  const pd = getPeriodData();
+  const P = calcPnL(pd.planRev, {});
+  const totalDelta = pd.foreRev - pd.planRev;
+
+  // Driver decomposition: volume (checks) + price (avg check) + discount + mix
+  const now = new Date(TODAY);
+  const factDays = HISTORY.filter(d=>{
+    const dd=new Date(d.date);
+    return dd.getFullYear()===now.getFullYear()&&dd.getMonth()===now.getMonth()&&d.date<=TODAY;
+  });
+  const planChecksDay = 120, planAvgCheck = 640;
+  const factChecksDay = factDays.length>0 ? factDays.reduce((s,d)=>s+d.checks,0)/factDays.length : planChecksDay;
+  const factAvgCheck  = factDays.length>0 ? factDays.reduce((s,d)=>s+d.avgCheck,0)/factDays.length : planAvgCheck;
+  const daysInM = daysInMonth(now.getFullYear(), now.getMonth());
+
+  const volEffect   = (factChecksDay - planChecksDay) * planAvgCheck * daysInM;
+  const priceEffect = (factAvgCheck  - planAvgCheck ) * planChecksDay * daysInM;
+  const mixEffect   = totalDelta - volEffect - priceEffect;
+
+  const sc = getScen();
+  const menuPriceEffect = (sc.star*0.35+sc.plw*0.40+sc.pzl*0.15+sc.dog*0.10)/100 * pd.foreRev;
+  const discEffect = -(sc.disc - 3)/100 * pd.foreRev;
+  const fcEffect   = -(sc.foodcost - NORMS.foodcost)/100 * pd.foreRev;
+  const fotEffect  = -(sc.fotPct/100 - (NORMS.staffFixed+NORMS.mgmtFixed)/pd.planRev) * pd.foreRev;
+
+  const drivers = [
+    { name:'Объём чеков',     v: volEffect },
+    { name:'Средний чек',     v: priceEffect },
+    { name:'Скидки',          v: discEffect },
+    { name:'Изменение цен меню', v: menuPriceEffect },
+    { name:'Фудкост Δ',       v: -fcEffect },
+    { name:'ФОТ Δ',           v: fotEffect },
+    { name:'Прочее/микс',     v: mixEffect },
+  ];
+
+  const maxAbs = Math.max(...drivers.map(d=>Math.abs(d.v)), 1);
+
+  document.getElementById('drv-body').innerHTML = drivers.map(d=>{
+    const pct = Math.abs(d.v)/maxAbs*100;
+    const color = d.v>=0?'var(--fact)':'var(--red)';
+    const sign = d.v>=0?'+':'';
+    return `<div class="drv-row">
+      <div class="drv-name">${d.name}</div>
+      <div class="drv-bar-wrap">
+        <div class="drv-bar" style="width:${pct}%;background:${color}"></div>
+      </div>
+      <div class="drv-val" style="color:${color}">${sign}${fmtS(d.v)} ₽</div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════
+// SLIDER LABELS UPDATE
+// ═══════════════════════════════════════════════
+function updateScen(){
+  const sc = getScen();
+  document.getElementById('sv-wkd').textContent = sc.wkd;
+  document.getElementById('sv-wke').textContent = sc.wke;
+  document.getElementById('sv-avg').textContent = fmt(sc.avg)+' ₽';
+  document.getElementById('sv-disc').textContent = sc.disc+'%';
+  document.getElementById('sv-fc').textContent = sc.foodcost+'%';
+  document.getElementById('sv-fot').textContent = sc.fotPct+'%';
+  document.getElementById('sv-del').textContent = sc.del+'%';
+  document.getElementById('sv-star').textContent = (sc.star>=0?'+':'')+sc.star+'%';
+  document.getElementById('sv-plw').textContent = (sc.plw>=0?'+':'')+sc.plw+'%';
+  document.getElementById('sv-pzl').textContent = (sc.pzl>=0?'+':'')+sc.pzl+'%';
+  document.getElementById('sv-dog').textContent = (sc.dog>=0?'+':'')+sc.dog+'%';
+  renderAll();
+}
+
+function setPeriod(mode){
+  periodMode = mode;
+  document.querySelectorAll('.pbtn').forEach(b=>b.classList.toggle('active', b.textContent.toLowerCase()===({'week':'неделя','month':'месяц','quarter':'квартал','year':'год'}[mode])));
+  renderAll();
+}
+
+// ═══════════════════════════════════════════════
+// MAIN
+// ═══════════════════════════════════════════════
+function renderAll(){
+  renderKPIs();
+  renderDynGrid();
+  renderMonthBlock();
+  renderChart();
+  renderPnL();
+  renderWaterfall();
+  renderDrivers();
+}
+
+function initDashboard(){
+  renderAll();
+  window.addEventListener('resize', renderChart);
+}
+
+// ═══════════════════════════════════════════════
+// BOOTSTRAP — auth + загрузка истории + costs
+// ═══════════════════════════════════════════════
+async function bootstrap(){
+  showLoading('Проверка доступа…');
+
+  // 1. Auth-probe. /api/owner/me возвращает 401 без cookie.
+  let meR;
+  try { meR = await fetch('/api/owner/me', { credentials: 'same-origin' }); }
+  catch(e){ showAccessDenied('Сетевая ошибка'); return; }
+
+  if(meR.status === 401){
+    // Не залогинены — показываем форму логина основного дашборда.
+    showAccessDenied('Не выполнен вход. Войдите через основной дашборд.');
+    return;
+  }
+  let me;
+  try { me = await meR.json(); } catch(e){ showAccessDenied('Ошибка ответа'); return; }
+  if(!me || me.is_owner !== true){
+    showAccessDenied('Раздел доступен только владельцу.');
+    return;
+  }
+
+  showLoading('Загрузка истории…');
+
+  // 2. Параллельно тянем историю и costs.
+  let histR, costsR;
+  try {
+    [histR, costsR] = await Promise.all([
+      fetch('/api/owner/history', { credentials: 'same-origin' }),
+      fetch('/api/owner/costs',  { credentials: 'same-origin' }),
+    ]);
+  } catch(e){ showAccessDenied('Ошибка загрузки данных'); return; }
+
+  if(!histR.ok){ showAccessDenied('История недоступна (' + histR.status + ')'); return; }
+  const hist = await histR.json();
+  const data = Array.isArray(hist.data) ? hist.data : [];
+  if(!data.length){ showAccessDenied('Нет данных по Калининграду'); return; }
+
+  HISTORY = data;
+  byDate = {};
+  HISTORY.forEach(d => byDate[d.date] = d);
+  TODAY = HISTORY[HISTORY.length-1].date;
+  TODAY_D = new Date(TODAY);
+
+  // 3. NORMS (необязательно — при ошибке остаются дефолты)
+  if(costsR && costsR.ok){
+    try {
+      const cj = await costsR.json();
+      if(cj && cj.costs) NORMS = { ...NORMS, ...cj.costs };
+    } catch(_e){}
+  }
+
+  showApp();
+}
+
+// Сохранение постоянных в KV. Вешается на UI, если в дашборде есть кнопка/поле.
+async function saveOwnerCosts(patch){
+  try {
+    const r = await fetch('/api/owner/costs', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...NORMS, ...(patch||{}) }),
+    });
+    if(!r.ok) return false;
+    const j = await r.json();
+    if(j && j.costs){ NORMS = { ...NORMS, ...j.costs }; renderAll(); return true; }
+    return false;
+  } catch(_e){ return false; }
+}
+window.saveOwnerCosts = saveOwnerCosts;
+
+bootstrap();
+</script>
+</body>
+</html>
