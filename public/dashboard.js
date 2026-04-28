@@ -6332,7 +6332,7 @@ function ownerPnl_showApp() {
   if (app) app.style.display = 'block';
   if (err) err.style.display = 'none';
   OP_INITIALIZED = true;
-  ownerPnl_initDashboard();
+  requestAnimationFrame(() => ownerPnl_initDashboard());
 }
 
 // ── Auto-plan helpers ───────────────────────────────
