@@ -27,7 +27,7 @@ import type { Env } from './index';
 // dept_id ресторана в Калининграде. Зашит явно — owner-раздел работает только
 // для одного юр-лица. Если когда-нибудь у владельца появится второй ресторан,
 // добавим параметр.
-const KALININGRAD_DEPT_ID = 101;
+const KALININGRAD_DEPT_ID = 42;
 
 // Дефолты постоянных затрат — берутся из УпрЧико на момент запуска раздела.
 // Пользователь может их перезаписать через POST /api/owner/costs.
@@ -115,27 +115,6 @@ export async function handleOwnerHistory(request: Request, env: Env): Promise<Re
 
     const ch = makeClient(env);
 
-    // Сначала резолвим фактический dept_id Калининграда из CH (не хардкодим 101,
-    // т.к. в prod-таблице dept_id может отличаться от синтетических данных).
-    // Фолбэк: KALININGRAD_DEPT_ID=101 если ресторан не найден по city.
-    let resolvedDeptId: number = KALININGRAD_DEPT_ID;
-    try {
-      const lookupSql = `
-        SELECT DISTINCT dept_id
-        FROM chicko.mart_restaurant_daily_base
-        WHERE LOWER(city) LIKE 'калининград%'
-        LIMIT 1
-        SETTINGS max_execution_time=10
-      `;
-      const lookup = await ch.query(lookupSql);
-      const rows = lookup.data as Array<Record<string, unknown>>;
-      if (rows.length > 0 && rows[0].dept_id != null) {
-        resolvedDeptId = Number(rows[0].dept_id);
-      }
-    } catch (lookupErr) {
-      console.warn('[owner-history] city lookup failed, using fallback dept_id=101:', (lookupErr as Error).message);
-    }
-
     const sql = `
       SELECT
         toString(report_date)              AS date,
@@ -147,7 +126,7 @@ export async function handleOwnerHistory(request: Request, env: Env): Promise<Re
         toFloat64(discount_total_pct)      AS discPct,
         toFloat64(delivery_share_pct)      AS deliverySharePct
       FROM chicko.mart_restaurant_daily_base
-      WHERE dept_id = ${resolvedDeptId}
+      WHERE dept_id = ${KALININGRAD_DEPT_ID}
         AND report_date >= '2024-05-01'
         AND revenue_total_rub > 0
       ORDER BY report_date ASC
@@ -180,7 +159,7 @@ export async function handleOwnerHistory(request: Request, env: Env): Promise<Re
     });
 
     return jsonResponse({
-      dept_id: resolvedDeptId,
+      dept_id: KALININGRAD_DEPT_ID,
       city: 'Калининград',
       rows: data.length,
       data,
