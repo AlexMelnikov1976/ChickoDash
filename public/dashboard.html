@@ -3,13 +3,110 @@
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Chicko Analytics</title>
+<script>
+if (location.protocol === 'file:') location.replace('http://localhost:8787/');
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <link rel="stylesheet" href="/dashboard.css">
 <link rel="stylesheet" href="/marketing-tips.css">
 <link rel="stylesheet" href="/staff-tips.css">
-
+<style>
+/* ── OWNER P&L SCOPED STYLES ────────────────────── */
+#p-owner-pnl{--op-fact:#2ecc71;--op-plan:#e67e22;--op-fore:#4f8ef7;--op-scen:#7c5cbf;--op-red:#e74c3c;--op-yellow:#f1c40f;--op-muted:#8890a8;--op-bg2:#1a1d27;--op-bg3:#22263a;--op-border:#2e3450;--op-r:8px}
+#p-owner-pnl .op-pbtn{padding:5px 12px;border-radius:6px;border:1px solid var(--op-border);background:var(--op-bg2);color:var(--op-muted);font-size:11px;font-weight:600;cursor:pointer;transition:.15s;font-family:inherit}
+#p-owner-pnl .op-pbtn.op-active{background:var(--op-fore);border-color:var(--op-fore);color:#fff}
+#p-owner-pnl .op-pbtn:hover:not(.op-active){border-color:var(--op-fore);color:#e8eaf0}
+#p-owner-pnl .op-layout{display:grid;grid-template-columns:360px 1fr;gap:14px}
+#p-owner-pnl .op-left{padding:2px 0}
+#p-owner-pnl .op-kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px}
+#p-owner-pnl .op-kc{background:var(--op-bg2);border:1px solid var(--op-border);border-radius:var(--op-r);padding:11px 13px}
+#p-owner-pnl .op-kc-lbl{font-size:10px;color:var(--op-muted);margin-bottom:4px;line-height:1.3}
+#p-owner-pnl .op-kc-val{font-size:16px;font-weight:800;line-height:1.1;margin-bottom:3px}
+#p-owner-pnl .op-kc-sub{font-size:10px;color:var(--op-muted)}
+#p-owner-pnl .op-kc-dyn{font-size:10px;font-weight:700;margin-top:3px;display:flex;gap:6px;flex-wrap:wrap}
+#p-owner-pnl .op-dyn-tag{padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700}
+#p-owner-pnl .op-dyn-up{background:rgba(46,204,113,.15);color:var(--op-fact)}
+#p-owner-pnl .op-dyn-dn{background:rgba(231,76,60,.15);color:var(--op-red)}
+#p-owner-pnl .op-dyn-eq{background:rgba(79,142,247,.1);color:var(--op-fore)}
+#p-owner-pnl .op-mblock{background:var(--op-bg3);border:1px solid var(--op-border);border-radius:var(--op-r);padding:12px;margin-bottom:14px}
+#p-owner-pnl .op-mblock-title{font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--op-muted);margin-bottom:10px}
+#p-owner-pnl .op-mrow{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(46,52,80,.4)}
+#p-owner-pnl .op-mrow:last-child{border-bottom:none}
+#p-owner-pnl .op-mrow-name{font-size:11px;color:var(--op-muted)}
+#p-owner-pnl .op-mrow-val{font-size:12px;font-weight:700}
+#p-owner-pnl .op-mrow-val.fact{color:var(--op-fact)}
+#p-owner-pnl .op-mrow-val.plan{color:var(--op-plan)}
+#p-owner-pnl .op-mrow-val.fore{color:var(--op-fore)}
+#p-owner-pnl .op-mrow-val.scen{color:var(--op-scen)}
+#p-owner-pnl .op-mrow-val.red{color:var(--op-red)}
+#p-owner-pnl .op-tempo-bar{height:4px;background:var(--op-border);border-radius:2px;margin-top:3px;overflow:hidden}
+#p-owner-pnl .op-tempo-fill{height:100%;border-radius:2px;transition:width .4s}
+#p-owner-pnl .op-scen-block{background:var(--op-bg3);border:1px solid rgba(124,92,191,.2);border-radius:var(--op-r);padding:12px;margin-bottom:14px}
+#p-owner-pnl .op-scen-title{font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--op-scen);margin-bottom:10px}
+#p-owner-pnl .op-sl{margin-bottom:10px}
+#p-owner-pnl .op-sl-lbl{display:flex;justify-content:space-between;margin-bottom:3px}
+#p-owner-pnl .op-sl-name{font-size:11px;color:#e8eaf0}
+#p-owner-pnl .op-sl-val{font-size:11px;font-weight:700;color:var(--op-scen);background:rgba(124,92,191,.1);padding:1px 7px;border-radius:3px;min-width:65px;text-align:right}
+#p-owner-pnl input[type=range]{width:100%;height:3px;-webkit-appearance:none;background:var(--op-border);border-radius:2px;outline:none;cursor:pointer}
+#p-owner-pnl input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--op-scen);box-shadow:0 0 0 3px rgba(124,92,191,.2)}
+#p-owner-pnl .op-scen-divider{height:1px;background:var(--op-border);margin:10px 0}
+#p-owner-pnl .op-menu-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#p-owner-pnl .op-menu-cat{font-size:9px;font-weight:700;color:var(--op-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+#p-owner-pnl .op-btn-row{display:flex;gap:6px;margin-bottom:14px}
+#p-owner-pnl .op-btn{padding:7px 14px;border-radius:7px;border:none;cursor:pointer;font-size:11px;font-weight:700;transition:.2s;font-family:inherit}
+#p-owner-pnl .op-btn-save{background:var(--op-scen);color:#fff}
+#p-owner-pnl .op-btn-save:hover{background:#6a4daf}
+#p-owner-pnl .op-btn-clear{background:var(--op-bg3);color:var(--op-muted);border:1px solid var(--op-border)}
+#p-owner-pnl .op-btn-clear:hover{color:#e8eaf0;border-color:var(--op-plan)}
+#p-owner-pnl .op-chart-wrap{background:var(--op-bg2);border:1px solid var(--op-border);border-radius:var(--op-r);padding:14px;margin-bottom:14px}
+#p-owner-pnl .op-chart-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:6px}
+#p-owner-pnl .op-chart-title{font-size:12px;font-weight:700}
+#p-owner-pnl .op-chart-legend{display:flex;gap:12px}
+#p-owner-pnl .op-leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--op-muted)}
+#p-owner-pnl .op-leg-line{width:20px;height:2px;border-radius:1px}
+#p-owner-pnl canvas#op-chart{width:100%;display:block}
+#p-owner-pnl .op-pnl-wrap{background:var(--op-bg2);border:1px solid var(--op-border);border-radius:var(--op-r);padding:14px;margin-bottom:14px}
+#p-owner-pnl .op-sec-title{font-size:12px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+#p-owner-pnl .op-sec-title::after{content:'';flex:1;height:1px;background:var(--op-border)}
+#p-owner-pnl table.op-pnl{width:100%;border-collapse:collapse}
+#p-owner-pnl table.op-pnl td{padding:5px 7px;border-bottom:1px solid rgba(46,52,80,.3)}
+#p-owner-pnl table.op-pnl tr:hover{background:rgba(255,255,255,.02)}
+#p-owner-pnl table.op-pnl thead td{font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--op-muted);padding:4px 7px;border-bottom:2px solid var(--op-border)}
+#p-owner-pnl .op-cn{font-size:11px;color:#e8eaf0;width:36%}
+#p-owner-pnl .op-cn.i{padding-left:20px;color:var(--op-muted);font-size:10px}
+#p-owner-pnl .op-cv{text-align:right;font-size:11px;font-weight:700;width:16%}
+#p-owner-pnl .op-cv.plan{color:var(--op-plan)}
+#p-owner-pnl .op-cv.fore{color:var(--op-fore)}
+#p-owner-pnl .op-cv.dp{color:var(--op-fact)}
+#p-owner-pnl .op-cv.dn{color:var(--op-red)}
+#p-owner-pnl .op-pct-col{width:7%;text-align:right;font-size:10px;color:var(--op-muted)}
+#p-owner-pnl tr.op-sub td{border-top:1px solid rgba(79,142,247,.2)}
+#p-owner-pnl tr.op-sub .op-cn{font-weight:700;font-size:11px}
+#p-owner-pnl tr.op-sub .op-cv{font-size:13px;font-weight:800}
+#p-owner-pnl tr.op-tot td{border-top:2px solid var(--op-border)!important}
+#p-owner-pnl tr.op-tot .op-cn{font-weight:900;font-size:12px}
+#p-owner-pnl tr.op-tot .op-cv{font-size:14px;font-weight:900}
+#p-owner-pnl .op-sep-td{font-size:9px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--op-muted);padding:8px 7px 3px!important}
+#p-owner-pnl .op-wf-wrap{background:var(--op-bg2);border:1px solid var(--op-border);border-radius:var(--op-r);padding:14px;margin-bottom:14px}
+#p-owner-pnl .op-wf-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+#p-owner-pnl .op-wf-name{font-size:10px;color:var(--op-muted);width:130px;flex-shrink:0;text-align:right}
+#p-owner-pnl .op-wf-track{flex:1;height:18px;background:var(--op-bg3);border-radius:3px;position:relative;overflow:hidden}
+#p-owner-pnl .op-wf-bar{height:100%;border-radius:3px;position:absolute;top:0;transition:width .4s,left .4s}
+#p-owner-pnl .op-wf-amt{font-size:10px;font-weight:700;width:90px;flex-shrink:0}
+#p-owner-pnl .op-drv-wrap{background:var(--op-bg2);border:1px solid var(--op-border);border-radius:var(--op-r);padding:14px;margin-bottom:14px}
+#p-owner-pnl .op-drv-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+#p-owner-pnl .op-drv-name{font-size:11px;color:#e8eaf0;width:160px;flex-shrink:0}
+#p-owner-pnl .op-drv-bar-wrap{flex:1;height:10px;background:var(--op-bg3);border-radius:5px;overflow:hidden}
+#p-owner-pnl .op-drv-bar{height:100%;border-radius:5px;transition:width .4s}
+#p-owner-pnl .op-drv-val{font-size:11px;font-weight:700;width:90px;text-align:right}
+#p-owner-pnl .op-dyn-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+#p-owner-pnl .op-dyn-card{background:var(--op-bg2);border:1px solid var(--op-border);border-radius:var(--op-r);padding:10px 12px}
+#p-owner-pnl .op-dyn-card-lbl{font-size:10px;color:var(--op-muted);margin-bottom:4px}
+#p-owner-pnl .op-dyn-card-val{font-size:16px;font-weight:800}
+#p-owner-pnl .op-dyn-card-sub{font-size:10px;color:var(--op-muted);margin-top:3px}
+</style>
 </head>
 <body>
 <div id="login-screen" class="hidden">
@@ -69,6 +166,7 @@
     <div class="ntab"        data-tab="dynamics"  onclick="goTab(this)">📈 Динамика</div>
     <div class="ntab"        data-tab="compare"   onclick="goTab(this)">⚡ Сравнение</div>
     <div class="ntab"        data-tab="analysis"  onclick="goTab(this)">🧮 Анализ</div>
+    <div class="ntab"        data-tab="pnl"       onclick="goTab(this)">💼 PnL</div>
     <div class="ntab"        data-tab="menu"      onclick="goTab(this)">📋 Меню</div>
     <div class="ntab"          data-tab="staff"     onclick="goTab(this)">👥 Персонал</div>
     <div class="ntab"        data-tab="marketing" onclick="goTab(this)">💎 Маркетинг</div>
@@ -372,6 +470,98 @@
   </div>
 </div>
 
+<!-- ══ PNL MOCKUP ══ -->
+<div class="panel" id="p-pnl">
+  <div class="pnl-head">
+    <div>
+      <div class="pnl-title">PnL: прогноз выручки и прибыли</div>
+      <div class="pnl-sub" id="pnlMeta">Модельный макет на локальных данных дашборда и управленческих нормативах.</div>
+    </div>
+    <div class="pnl-actions">
+      <button class="pbtn active" id="pnlScenarioBase" onclick="pnlPreset('base',this)">База</button>
+      <button class="pbtn" onclick="pnlPreset('optimistic',this)">Оптимистичный</button>
+      <button class="pbtn" onclick="pnlPreset('manual',this)">Ручной</button>
+      <button class="pbtn" onclick="savePnlScenario()">Сохранить сценарий</button>
+      <button class="pbtn" onclick="clearPnlScenario()">Очистить план</button>
+      <button class="pbtn" onclick="resetPnl()">Сброс</button>
+    </div>
+  </div>
+
+  <div class="pnl-kpis" id="pnlKpis"></div>
+
+  <div class="pnl-grid">
+    <div class="card">
+      <div class="ctitle">📊 Факт + прогноз месяца</div>
+      <div id="pnlFactBox"></div>
+      <div id="pnlPlanStatus" class="pnl-status"></div>
+      <div class="pnl-note" id="pnlSourceNote"></div>
+    </div>
+
+    <div class="card">
+      <div class="ctitle">🎛️ Сценарные ползунки</div>
+      <div class="pnl-controls">
+        <div class="pnl-control">
+          <div class="sl-hdr"><span class="sl-name">Чеков/день · будни</span><span class="sl-val" id="pnlWdCntV">—</span></div>
+          <input type="range" id="pnlWdCnt" min="5" max="450" step="1" oninput="calcPnl()">
+        </div>
+        <div class="pnl-control">
+          <div class="sl-hdr"><span class="sl-name">Чеков/день · выходные</span><span class="sl-val" id="pnlWeCntV">—</span></div>
+          <input type="range" id="pnlWeCnt" min="5" max="550" step="1" oninput="calcPnl()">
+        </div>
+        <div class="pnl-control">
+          <div class="sl-hdr"><span class="sl-name">Средний чек без цен</span><span class="sl-val" id="pnlChkV">—</span></div>
+          <input type="range" id="pnlChk" min="300" max="3500" step="1" oninput="calcPnl()">
+        </div>
+        <div class="pnl-control">
+          <div class="sl-hdr"><span class="sl-name">Скидки</span><span><span class="sl-val" id="pnlDiscV">—</span><span class="sl-unit">%</span></span></div>
+          <input type="range" id="pnlDisc" min="0" max="30" step="0.1" oninput="calcPnl()">
+        </div>
+        <div class="pnl-control">
+          <div class="sl-hdr"><span class="sl-name">Фудкост</span><span><span class="sl-val" id="pnlFcV">—</span><span class="sl-unit">%</span></span></div>
+          <input type="range" id="pnlFc" min="10" max="45" step="0.1" oninput="calcPnl()">
+        </div>
+        <div class="pnl-control">
+          <div class="sl-hdr"><span class="sl-name">ФОТ</span><span><span class="sl-val" id="pnlPayrollV">—</span><span class="sl-unit">%</span></span></div>
+          <input type="range" id="pnlPayroll" min="5" max="40" step="0.1" oninput="calcPnl()">
+        </div>
+        <div class="pnl-control">
+          <div class="sl-hdr"><span class="sl-name">Доставка</span><span><span class="sl-val" id="pnlDeliveryV">—</span><span class="sl-unit">%</span></span></div>
+          <input type="range" id="pnlDelivery" min="0" max="60" step="0.1" oninput="calcPnl()">
+        </div>
+      </div>
+
+      <div class="pnl-price-title">Изменение цен по KS-классам меню</div>
+      <div class="pnl-price-grid">
+        <div><span>Star</span><b id="pnlPriceStarV">0%</b><input type="range" id="pnlPriceStar" min="-15" max="20" step="0.5" oninput="calcPnl()"></div>
+        <div><span>Plowhorse</span><b id="pnlPricePlowhorseV">0%</b><input type="range" id="pnlPricePlowhorse" min="-15" max="20" step="0.5" oninput="calcPnl()"></div>
+        <div><span>Puzzle</span><b id="pnlPricePuzzleV">0%</b><input type="range" id="pnlPricePuzzle" min="-15" max="20" step="0.5" oninput="calcPnl()"></div>
+        <div><span>Dog</span><b id="pnlPriceDogV">0%</b><input type="range" id="pnlPriceDog" min="-15" max="20" step="0.5" oninput="calcPnl()"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:12px">
+    <div class="ctitle">📈 План / факт / прогноз</div>
+    <div style="height:240px"><canvas id="pnlPlanC"></canvas></div>
+  </div>
+
+  <div class="card" style="margin-bottom:12px">
+    <div class="ctitle">🧾 PnL таблица</div>
+    <div style="overflow-x:auto"><table class="pnl-table"><thead><tr><th>Статья</th><th>План</th><th>Факт + прогноз</th><th>Δ ₽</th><th>Δ %</th></tr></thead><tbody id="pnlTableBody"></tbody></table></div>
+  </div>
+
+  <div class="pnl-grid">
+    <div class="card">
+      <div class="ctitle">📉 Waterfall прибыли</div>
+      <div id="pnlWaterfall" class="pnl-waterfall"></div>
+    </div>
+    <div class="card">
+      <div class="ctitle">🔍 Разбор по драйверам</div>
+      <div id="pnlDrivers"></div>
+    </div>
+  </div>
+</div>
+
 <!-- ══ MENU ══ Phase 2.8.2 -->
 <div class="panel" id="p-menu">
   <div id="menuRoot">
@@ -567,6 +757,167 @@
       </div>
     </div>
   </div>
+</div>
+
+
+<!-- ══ OWNER PnL ══ (owner-only, visible for melnikov181076@gmail.com) -->
+<div class="panel" id="p-owner-pnl">
+  <div id="op-loading" style="text-align:center;padding:60px;color:var(--text3);font-size:13px">Загрузка Owner P&amp;L…</div>
+  <div id="op-error" style="display:none;text-align:center;padding:60px;color:#e74c3c;font-size:13px"></div>
+  <div id="op-app" style="display:none">
+    <!-- Header row -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <span style="font-size:12px;color:#8890a8;font-weight:700;letter-spacing:.5px">👑 Owner PnL · Калининград</span>
+      <span style="font-size:11px;color:#4E6A90" id="op-hdr-period"></span>
+      <div style="margin-left:auto;display:flex;gap:4px">
+        <button class="op-pbtn" onclick="ownerPnl_setPeriod('day')">День</button>
+        <button class="op-pbtn" onclick="ownerPnl_setPeriod('week')">Неделя</button>
+        <button class="op-pbtn op-active" onclick="ownerPnl_setPeriod('month')">Месяц</button>
+        <button class="op-pbtn" onclick="ownerPnl_setPeriod('quarter')">Квартал</button>
+        <button class="op-pbtn" onclick="ownerPnl_setPeriod('year')">Год</button>
+      </div>
+    </div>
+    <div class="op-layout">
+      <!-- LEFT -->
+      <div class="op-left">
+        <div class="op-mblock">
+          <div class="op-mblock-title">📅 Факт + прогноз месяца</div>
+          <div class="op-mrow">
+            <span class="op-mrow-name">Факт выручка (прошедшие дни)</span>
+            <span class="op-mrow-val fact" id="op-m-fact">—</span>
+          </div>
+          <div class="op-mrow">
+            <span class="op-mrow-name">План месяца</span>
+            <span class="op-mrow-val plan" id="op-m-plan">—</span>
+          </div>
+          <div class="op-mrow">
+            <span class="op-mrow-name">Остаток по сценарию</span>
+            <span class="op-mrow-val scen" id="op-m-rem">—</span>
+          </div>
+          <div class="op-mrow">
+            <span class="op-mrow-name">Итог месяц (факт + прогноз)</span>
+            <span class="op-mrow-val fore" id="op-m-total">—</span>
+          </div>
+          <div class="op-mrow" style="flex-direction:column;align-items:flex-start">
+            <div style="display:flex;justify-content:space-between;width:100%">
+              <span class="op-mrow-name">Темп к плану (PTD)</span>
+              <span class="op-mrow-val" id="op-m-tempo">—</span>
+            </div>
+            <div class="op-tempo-bar" style="width:100%;margin-top:5px">
+              <div class="op-tempo-fill" id="op-m-tempo-bar" style="width:0%"></div>
+            </div>
+          </div>
+          <div class="op-mrow">
+            <span class="op-mrow-name">Сценарий / день (остаток)</span>
+            <span class="op-mrow-val scen" id="op-m-perday">—</span>
+          </div>
+          <div class="op-mrow">
+            <span class="op-mrow-name">План PTD</span>
+            <span class="op-mrow-val plan" id="op-m-plan-mtd">—</span>
+          </div>
+        </div>
+        <div class="op-btn-row">
+          <button class="op-btn op-btn-save" onclick="ownerPnl_saveScenario()">💾 Сохранить сценарий как план</button>
+          <button class="op-btn op-btn-clear" onclick="ownerPnl_clearCustomPlan()">↺ Авто-план</button>
+        </div>
+        <div class="op-scen-block">
+          <div class="op-scen-title">⚙️ Сценарий (остаток периода)</div>
+          <div class="op-sl">
+            <div class="op-sl-lbl"><span class="op-sl-name">Чеков/день — будни</span><span class="op-sl-val" id="op-sv-wkd">120</span></div>
+            <input type="range" id="op-ss-wkd" min="50" max="300" value="120" oninput="ownerPnl_updateScen()">
+          </div>
+          <div class="op-sl">
+            <div class="op-sl-lbl"><span class="op-sl-name">Чеков/день — выходные</span><span class="op-sl-val" id="op-sv-wke">150</span></div>
+            <input type="range" id="op-ss-wke" min="50" max="350" value="150" oninput="ownerPnl_updateScen()">
+          </div>
+          <div class="op-sl">
+            <div class="op-sl-lbl"><span class="op-sl-name">Средний чек, ₽</span><span class="op-sl-val" id="op-sv-avg">660 ₽</span></div>
+            <input type="range" id="op-ss-avg" min="400" max="1200" step="10" value="660" oninput="ownerPnl_updateScen()">
+          </div>
+          <div class="op-sl">
+            <div class="op-sl-lbl"><span class="op-sl-name">Скидки, %</span><span class="op-sl-val" id="op-sv-disc">3%</span></div>
+            <input type="range" id="op-ss-disc" min="0" max="15" step="0.5" value="3" oninput="ownerPnl_updateScen()">
+          </div>
+          <div class="op-scen-divider"></div>
+          <div class="op-sl">
+            <div class="op-sl-lbl"><span class="op-sl-name">Фудкост, %</span><span class="op-sl-val" id="op-sv-fc">32%</span></div>
+            <input type="range" id="op-ss-fc" min="20" max="55" step="0.5" value="32" oninput="ownerPnl_updateScen()">
+          </div>
+          <div class="op-sl">
+            <div class="op-sl-lbl"><span class="op-sl-name">ФОТ % от выручки</span><span class="op-sl-val" id="op-sv-fot">18%</span></div>
+            <input type="range" id="op-ss-fot" min="10" max="40" step="0.5" value="18" oninput="ownerPnl_updateScen()">
+          </div>
+          <div class="op-sl">
+            <div class="op-sl-lbl"><span class="op-sl-name">Доля доставки, %</span><span class="op-sl-val" id="op-sv-del">15%</span></div>
+            <input type="range" id="op-ss-del" min="0" max="40" value="15" oninput="ownerPnl_updateScen()">
+          </div>
+          <div class="op-scen-divider"></div>
+          <div style="font-size:10px;color:#8890a8;margin-bottom:8px;font-weight:700;letter-spacing:.5px;text-transform:uppercase">Изменение цен меню, %</div>
+          <div class="op-menu-grid">
+            <div>
+              <div class="op-menu-cat">⭐ Star (35%)</div>
+              <div class="op-sl-lbl"><span class="op-sl-name" style="font-size:10px">Δ цена</span><span class="op-sl-val" id="op-sv-star">0%</span></div>
+              <input type="range" id="op-ss-star" min="-10" max="20" value="0" oninput="ownerPnl_updateScen()">
+            </div>
+            <div>
+              <div class="op-menu-cat">🐴 Plowhorse (40%)</div>
+              <div class="op-sl-lbl"><span class="op-sl-name" style="font-size:10px">Δ цена</span><span class="op-sl-val" id="op-sv-plw">0%</span></div>
+              <input type="range" id="op-ss-plw" min="-10" max="20" value="0" oninput="ownerPnl_updateScen()">
+            </div>
+            <div>
+              <div class="op-menu-cat">❓ Puzzle (15%)</div>
+              <div class="op-sl-lbl"><span class="op-sl-name" style="font-size:10px">Δ цена</span><span class="op-sl-val" id="op-sv-pzl">0%</span></div>
+              <input type="range" id="op-ss-pzl" min="-10" max="20" value="0" oninput="ownerPnl_updateScen()">
+            </div>
+            <div>
+              <div class="op-menu-cat">🐕 Dog (10%)</div>
+              <div class="op-sl-lbl"><span class="op-sl-name" style="font-size:10px">Δ цена</span><span class="op-sl-val" id="op-sv-dog">0%</span></div>
+              <input type="range" id="op-ss-dog" min="-10" max="20" value="0" oninput="ownerPnl_updateScen()">
+            </div>
+          </div>
+        </div>
+      </div><!-- /op-left -->
+
+      <!-- RIGHT -->
+      <div class="op-right">
+        <div class="op-kpi-row" id="op-kpi-row"></div>
+        <div class="op-dyn-grid" id="op-dyn-grid"></div>
+        <div class="op-chart-wrap">
+          <div class="op-chart-hdr">
+            <div class="op-chart-title">📈 Выручка по периодам — <span id="op-chart-period-lbl">-3 мес / +6 мес</span></div>
+            <div class="op-chart-legend">
+              <div class="op-leg-item"><div class="op-leg-line" style="background:#e67e22"></div>План</div>
+              <div class="op-leg-item"><div class="op-leg-line" style="background:#2ecc71"></div>Факт</div>
+              <div class="op-leg-item"><div class="op-leg-line" style="background:#4f8ef7"></div>Прогноз</div>
+            </div>
+          </div>
+          <canvas id="op-chart" height="200"></canvas>
+        </div>
+        <div class="op-pnl-wrap">
+          <div class="op-sec-title">P&amp;L · <span id="op-pnl-period-lbl">Апрель 2026</span></div>
+          <table class="op-pnl">
+            <thead><tr>
+              <td class="op-cn">Статья</td>
+              <td class="op-pct-col">% выр.</td>
+              <td class="op-cv plan">План</td>
+              <td class="op-cv fore">Факт+Прогноз</td>
+              <td class="op-cv">Δ ₽</td>
+              <td class="op-cv">Δ %</td>
+            </tr></thead>
+            <tbody id="op-pnl-body"></tbody>
+          </table>
+        </div>
+        <div class="op-wf-wrap">
+          <div class="op-sec-title">💧 Мост прибыли (факт+прогноз vs план)</div>
+          <div id="op-wf-body"></div>
+        </div>
+        <div class="op-drv-wrap">
+          <div class="op-sec-title">🔍 Разбор по драйверам — за счёт чего Δ выручки</div>
+          <div id="op-drv-body"></div>
+        </div>
+      </div><!-- /op-right -->
+    </div><!-- /op-layout -->
+  </div><!-- /op-app -->
 </div>
 
 </div><!-- /main -->
