@@ -184,6 +184,7 @@ tr.tot .cv{font-size:14px;font-weight:900}
     <div class="hdr-badge">OWNER</div>
     <div class="hdr-period" id="hdr-period">Апрель 2026</div>
     <div class="period-btns">
+      <button class="pbtn" onclick="setPeriod('day')">День</button>
       <button class="pbtn" onclick="setPeriod('week')">Неделя</button>
       <button class="pbtn active" onclick="setPeriod('month')">Месяц</button>
       <button class="pbtn" onclick="setPeriod('quarter')">Квартал</button>
@@ -570,71 +571,69 @@ function getDaysRemaining(){
 }
 
 // ═══════════════════════════════════════════════
-// PERIOD: get data window
+// PERIOD: данные текущего выбранного периода (для KPI и P&L).
+// Без накопления: factRev — только дни до TODAY внутри периода;
+// foreRev — fact + прогноз остатка для текущего периода.
 // ═══════════════════════════════════════════════
 function getPeriodData(){
   const now = new Date(TODAY);
+  const today = new Date(TODAY);
   const yr = now.getFullYear(), mo = now.getMonth();
+  const sc = getScen();
+  const MONTHS_RU = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
 
-  if(periodMode === 'month'){
-    const planRev = buildMonthlyPlan(yr, mo, HISTORY, customPlan);
-    const factRev = getFactRevenueUpToToday(yr, mo);
-    const sc = getScen();
-    const foreRev = factRev + calcForecastRevenue(sc);
-    // yoy
-    const prevYrFact = getFactRevenue(yr-1, mo);
-    // mom
-    const prevMo = mo===0?11:mo-1;
-    const prevMoYr = mo===0?yr-1:yr;
-    const prevMoFact = getFactRevenue(prevMoYr, prevMo);
-    return { planRev, factRev, foreRev, prevYrFact, prevMoFact,
-      label: `${['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'][mo]} ${yr}` };
+  // Универсальный сборщик периода [bStart..bEnd].
+  const periodOver = (bStart, bEnd, prevBStart, prevBEnd, prevYrBStart, prevYrBEnd, label) => {
+    const planRev = bucketPlan(bStart, bEnd);
+    const factRev = bucketFact(bStart, bEnd);
+    const isFuture = bStart > today;
+    const isPast   = bEnd   < today;
+    let foreRev;
+    if(isFuture) foreRev = planRev;
+    else if(isPast) foreRev = factRev;
+    else            foreRev = factRev + bucketForecast(bStart, bEnd, sc);
+    const prevMoFact = bucketFact(prevBStart, prevBEnd);
+    const prevYrFact = bucketFact(prevYrBStart, prevYrBEnd);
+    return { planRev, factRev, foreRev, prevYrFact, prevMoFact, label };
+  };
+
+  if(periodMode === 'day'){
+    const lbl = today.toLocaleDateString('ru-RU', {weekday:'short', day:'numeric', month:'short', year:'numeric'});
+    const prev = new Date(today); prev.setDate(today.getDate()-7);   // тот же день недели предыдущей недели
+    const prevYr = new Date(today); prevYr.setFullYear(today.getFullYear()-1);
+    return periodOver(today, today, prev, prev, prevYr, prevYr, lbl);
   }
-
+  if(periodMode === 'week'){
+    const dow = now.getDay();
+    const wStart = new Date(now); wStart.setDate(now.getDate() - (dow===0?6:dow-1));
+    const wEnd   = new Date(wStart); wEnd.setDate(wStart.getDate()+6);
+    const pStart = new Date(wStart); pStart.setDate(wStart.getDate()-7);
+    const pEnd   = new Date(wEnd);   pEnd.setDate(wEnd.getDate()-7);
+    const yStart = new Date(wStart); yStart.setFullYear(wStart.getFullYear()-1);
+    const yEnd   = new Date(wEnd);   yEnd.setFullYear(wEnd.getFullYear()-1);
+    return periodOver(wStart, wEnd, pStart, pEnd, yStart, yEnd,
+      `Нед. ${wStart.getDate()}.${String(wStart.getMonth()+1).padStart(2,'0')}`);
+  }
+  if(periodMode === 'month'){
+    const bStart = new Date(yr, mo, 1), bEnd = new Date(yr, mo+1, 0);
+    const pMo = mo===0?11:mo-1, pYr = mo===0?yr-1:yr;
+    const pStart = new Date(pYr, pMo, 1), pEnd = new Date(pYr, pMo+1, 0);
+    const yStart = new Date(yr-1, mo, 1), yEnd = new Date(yr-1, mo+1, 0);
+    return periodOver(bStart, bEnd, pStart, pEnd, yStart, yEnd, `${MONTHS_RU[mo]} ${yr}`);
+  }
   if(periodMode === 'quarter'){
     const qStart = Math.floor(mo/3)*3;
-    let planRev=0, factRev=0, foreRev=0, prevYrFact=0, prevMoFact=0;
-    for(let m=qStart;m<qStart+3;m++){
-      planRev += buildMonthlyPlan(yr, m, HISTORY, customPlan);
-      factRev += getFactRevenue(yr, m);
-      const sc = getScen();
-      if(m===mo) foreRev = factRev + calcForecastRevenue(sc);
-    }
-    if(!foreRev) foreRev = factRev;
-    const prevQ = qStart===0?9:qStart-3;
-    const prevQYr = qStart===0?yr-1:yr;
-    for(let m=prevQ;m<prevQ+3;m++) prevMoFact += getFactRevenue(prevQYr, m);
-    for(let m=qStart;m<qStart+3;m++) prevYrFact += getFactRevenue(yr-1, m);
-    return { planRev, factRev, foreRev, prevYrFact, prevMoFact,
-      label: `Q${Math.floor(mo/3)+1} ${yr}` };
+    const bStart = new Date(yr, qStart, 1), bEnd = new Date(yr, qStart+3, 0);
+    const pq = qStart===0?9:qStart-3, pyr = qStart===0?yr-1:yr;
+    const pStart = new Date(pyr, pq, 1), pEnd = new Date(pyr, pq+3, 0);
+    const yStart = new Date(yr-1, qStart, 1), yEnd = new Date(yr-1, qStart+3, 0);
+    return periodOver(bStart, bEnd, pStart, pEnd, yStart, yEnd, `Q${Math.floor(mo/3)+1} ${yr}`);
   }
-
-  if(periodMode === 'year'){
-    let planRev=0, factRev=0, prevYrFact=0;
-    for(let m=0;m<12;m++){
-      planRev += buildMonthlyPlan(yr, m, HISTORY, customPlan);
-      factRev += getFactRevenue(yr, m);
-      prevYrFact += getFactRevenue(yr-1, m);
-    }
-    const sc = getScen();
-    const foreRev = factRev + calcForecastRevenue(sc);
-    return { planRev, factRev, foreRev, prevYrFact, prevMoFact: getFactRevenue(yr, mo===0?11:mo-1),
-      label: String(yr) };
-  }
-
-  // week
-  const dayOfWeek = now.getDay();
-  const weekStart = new Date(now); weekStart.setDate(now.getDate() - (dayOfWeek===0?6:dayOfWeek-1));
-  let planRev=0, factRev=0, foreRev=0;
-  for(let i=0;i<7;i++){
-    const d = new Date(weekStart); d.setDate(weekStart.getDate()+i);
-    const iso = d.toISOString().slice(0,10);
-    planRev += autoPlanDay(iso, HISTORY);
-    if(iso <= TODAY && byDate[iso]) factRev += byDate[iso].revenue;
-  }
-  foreRev = factRev + calcForecastRevenue(getScen())/4; // rough
-  return { planRev, factRev, foreRev, prevYrFact: planRev*0.88, prevMoFact: planRev*0.94,
-    label: `Нед. ${weekStart.toLocaleDateString('ru')}` };
+  // year
+  const bStart = new Date(yr, 0, 1), bEnd = new Date(yr, 11, 31);
+  const pStart = new Date(yr-1, 0, 1), pEnd = new Date(yr-1, 11, 31);
+  const yStart = new Date(yr-2, 0, 1), yEnd = new Date(yr-2, 11, 31);
+  return periodOver(bStart, bEnd, pStart, pEnd, yStart, yEnd, String(yr));
 }
 
 // ═══════════════════════════════════════════════
@@ -725,22 +724,70 @@ function renderDynGrid(){
 }
 
 // ═══════════════════════════════════════════════
-// MONTH BLOCK
+// PERIOD BLOCK (бывший MONTH BLOCK) — считает по текущему режиму
 // ═══════════════════════════════════════════════
-function renderMonthBlock(){
+function getCurrentPeriodBounds(){
   const now = new Date(TODAY);
   const yr = now.getFullYear(), mo = now.getMonth();
+  const MONTHS_RU = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  if(periodMode === 'day'){
+    const d = new Date(yr, mo, now.getDate());
+    return { bStart: d, bEnd: d, modeTitle: 'дня', modeUnit: 'час' };
+  }
+  if(periodMode === 'week'){
+    const dow = now.getDay();
+    const wStart = new Date(yr, mo, now.getDate() - (dow===0?6:dow-1));
+    const wEnd   = new Date(wStart); wEnd.setDate(wStart.getDate()+6);
+    return { bStart: wStart, bEnd: wEnd, modeTitle: 'недели', modeUnit: 'день' };
+  }
+  if(periodMode === 'month'){
+    return { bStart: new Date(yr, mo, 1), bEnd: new Date(yr, mo+1, 0), modeTitle: 'месяца', modeUnit: 'день' };
+  }
+  if(periodMode === 'quarter'){
+    const qs = Math.floor(mo/3)*3;
+    return { bStart: new Date(yr, qs, 1), bEnd: new Date(yr, qs+3, 0), modeTitle: 'квартала', modeUnit: 'день' };
+  }
+  return { bStart: new Date(yr, 0, 1), bEnd: new Date(yr, 11, 31), modeTitle: 'года', modeUnit: 'день' };
+}
+
+function renderMonthBlock(){
+  const today = new Date(TODAY);
   const sc = getScen();
-  const planRev = buildMonthlyPlan(yr, mo, HISTORY, customPlan);
-  const factRev = getFactRevenueUpToToday(yr, mo);
-  const foreRem = calcForecastRevenue(sc);
+  const { bStart, bEnd, modeTitle, modeUnit } = getCurrentPeriodBounds();
+
+  const titleEl = document.querySelector('.mblock-title');
+  if(titleEl) titleEl.textContent = '📅 Факт + прогноз ' + modeTitle;
+
+  // Подписи строк под текущий режим
+  const setRowName = (selector, text) => {
+    const els = document.querySelectorAll(selector);
+    els.forEach(el => { el.textContent = text; });
+  };
+  const planRowEls = document.querySelectorAll('.mblock .mrow .mrow-name');
+  if(planRowEls[0]) planRowEls[0].textContent = 'Факт выручка (прошедшие дни)';
+  if(planRowEls[1]) planRowEls[1].textContent = 'План ' + modeTitle;
+  if(planRowEls[2]) planRowEls[2].textContent = 'Остаток по сценарию';
+  if(planRowEls[3]) planRowEls[3].textContent = 'Итог ' + modeTitle + ' (факт + прогноз)';
+  if(planRowEls[4]) planRowEls[4].textContent = 'Темп к плану (PTD)';
+  if(planRowEls[5]) planRowEls[5].textContent = 'Сценарий / ' + modeUnit + ' (остаток)';
+  if(planRowEls[6]) planRowEls[6].textContent = 'План PTD';
+
+  const planRev = bucketPlan(bStart, bEnd);
+  const factRev = bucketFact(bStart, bEnd);
+  const foreRem = bucketForecast(bStart, bEnd, sc);
   const total = factRev + foreRem;
-  const daysRem = getDaysRemaining();
-  const daysPassed = now.getDate();
-  const daysTotal = daysInMonth(yr, mo);
-  // Plan MTD = plan * (days passed / total days)
-  const planMTD = Math.round(planRev * daysPassed / daysTotal);
-  const tempoPct = planMTD > 0 ? Math.min(factRev / planMTD * 100, 150) : 0;
+
+  // Дни в периоде / прошедшие / оставшиеся
+  const msDay = 86400000;
+  const daysTotal = Math.round((bEnd.getTime() - bStart.getTime())/msDay) + 1;
+  let daysPassed;
+  if(bEnd < today) daysPassed = daysTotal;
+  else if(bStart > today) daysPassed = 0;
+  else daysPassed = Math.min(daysTotal, Math.floor((today.getTime() - bStart.getTime())/msDay) + 1);
+  const daysRem = Math.max(0, daysTotal - daysPassed);
+
+  const planPTD = daysTotal>0 ? Math.round(planRev * daysPassed / daysTotal) : 0;
+  const tempoPct = planPTD > 0 ? Math.min(factRev / planPTD * 100, 150) : 0;
   const perDay = daysRem > 0 ? Math.round(foreRem / daysRem) : 0;
   const deltaTotal = total - planRev;
 
@@ -749,8 +796,8 @@ function renderMonthBlock(){
   set('m-rem', fmtM(foreRem), 'scen');
   set('m-total', fmtM(total) + (deltaTotal>=0?' ↑':' ↓'), deltaTotal>=0?'fore':'red');
   set('m-tempo', p1(tempoPct), tempoPct>=100?'fact':tempoPct>=90?'':'red');
-  set('m-perday', fmtM(perDay)+'/день', 'scen');
-  set('m-plan-mtd', fmtM(planMTD), 'plan');
+  set('m-perday', fmtM(perDay)+'/'+modeUnit, 'scen');
+  set('m-plan-mtd', fmtM(planPTD), 'plan');
 
   const bar = document.getElementById('m-tempo-bar');
   const pct = Math.min(tempoPct, 100);
@@ -765,85 +812,116 @@ function set(id, val, cls){
 }
 
 // ═══════════════════════════════════════════════
-// CHART
+// CHART — единое окно -3 мес / +6 мес от сегодня для всех режимов.
+// Группировка бакетов: day / week / month / quarter / year.
+// БЕЗ накопления: каждый бакет = выручка ровно в этом интервале
+// (план/факт/прогноз — суммы по дням бакета). Текущий бакет = факт + прогноз.
 // ═══════════════════════════════════════════════
+function getChartWindow(){
+  const now = new Date(TODAY);
+  const start = new Date(now.getFullYear(), now.getMonth()-3, 1); // 1-е число -3 мес
+  const end   = new Date(now.getFullYear(), now.getMonth()+6+1, 0); // последний день +6 мес
+  return { start, end };
+}
+
+// Сумма факта по дням бакета [bStart..bEnd] (включительно), только до TODAY.
+function bucketFact(bStart, bEnd){
+  let s = 0;
+  const start = bStart < new Date('2024-05-01') ? new Date('2024-05-01') : bStart;
+  const limit = bEnd > new Date(TODAY) ? new Date(TODAY) : bEnd;
+  for(let d = new Date(start); d <= limit; d.setDate(d.getDate()+1)){
+    const iso = d.toISOString().slice(0,10);
+    if(byDate[iso]) s += byDate[iso].revenue;
+  }
+  return s;
+}
+// Сумма автоплана по дням бакета.
+function bucketPlan(bStart, bEnd){
+  let s = 0;
+  for(let d = new Date(bStart); d <= bEnd; d.setDate(d.getDate()+1)){
+    const iso = d.toISOString().slice(0,10);
+    s += autoPlanDay(iso, HISTORY);
+  }
+  return s;
+}
+// Прогноз по сценарию для будущих дней бакета (после TODAY).
+function bucketForecast(bStart, bEnd, sc){
+  const today = new Date(TODAY);
+  if(bEnd <= today) return 0;
+  const startD = bStart > today ? new Date(bStart) : new Date(today.getTime()+86400000);
+  const menuEffect = 1 + (sc.star*0.35 + sc.plw*0.40 + sc.pzl*0.15 + sc.dog*0.10)/100;
+  const effAvg = sc.avg * menuEffect * (1 - sc.disc/100);
+  let total = 0;
+  for(let d = new Date(startD); d <= bEnd; d.setDate(d.getDate()+1)){
+    const dow = d.getDay();
+    const isWe = dow===0||dow===6;
+    const checks = isWe ? sc.wke : sc.wkd;
+    total += checks * effAvg;
+  }
+  return Math.round(total/500)*500;
+}
+
 function getChartBuckets(mode){
   const now = new Date(TODAY);
+  const today = new Date(TODAY);
   const MONTHS_RU = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
   const sc = getScen();
+  const { start: wStart, end: wEnd } = getChartWindow();
   const buckets = [];
 
-  if(mode === 'month'){
-    for(let i=-3;i<=6;i++){
-      const d = new Date(now.getFullYear(), now.getMonth()+i, 1);
-      const yr = d.getFullYear(), mo = d.getMonth();
-      const isCur = yr===now.getFullYear() && mo===now.getMonth();
-      const isFuture = i>0;
-      const plan = buildMonthlyPlan(yr, mo, HISTORY, customPlan);
-      let fact = 0, forecast = 0;
-      if(isCur){
-        fact = getFactRevenueUpToToday(yr, mo);
-        forecast = fact + calcForecastRevenue(sc);
-      } else if(!isFuture){
-        fact = getFactRevenue(yr, mo);
-      } else {
-        forecast = plan;
-      }
-      buckets.push({ label: MONTHS_RU[mo]+(mo===0?' '+yr:''), plan, fact, forecast, isCur, isFuture });
+  // Хелпер: сформировать бакет [bStart..bEnd] с учётом фактического окна.
+  const pushBucket = (bStart, bEnd, label) => {
+    const isCur = today >= bStart && today <= bEnd;
+    const isFuture = bStart > today;
+    const plan = bucketPlan(bStart, bEnd);
+    const fact = bucketFact(bStart, bEnd);
+    const forecast = isFuture
+      ? plan                                 // будущий бакет: целиком прогноз = автоплан
+      : (isCur ? fact + bucketForecast(bStart, bEnd, sc) : 0); // текущий: факт + остаток по сценарию
+    buckets.push({ label, plan, fact, forecast, isCur, isFuture });
+  };
+
+  if(mode === 'day'){
+    for(let d = new Date(wStart); d <= wEnd; d.setDate(d.getDate()+1)){
+      const day = new Date(d);
+      const lbl = day.getDate()+'.'+String(day.getMonth()+1).padStart(2,'0');
+      pushBucket(day, day, lbl);
     }
   } else if(mode === 'week'){
-    const dow = now.getDay();
-    const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() - (dow===0?6:dow-1));
-    weekStart.setHours(0,0,0,0);
-    for(let i=-3;i<=6;i++){
-      const wStart = new Date(weekStart);
-      wStart.setDate(weekStart.getDate() + i*7);
-      let plan=0, fact=0;
-      let allFuture=true, allPast=true;
-      for(let d=0;d<7;d++){
-        const day = new Date(wStart); day.setDate(wStart.getDate()+d);
-        const iso = day.toISOString().slice(0,10);
-        plan += autoPlanDay(iso, HISTORY);
-        if(iso <= TODAY){ allFuture = false; if(byDate[iso]) fact += byDate[iso].revenue; }
-        if(iso > TODAY) allPast = false;
-      }
-      const isCur = i===0;
-      const isFuture = allFuture;
-      const forecast = isFuture ? plan : (isCur ? fact + Math.round(calcForecastRevenue(sc)/4.3) : 0);
-      buckets.push({
-        label: wStart.getDate()+'.'+String(wStart.getMonth()+1).padStart(2,'0'),
-        plan, fact, forecast, isCur, isFuture
-      });
+    // Неделя ПН-ВС. Стартуем с понедельника, в котором лежит wStart.
+    const w0 = new Date(wStart);
+    const dow0 = w0.getDay();
+    w0.setDate(w0.getDate() - (dow0===0?6:dow0-1));
+    for(let s = new Date(w0); s <= wEnd; s.setDate(s.getDate()+7)){
+      const e = new Date(s); e.setDate(s.getDate()+6);
+      const lbl = s.getDate()+'.'+String(s.getMonth()+1).padStart(2,'0');
+      pushBucket(new Date(s), e, lbl);
+    }
+  } else if(mode === 'month'){
+    let cur = new Date(wStart.getFullYear(), wStart.getMonth(), 1);
+    while(cur <= wEnd){
+      const yr = cur.getFullYear(), mo = cur.getMonth();
+      const bStart = new Date(yr, mo, 1);
+      const bEnd   = new Date(yr, mo+1, 0);
+      const lbl = MONTHS_RU[mo] + (mo===0 || mo===wStart.getMonth() ? ' '+String(yr).slice(2) : '');
+      pushBucket(bStart, bEnd, lbl);
+      cur = new Date(yr, mo+1, 1);
     }
   } else if(mode === 'quarter'){
-    const curQ = Math.floor(now.getMonth()/3);
-    for(let i=-3;i<=6;i++){
-      const qDate = new Date(now.getFullYear(), curQ*3 + i*3, 1);
-      const qy = qDate.getFullYear(); const qm = qDate.getMonth();
+    let qy = wStart.getFullYear(), qm = Math.floor(wStart.getMonth()/3)*3;
+    while(true){
+      const bStart = new Date(qy, qm, 1);
+      const bEnd   = new Date(qy, qm+3, 0);
+      if(bStart > wEnd) break;
       const qNum = Math.floor(qm/3)+1;
-      let plan=0, fact=0;
-      for(let m=0;m<3;m++){
-        plan += buildMonthlyPlan(qy, qm+m, HISTORY, customPlan);
-        fact += getFactRevenue(qy, qm+m);
-      }
-      const isCur = i===0;
-      const isFuture = i>0;
-      const forecast = isFuture ? plan : (isCur ? getFactRevenueUpToToday(qy, now.getMonth()) + calcForecastRevenue(sc) + (fact - getFactRevenue(qy, now.getMonth())) : 0);
-      buckets.push({ label: 'Q'+qNum+' '+String(qy).slice(2), plan, fact: isCur?fact:fact, forecast, isCur, isFuture });
+      pushBucket(bStart, bEnd, 'Q'+qNum+' '+String(qy).slice(2));
+      qm += 3; if(qm>=12){ qm=0; qy++; }
     }
   } else { // year
-    for(let i=-3;i<=6;i++){
-      const yr = now.getFullYear()+i;
-      let plan=0, fact=0;
-      for(let m=0;m<12;m++){
-        plan += buildMonthlyPlan(yr, m, HISTORY, customPlan);
-        fact += getFactRevenue(yr, m);
-      }
-      const isCur = i===0;
-      const isFuture = i>0;
-      const forecast = isFuture ? plan : (isCur ? fact + calcForecastRevenue(sc) : 0);
-      buckets.push({ label: String(yr), plan, fact, forecast, isCur, isFuture });
+    for(let yr = wStart.getFullYear(); yr <= wEnd.getFullYear(); yr++){
+      const bStart = new Date(yr, 0, 1);
+      const bEnd   = new Date(yr, 11, 31);
+      pushBucket(bStart, bEnd, String(yr));
     }
   }
 
@@ -856,15 +934,11 @@ function renderChart(){
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
 
-  // chart title label
-  const lblMap = {
-    'month':'-3 месяца / +6 месяцев',
-    'week':'-3 недели / +6 недель',
-    'quarter':'-3 квартала / +6 кварталов',
-    'year':'-3 года / +6 лет'
-  };
+  // Окно одно и то же для всех режимов (-3 мес / +6 мес от сегодня),
+  // меняется только группировка бакетов.
+  const grpMap = { day:'по дням', week:'по неделям', month:'по месяцам', quarter:'по кварталам', year:'по годам' };
   const lblEl = document.getElementById('chart-period-lbl');
-  if(lblEl) lblEl.textContent = lblMap[periodMode] || '';
+  if(lblEl) lblEl.textContent = '-3 мес / +6 мес · ' + (grpMap[periodMode] || 'по месяцам');
 
   const buckets = getChartBuckets(periodMode);
   const allVals = [];
@@ -903,10 +977,15 @@ function renderChart(){
     { key:'fact',     color:'rgba(46,204,113,0.85)',  border:'rgba(46,204,113,1)' },
     { key:'forecast', color:'rgba(79,142,247,0.85)',  border:'rgba(79,142,247,1)' },
   ];
-  const innerPad = groupW * 0.12;        // отступ между группами
+  // Плотность зависит от количества бакетов: для day/week групповая ширина
+  // мала → стираем границу столбцов и подписи, чтобы не было визуального шума.
+  const dense = buckets.length > 30;
+  const innerPad = groupW * (dense ? 0.05 : 0.12);
   const innerW = groupW - innerPad*2;
-  const barW = innerW / 3 * 0.92;        // зазор между столбиками внутри группы
+  const barW = innerW / 3 * (dense ? 0.98 : 0.92);
   const barGap = (innerW - barW*3) / 2;
+  // Шаг подписей (значение и x-метки) для плотных режимов.
+  const labelStep = dense ? Math.ceil(buckets.length / 14) : 1;
 
   buckets.forEach((b,i)=>{
     const x0 = PAD.l + i*groupW + innerPad;
@@ -918,14 +997,18 @@ function renderChart(){
       const bH = (PAD.t + cH) - y;
       ctx.fillStyle = s.color;
       ctx.fillRect(x, y, barW, bH);
-      ctx.strokeStyle = s.border; ctx.lineWidth = 1;
-      ctx.strokeRect(x+0.5, y+0.5, barW-1, bH-1);
+      if(!dense){
+        ctx.strokeStyle = s.border; ctx.lineWidth = 1;
+        ctx.strokeRect(x+0.5, y+0.5, barW-1, bH-1);
+      }
 
-      // value label над столбиком
-      ctx.fillStyle = '#e8eaf0';
-      ctx.font = 'bold 9px Segoe UI';
-      ctx.textAlign = 'center';
-      ctx.fillText(fmtS(v), x + barW/2, y - 3);
+      // Подписи значений только в нормальной плотности.
+      if(!dense){
+        ctx.fillStyle = '#e8eaf0';
+        ctx.font = 'bold 9px Segoe UI';
+        ctx.textAlign = 'center';
+        ctx.fillText(fmtS(v), x + barW/2, y - 3);
+      }
     });
   });
 
@@ -939,9 +1022,12 @@ function renderChart(){
     ctx.fillText('сейчас', tx, PAD.t+8);
   }
 
-  // x labels
+  // x labels — для плотных режимов через шаг, чтобы не накладывались.
   ctx.fillStyle='rgba(136,144,168,.85)'; ctx.font='10px Segoe UI'; ctx.textAlign='center';
-  buckets.forEach((b,i)=>{ ctx.fillText(b.label, toX(i), H2-4); });
+  buckets.forEach((b,i)=>{
+    if(i % labelStep !== 0 && i !== buckets.length-1 && !b.isCur) return;
+    ctx.fillText(b.label, toX(i), H2-4);
+  });
 }
 
 // ═══════════════════════════════════════════════
@@ -1125,7 +1211,7 @@ function updateScen(){
 
 function setPeriod(mode){
   periodMode = mode;
-  document.querySelectorAll('.pbtn').forEach(b=>b.classList.toggle('active', b.textContent.toLowerCase()===({'week':'неделя','month':'месяц','quarter':'квартал','year':'год'}[mode])));
+  document.querySelectorAll('.pbtn').forEach(b=>b.classList.toggle('active', b.textContent.toLowerCase()===({'day':'день','week':'неделя','month':'месяц','quarter':'квартал','year':'год'}[mode])));
   renderAll();
 }
 

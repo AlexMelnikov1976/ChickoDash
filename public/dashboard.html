@@ -30,8 +30,12 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
 #p-owner-pnl .op-dyn-up{background:rgba(46,204,113,.15);color:var(--op-fact)}
 #p-owner-pnl .op-dyn-dn{background:rgba(231,76,60,.15);color:var(--op-red)}
 #p-owner-pnl .op-dyn-eq{background:rgba(79,142,247,.1);color:var(--op-fore)}
-#p-owner-pnl .op-mblock{background:var(--op-bg3);border:1px solid var(--op-border);border-radius:var(--op-r);padding:12px;margin-bottom:14px}
-#p-owner-pnl .op-mblock-title{font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--op-muted);margin-bottom:10px}
+#p-owner-pnl .op-mblock{background:var(--op-bg3);border:1px solid var(--op-border);border-radius:var(--op-r);padding:12px;margin-bottom:14px;overflow:visible}
+#p-owner-pnl .op-mblock-title{font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--op-muted);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+#p-owner-pnl .op-info-btn{width:14px;height:14px;border-radius:50%;background:rgba(79,142,247,.2);color:var(--op-fore);font-size:9px;font-weight:900;cursor:default;position:relative;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;letter-spacing:0;text-transform:none}
+#p-owner-pnl .op-info-tip{display:none;position:absolute;left:0;top:14px;z-index:200;background:#1a1d27;border:1px solid var(--op-border);border-radius:7px;padding:10px 12px;width:260px;font-size:10px;line-height:1.65;color:#c8d0e0;font-weight:400;letter-spacing:0;text-transform:none;pointer-events:none;box-shadow:0 4px 20px rgba(0,0,0,.5)}
+#p-owner-pnl .op-info-tip b{color:var(--op-fore)}
+#p-owner-pnl .op-info-btn:hover .op-info-tip{display:block}
 #p-owner-pnl .op-mrow{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(46,52,80,.4)}
 #p-owner-pnl .op-mrow:last-child{border-bottom:none}
 #p-owner-pnl .op-mrow-name{font-size:11px;color:var(--op-muted)}
@@ -781,7 +785,9 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
       <!-- LEFT -->
       <div class="op-left">
         <div class="op-mblock">
-          <div class="op-mblock-title">📅 Факт + прогноз месяца</div>
+          <div class="op-mblock-title">📅 Факт + прогноз месяца
+            <span class="op-info-btn">i<span class="op-info-tip"><b>Факт + прогноз месяца</b> — итог текущего месяца.<br><br>• <b>Факт</b> — сумма реальной выручки за прошедшие дни месяца из ClickHouse.<br>• <b>Остаток по сценарию</b> — оставшиеся дни × плановый день, скорректированный ползунками (чеки, средний чек, скидки).<br>• <b>Итог</b> = Факт + Остаток по сценарию.<br>• <b>Темп к плану (PTD)</b> = Факт / (Plan × дней прошло / дней в месяце).</span></span>
+          </div>
           <div class="op-mrow">
             <span class="op-mrow-name">Факт выручка (прошедшие дни)</span>
             <span class="op-mrow-val fact" id="op-m-fact">—</span>
@@ -832,7 +838,7 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
           </div>
           <div class="op-sl">
             <div class="op-sl-lbl"><span class="op-sl-name">Средний чек, ₽</span><span class="op-sl-val" id="op-sv-avg">660 ₽</span></div>
-            <input type="range" id="op-ss-avg" min="400" max="1200" step="10" value="660" oninput="ownerPnl_updateScen()">
+            <input type="range" id="op-ss-avg" min="400" max="3000" step="10" value="1400" oninput="ownerPnl_updateScen()">
           </div>
           <div class="op-sl">
             <div class="op-sl-lbl"><span class="op-sl-name">Скидки, %</span><span class="op-sl-val" id="op-sv-disc">3%</span></div>
@@ -889,6 +895,7 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
               <div class="op-leg-item"><div class="op-leg-line" style="background:#e67e22"></div>План</div>
               <div class="op-leg-item"><div class="op-leg-line" style="background:#2ecc71"></div>Факт</div>
               <div class="op-leg-item"><div class="op-leg-line" style="background:#4f8ef7"></div>Прогноз</div>
+              <div class="op-leg-item"><div class="op-leg-line" style="background:repeating-linear-gradient(90deg,#9664dc 0,#9664dc 4px,transparent 4px,transparent 8px)"></div>Сценарий</div>
             </div>
           </div>
           <canvas id="op-chart" height="200"></canvas>

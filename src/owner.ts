@@ -29,21 +29,24 @@ import type { Env } from './index';
 // добавим параметр.
 const KALININGRAD_DEPT_ID = 42;
 
-// Дефолты постоянных затрат — берутся из УпрЧико на момент запуска раздела.
-// Пользователь может их перезаписать через POST /api/owner/costs.
+// Фиксированная ЗП управляющего — из УпрЧико (оклад + управленческий фикс).
+// Не зависит от выручки, начисляется каждый месяц.
+const MGT_SALARY = 657500;
+
+// Нормативы из УпрЧико (Лист1 + Var/Калининград).
+// Пользователь может перезаписать через POST /api/owner/costs.
 const DEFAULT_COSTS = {
-  rent: 200000,
-  utilities: 50000,
-  staffFixed: 250000,
-  mgmtFixed: 120000,
-  salaryTax: 16,
-  foodcost: 32,
-  franchise: 4,
-  writeoff: 1.5,
-  hozy: 1,
-  acquiring: 1.5,
-  deliveryShare: 15,
-  deliveryCost: 33,
+  rent: 650000,       // Аренда (Лист1)
+  utilities: 50000,   // Коммунальные (оценка)
+  mgtSalary: MGT_SALARY, // ЗП упр фикс (Лист1)
+  salaryTax: 16,      // Налог с ФОТ % (Лист1)
+  foodcost: 22.5,     // Фудкост % (Лист1, факт инициализируется из CH)
+  franchise: 5.0,     // Франшиза % (Лист1)
+  writeoff: 2.3,      // Списание % (Лист1)
+  hozy: 4.0,          // Хозрасходы % (Лист1)
+  acquiring: 1.9,     // Эквайринг % (Var/Калининград)
+  deliveryCost: 31.44,// Доставка % от выручки доставки (Лист1)
+  usn: 15,            // УСН % (Лист1)
 };
 
 function jsonResponse(body: unknown, request: Request, status: number = 200): Response {
@@ -115,7 +118,7 @@ export async function handleOwnerHistory(request: Request, env: Env): Promise<Re
 
     const ch = makeClient(env);
 
-    const sql = `
+    const sqlDaily = `
       SELECT
         toString(report_date)              AS date,
         toFloat64(revenue_total_rub)       AS revenue,
@@ -133,8 +136,46 @@ export async function handleOwnerHistory(request: Request, env: Env): Promise<Re
       SETTINGS max_execution_time=30
     `;
 
-    const result = await ch.query(sql);
-    const rows = result.data as Array<Record<string, unknown>>;
+    // Месячный ФОТ персонала из ЧикоВремя (db1 — однорестораные таблицы Калининград).
+    const sqlFot = `
+      SELECT
+        toString(toStartOfMonth(toDate(\`Дата\`))) AS month,
+        SUM(toFloat64(\`Начислено\`))              AS fotPersonnel
+      FROM db1.\`ЧикоВремя\`
+      WHERE toDate(\`Дата\`) >= '2024-05-01'
+        AND \`Имя\` IS NOT NULL AND \`Имя\` != ''
+        AND \`Имя\` NOT LIKE '%iiko%'
+      GROUP BY month
+      ORDER BY month ASC
+      SETTINGS max_execution_time=30
+    `;
+
+    // Месячные агрегаты по выручке и фудкосту из mart.
+    const sqlMonthly = `
+      SELECT
+        toString(toStartOfMonth(report_date)) AS month,
+        SUM(toFloat64(revenue_total_rub))     AS revenue,
+        avgWeighted(
+          toFloat64(foodcost_total_pct),
+          toFloat64(revenue_total_rub)
+        )                                     AS foodcostPct,
+        SUM(toFloat64(revenue_delivery_rub))  AS revenueDelivery
+      FROM chicko.mart_restaurant_daily_base
+      WHERE dept_id = ${KALININGRAD_DEPT_ID}
+        AND report_date >= '2024-05-01'
+        AND revenue_total_rub > 0
+      GROUP BY month
+      ORDER BY month ASC
+      SETTINGS max_execution_time=30
+    `;
+
+    const [dailyResult, fotResult, monthlyResult] = await Promise.all([
+      ch.query(sqlDaily),
+      ch.query(sqlFot).catch(() => ({ data: [] })),
+      ch.query(sqlMonthly),
+    ]);
+
+    const rows = dailyResult.data as Array<Record<string, unknown>>;
 
     const toNum = (v: unknown): number => {
       if (v === null || v === undefined) return 0;
@@ -158,11 +199,48 @@ export async function handleOwnerHistory(request: Request, env: Env): Promise<Re
       };
     });
 
+    // Объединяем monthly mart + ФОТ по ключу month.
+    const fotByMonth: Record<string, number> = {};
+    (fotResult.data as Array<Record<string, unknown>>).forEach(r => {
+      fotByMonth[String(r.month)] = Math.round(toNum(r.fotPersonnel));
+    });
+
+    const monthly = (monthlyResult.data as Array<Record<string, unknown>>).map(r => {
+      const month = String(r.month);
+      const revenue = Math.round(toNum(r.revenue));
+      const fotPersonnel = fotByMonth[month] ?? 0;
+      const fotTotal = fotPersonnel + MGT_SALARY;
+      const fotPct = revenue > 0 ? +(fotTotal / revenue * 100).toFixed(1) : 0;
+      return {
+        month,
+        revenue,
+        revenueDelivery: Math.round(toNum(r.revenueDelivery)),
+        foodcostPct: +toNum(r.foodcostPct).toFixed(1),
+        fotPersonnel,
+        fotTotal,
+        fotPct,
+      };
+    });
+
+    // sliderDefaults — последний полный месяц для инициализации слайдеров.
+    // "Полный" = не текущий месяц (данные могут быть частичными).
+    const today = new Date();
+    const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+    const completedMonths = monthly.filter(m => m.month < currentMonth && m.revenue > 0);
+    const lastComplete = completedMonths.length > 0 ? completedMonths[completedMonths.length - 1] : null;
+
+    const sliderDefaults = lastComplete
+      ? { foodcostPct: lastComplete.foodcostPct, fotPct: lastComplete.fotPct, month: lastComplete.month }
+      : { foodcostPct: DEFAULT_COSTS.foodcost, fotPct: 18, month: null };
+
     return jsonResponse({
       dept_id: KALININGRAD_DEPT_ID,
       city: 'Калининград',
       rows: data.length,
       data,
+      monthly,
+      sliderDefaults,
+      mgtSalary: MGT_SALARY,
       generated_at: new Date().toISOString(),
     }, request);
   } catch (error) {

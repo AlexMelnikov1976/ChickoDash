@@ -6271,10 +6271,11 @@ let OP_HISTORY = [];
 let OP_byDate  = {};
 let OP_INITIALIZED = false;
 let OP_NORMS = {
-  foodcost:32, franchise:4, writeoff:1.5, hozy:1, acquiring:1.5,
-  deliveryShare:15, deliveryCost:33, staffFixed:250000, mgmtFixed:120000,
-  salaryTax:16, rent:200000, utilities:50000
+  foodcost:22.5, franchise:5.0, writeoff:2.3, hozy:4.0, acquiring:1.9,
+  deliveryCost:31.44, mgtSalary:657500, salaryTax:16,
+  rent:650000, utilities:50000, usn:15
 };
+let OP_SLIDER_DEFAULTS = { foodcostPct: 22.5, fotPct: 18, wkd: 120, wke: 150, avg: 1400, disc: 3 };
 let OP_periodMode = 'month';
 let OP_customPlan = JSON.parse(localStorage.getItem('chiko_owner_custom_plan')||'{}');
 
@@ -6357,19 +6358,58 @@ function ownerPnl_autoPlanDay(iso) {
   return Math.round(median * trend * (OP_SEASONAL[m]/avgSeas) / 500)*500;
 }
 
+// ── Forecast base: Method A (DOW медианы текущего месяца, как в Обзоре) ──
+function ownerPnl_medArr(arr){
+  if(!arr.length)return 0;
+  const s=[...arr].sort((a,b)=>a-b),m=Math.floor(s.length/2);
+  return s.length%2?s[m]:(s[m-1]+s[m])/2;
+}
+function ownerPnl_forecastDayBase(iso){
+  const localISO=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const now=new Date(),todayISO=localISO(now);
+  const fd=new Date(iso+'T00:00:00'),dow=fd.getDay(),yr=fd.getFullYear(),mo=fd.getMonth();
+  // Method A: медианы DOW текущего месяца (≥7 дней)
+  const curMonth=OP_HISTORY.filter(h=>{const d=new Date(h.date);return d.getFullYear()===yr&&d.getMonth()===mo&&h.date<todayISO;});
+  if(curMonth.length>=7){
+    const dowRevs=curMonth.filter(h=>new Date(h.date).getDay()===dow).map(h=>h.revenue);
+    if(dowRevs.length>0)return ownerPnl_medArr(dowRevs);
+  }
+  // Fallback: autoPlanDay (DOW медианы всей истории + тренд + сезонность)
+  return ownerPnl_autoPlanDay(iso);
+}
+// Вычисляет медианы чеков/ср.чека из текущего месяца → дефолты слайдеров
+function ownerPnl_computeSliderDefaults(){
+  const localISO=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const now=new Date(),todayISO=localISO(now),yr=now.getFullYear(),mo=now.getMonth();
+  const cur=OP_HISTORY.filter(h=>{const d=new Date(h.date);return d.getFullYear()===yr&&d.getMonth()===mo&&h.date<todayISO;});
+  if(!cur.length)return;
+  const wkd=cur.filter(h=>{const d=new Date(h.date).getDay();return d>=1&&d<=5;});
+  const wke=cur.filter(h=>{const d=new Date(h.date).getDay();return d===0||d===6;});
+  if(wkd.length)OP_SLIDER_DEFAULTS.wkd=Math.round(ownerPnl_medArr(wkd.map(h=>h.checks)))||OP_SLIDER_DEFAULTS.wkd;
+  if(wke.length)OP_SLIDER_DEFAULTS.wke=Math.round(ownerPnl_medArr(wke.map(h=>h.checks)))||OP_SLIDER_DEFAULTS.wke;
+  if(cur.length)OP_SLIDER_DEFAULTS.avg=Math.round(ownerPnl_medArr(cur.map(h=>h.avgCheck)))||OP_SLIDER_DEFAULTS.avg;
+  if(cur.length)OP_SLIDER_DEFAULTS.disc=+ownerPnl_medArr(cur.map(h=>h.discPct)).toFixed(1)||OP_SLIDER_DEFAULTS.disc;
+}
+
 // ── P&L calculation ─────────────────────────────────
 function ownerPnl_calcPnL(revenue, norms) {
   const n = {...OP_NORMS, ...norms};
-  const delRev=revenue*n.deliveryShare/100, fc=revenue*n.foodcost/100,
+  const delRev=revenue*(n.deliveryShare||0)/100, fc=revenue*n.foodcost/100,
         fr=revenue*n.franchise/100, wo=revenue*n.writeoff/100,
         hz=revenue*n.hozy/100, aq=revenue*n.acquiring/100,
         dc=delRev*n.deliveryCost/100;
   const varC=fc+fr+wo+hz+aq+dc, grossP=revenue-varC;
-  const staffTotal=n.staffFixed+n.mgmtFixed, stax=staffTotal*n.salaryTax/100,
+  // fotPct из API = полный ФОТ % (персонал + управляющий 657500 включён).
+  // staffTotal = revenue * fotPct% — без повторного прибавления mgtSalary.
+  const mgtSalary=n.mgtSalary||657500;
+  const staffTotal=revenue*(n.fotPct||OP_SLIDER_DEFAULTS.fotPct)/100;
+  const fotPersonnel=Math.max(0,staffTotal-mgtSalary);
+  const stax=staffTotal*n.salaryTax/100,
         staffC=staffTotal+stax, ebitda=grossP-staffC;
   const fixedC=n.rent+n.utilities, opP=ebitda-fixedC;
-  const minTax=revenue*0.01, usn=opP>0?Math.max(opP*0.15,minTax):minTax;
-  return {revenue,delRev,fc,fr,wo,hz,aq,dc,varC,grossP,staffTotal,stax,staffC,ebitda,rent:n.rent,utilities:n.utilities,fixedC,opP,usn,net:opP-usn};
+  const usnRate=(n.usn||15)/100, minTax=revenue*0.01;
+  const usn=opP>0?Math.max(opP*usnRate,minTax):minTax;
+  return {revenue,delRev,fc,fr,wo,hz,aq,dc,varC,grossP,fotPersonnel,mgtSalary,staffTotal,stax,staffC,ebitda,rent:n.rent,utilities:n.utilities,fixedC,opP,usn,net:opP-usn};
 }
 
 // ── Scenario ────────────────────────────────────────
@@ -6414,11 +6454,19 @@ function ownerPnl_calcForecastRevenue(sc) {
 
 // ── Bucket helpers ───────────────────────────────────
 function ownerPnl_bucketFact(bStart, bEnd) {
+  // Факт — только полные дни до вчера включительно (как в Обзоре).
+  // ISO-даты локальные (без UTC-сдвига) чтобы совпадать с ключами OP_byDate.
+  const localISO=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const now=new Date(), todayISO=localISO(now);
+  const yest=new Date(now);yest.setDate(now.getDate()-1);
+  const yesterdayISO=localISO(yest);
+  // OP_TODAY = последняя дата в истории. Если это сегодня — данные неполные, берём вчера.
+  const cutoff=OP_TODAY>=todayISO?yesterdayISO:OP_TODAY;
+  const startISO=localISO(new Date(bStart))<'2024-05-01'?'2024-05-01':localISO(new Date(bStart));
+  const endISO=localISO(new Date(bEnd))<cutoff?localISO(new Date(bEnd)):cutoff;
   let s=0;
-  const start=bStart<new Date('2024-05-01')?new Date('2024-05-01'):new Date(bStart);
-  const limit=bEnd>new Date(OP_TODAY)?new Date(OP_TODAY):new Date(bEnd);
-  for(let d=new Date(start);d<=limit;d.setDate(d.getDate()+1)){
-    const iso=d.toISOString().slice(0,10);
+  for(let d=new Date(startISO);localISO(d)<=endISO;d.setDate(d.getDate()+1)){
+    const iso=localISO(d);
     if(OP_byDate[iso]) s+=OP_byDate[iso].revenue;
   }
   return s;
@@ -6430,15 +6478,23 @@ function ownerPnl_bucketPlan(bStart, bEnd) {
   return s;
 }
 function ownerPnl_bucketForecast(bStart, bEnd, sc) {
-  const today=new Date(OP_TODAY);
-  if(bEnd<=today) return 0;
-  const startD=bStart>today?new Date(bStart):new Date(today.getTime()+86400000);
+  const localISO=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const now=new Date(),todayISO=localISO(now);
+  if(localISO(new Date(bEnd))<todayISO) return 0;
+  const startD=localISO(new Date(bStart))>=todayISO?new Date(bStart):new Date(now.getFullYear(),now.getMonth(),now.getDate());
   const menuEffect=1+(sc.star*0.35+sc.plw*0.40+sc.pzl*0.15+sc.dog*0.10)/100;
-  const effAvg=sc.avg*menuEffect*(1-sc.disc/100);
+  // Множители слайдеров относительно исторических медиан.
+  // При дефолтных значениях = 1 → прогноз совпадает с Обзором (DOW медианы месяца).
+  const medWkd=OP_SLIDER_DEFAULTS.wkd||1,medWke=OP_SLIDER_DEFAULTS.wke||1;
+  const medAvg=OP_SLIDER_DEFAULTS.avg||1,medDisc=OP_SLIDER_DEFAULTS.disc||3;
   let total=0;
-  for(let d=new Date(startD);d<=bEnd;d.setDate(d.getDate()+1)){
-    const dow=d.getDay(),isWe=dow===0||dow===6;
-    total+=(isWe?sc.wke:sc.wkd)*effAvg;
+  for(let d=new Date(startD);localISO(d)<=localISO(new Date(bEnd));d.setDate(d.getDate()+1)){
+    const iso=localISO(d),dow=d.getDay(),isWe=dow===0||dow===6;
+    const baseRev=ownerPnl_forecastDayBase(iso);
+    const chkRatio=(isWe?sc.wke:sc.wkd)/(isWe?medWke:medWkd);
+    const avgRatio=sc.avg/medAvg;
+    const discRatio=(1-sc.disc/100)/(1-medDisc/100);
+    total+=baseRev*chkRatio*avgRatio*discRatio*menuEffect;
   }
   return Math.round(total/500)*500;
 }
@@ -6509,9 +6565,7 @@ function ownerPnl_setEl(id,val,cls){
 // ── Render KPIs ──────────────────────────────────────
 function ownerPnl_renderKPIs() {
   const pd=ownerPnl_getPeriodData(), sc=ownerPnl_getScen();
-  const fn={...OP_NORMS,foodcost:sc.foodcost,deliveryShare:sc.del,
-            staffFixed:Math.round(pd.foreRev*sc.fotPct/100*0.65),
-            mgmtFixed:Math.round(pd.foreRev*sc.fotPct/100*0.35)};
+  const fn={...OP_NORMS,foodcost:sc.foodcost,deliveryShare:sc.del,fotPct:sc.fotPct};
   const P=ownerPnl_calcPnL(pd.planRev,{}), F=ownerPnl_calcPnL(pd.foreRev,fn);
   const dRev=pd.foreRev-pd.planRev;
   const yoy=pd.prevYrFact>0?(pd.foreRev/pd.prevYrFact-1)*100:0;
@@ -6547,7 +6601,7 @@ function ownerPnl_renderMonthBlock() {
   const today=new Date(OP_TODAY), sc=ownerPnl_getScen();
   const{bStart,bEnd,modeTitle,modeUnit}=ownerPnl_getCurrentPeriodBounds();
   const titleEl=document.querySelector('#p-owner-pnl .op-mblock-title');
-  if(titleEl)titleEl.textContent='📅 Факт + прогноз '+modeTitle;
+  if(titleEl){const infoBtn=titleEl.querySelector('.op-info-btn');titleEl.textContent='📅 Факт + прогноз '+modeTitle;if(infoBtn)titleEl.appendChild(infoBtn);}
   const rows=document.querySelectorAll('#p-owner-pnl .op-mrow .op-mrow-name');
   const labels=['Факт выручка (прошедшие дни)','План '+modeTitle,'Остаток по сценарию','Итог '+modeTitle+' (факт + прогноз)',null,'Сценарий / '+modeUnit+' (остаток)','План PTD'];
   labels.forEach((lbl,i)=>{if(lbl&&rows[i])rows[i].textContent=lbl;});
@@ -6582,7 +6636,8 @@ function ownerPnl_getChartBuckets() {
     const isCur=today>=bS&&today<=bE, isFuture=bS>today;
     const plan=ownerPnl_bucketPlan(bS,bE), fact=ownerPnl_bucketFact(bS,bE);
     const forecast=isFuture?plan:isCur?fact+ownerPnl_bucketForecast(bS,bE,sc):0;
-    buckets.push({label:lbl,plan,fact,forecast,isCur,isFuture});
+    const scenFull=isFuture?ownerPnl_bucketForecast(bS,bE,sc):isCur?fact+ownerPnl_bucketForecast(bS,bE,sc):0;
+    buckets.push({label:lbl,plan,fact,forecast,scenFull,isCur,isFuture});
   };
   if(mode==='day'){for(let d=new Date(wStart);d<=wEnd;d.setDate(d.getDate()+1)){const day=new Date(d);push(day,day,day.getDate()+'.'+String(day.getMonth()+1).padStart(2,'0'));}}
   else if(mode==='week'){const w0=new Date(wStart);const dw=w0.getDay();w0.setDate(w0.getDate()-(dw===0?6:dw-1));for(let s=new Date(w0);s<=wEnd;s.setDate(s.getDate()+7)){const e=new Date(s);e.setDate(s.getDate()+6);push(new Date(s),e,s.getDate()+'.'+String(s.getMonth()+1).padStart(2,'0'));}}
@@ -6601,7 +6656,7 @@ function ownerPnl_renderChart() {
   const lblEl=document.getElementById('op-chart-period-lbl');
   if(lblEl)lblEl.textContent='-3 мес / +6 мес · '+(gmap[OP_periodMode]||'по месяцам');
   const buckets=ownerPnl_getChartBuckets();
-  const allVals=[];buckets.forEach(b=>{allVals.push(b.plan,b.fact,b.forecast);});
+  const allVals=[];buckets.forEach(b=>{allVals.push(b.plan,b.fact,b.forecast,b.scenFull);});
   const maxV=Math.max(...allVals.filter(v=>v>0))*1.18||1;
   const PAD={t:14,b:32,l:54,r:10},cH=H2-PAD.t-PAD.b,groupW=(W-PAD.l-PAD.r)/buckets.length;
   const toY=v=>PAD.t+cH-(v/maxV)*cH, toX=i=>PAD.l+i*groupW+groupW/2;
@@ -6609,13 +6664,28 @@ function ownerPnl_renderChart() {
   ctx.strokeStyle='rgba(46,52,80,.5)';ctx.lineWidth=1;
   [0.25,0.5,0.75,1].forEach(f=>{const y=PAD.t+cH*(1-f);ctx.beginPath();ctx.moveTo(PAD.l,y);ctx.lineTo(W-PAD.r,y);ctx.stroke();ctx.fillStyle='rgba(136,144,168,.5)';ctx.font='9px Segoe UI';ctx.textAlign='right';ctx.fillText(ownerPnl_fmtS(maxV*f),PAD.l-4,y+3);});
   ctx.strokeStyle='rgba(46,52,80,.9)';ctx.beginPath();ctx.moveTo(PAD.l,PAD.t+cH);ctx.lineTo(W-PAD.r,PAD.t+cH);ctx.stroke();
-  const series=[{key:'plan',color:'rgba(230,126,34,0.85)',border:'rgba(230,126,34,1)'},{key:'fact',color:'rgba(46,204,113,0.85)',border:'rgba(46,204,113,1)'},{key:'forecast',color:'rgba(79,142,247,0.85)',border:'rgba(79,142,247,1)'}];
-  const dense=buckets.length>30, innerPad=groupW*(dense?0.05:0.12), innerW=groupW-innerPad*2;
-  const barW=innerW/3*(dense?0.98:0.92), barGap=(innerW-barW*3)/2;
+  const series=[{key:'plan',color:'rgba(230,126,34,0.85)',border:'rgba(230,126,34,1)',hatched:false},{key:'fact',color:'rgba(46,204,113,0.85)',border:'rgba(46,204,113,1)',hatched:false},{key:'forecast',color:'rgba(79,142,247,0.85)',border:'rgba(79,142,247,1)',hatched:false},{key:'scenFull',color:'rgba(150,100,220,0.25)',border:'rgba(150,100,220,0.9)',hatched:true}];
+  const dense=buckets.length>30, innerPad=groupW*(dense?0.05:0.10), innerW=groupW-innerPad*2;
+  const barW=innerW/4*(dense?0.98:0.90), barGap=(innerW-barW*4)/3;
   const labelStep=dense?Math.ceil(buckets.length/14):1;
   buckets.forEach((b,i)=>{
     const x0=PAD.l+i*groupW+innerPad;
-    series.forEach((s,si)=>{const v=b[s.key];if(!(v>0))return;const x=x0+si*(barW+barGap),y=toY(v),bH=(PAD.t+cH)-y;ctx.fillStyle=s.color;ctx.fillRect(x,y,barW,bH);if(!dense){ctx.strokeStyle=s.border;ctx.lineWidth=1;ctx.strokeRect(x+.5,y+.5,barW-1,bH-1);ctx.fillStyle='#e8eaf0';ctx.font='bold 9px Segoe UI';ctx.textAlign='center';ctx.fillText(ownerPnl_fmtS(v),x+barW/2,y-3);}});
+    series.forEach((s,si)=>{
+      const v=b[s.key];if(!(v>0))return;
+      const x=x0+si*(barW+barGap),y=toY(v),bH=(PAD.t+cH)-y;
+      if(s.hatched){
+        ctx.fillStyle=s.color;ctx.fillRect(x,y,barW,bH);
+        ctx.save();ctx.beginPath();ctx.rect(x,y,barW,bH);ctx.clip();
+        ctx.strokeStyle=s.border;ctx.lineWidth=1;
+        for(let d=-bH;d<barW+bH;d+=5){ctx.beginPath();ctx.moveTo(x+d,y);ctx.lineTo(x+d+bH,y+bH);ctx.stroke();}
+        ctx.restore();
+        ctx.save();ctx.strokeStyle=s.border;ctx.lineWidth=1.5;ctx.setLineDash([3,3]);
+        ctx.strokeRect(x+.5,y+.5,barW-1,bH-1);ctx.setLineDash([]);ctx.restore();
+      } else {
+        ctx.fillStyle=s.color;ctx.fillRect(x,y,barW,bH);
+        if(!dense){ctx.strokeStyle=s.border;ctx.lineWidth=1;ctx.strokeRect(x+.5,y+.5,barW-1,bH-1);ctx.fillStyle='#e8eaf0';ctx.font='bold 9px Segoe UI';ctx.textAlign='center';ctx.fillText(ownerPnl_fmtS(v),x+barW/2,y-3);}
+      }
+    });
   });
   const ci=buckets.findIndex(b=>b.isCur);if(ci>=0){const tx=toX(ci);ctx.beginPath();ctx.strokeStyle='rgba(241,196,15,.6)';ctx.lineWidth=1;ctx.setLineDash([3,3]);ctx.moveTo(tx,PAD.t);ctx.lineTo(tx,PAD.t+cH);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='rgba(241,196,15,.85)';ctx.font='bold 9px Segoe UI';ctx.textAlign='center';ctx.fillText('сейчас',tx,PAD.t+8);}
   ctx.fillStyle='rgba(136,144,168,.85)';ctx.font='10px Segoe UI';ctx.textAlign='center';
@@ -6625,7 +6695,7 @@ function ownerPnl_renderChart() {
 // ── Render P&L table ─────────────────────────────────
 function ownerPnl_renderPnL() {
   const pd=ownerPnl_getPeriodData(), sc=ownerPnl_getScen();
-  const fn={...OP_NORMS,foodcost:sc.foodcost,deliveryShare:sc.del,staffFixed:Math.round(pd.foreRev*sc.fotPct/100*0.65),mgmtFixed:Math.round(pd.foreRev*sc.fotPct/100*0.35)};
+  const fn={...OP_NORMS,foodcost:sc.foodcost,deliveryShare:sc.del,fotPct:sc.fotPct};
   const P=ownerPnl_calcPnL(pd.planRev,{}), F=ownerPnl_calcPnL(pd.foreRev,fn), r=P.revenue;
   const neg=v=>v<0?`(${ownerPnl_fmt(-v)})`:ownerPnl_fmt(v);
   const row=(name,ind,pv,fv)=>{const dp=fv-pv,dpct=pv!==0?(fv/pv-1)*100:0;return`<tr><td class="op-cn ${ind?'i':''}">${name}</td><td class="op-pct-col">${ownerPnl_p1(ownerPnl_pctOf(Math.abs(pv),r))}</td><td class="op-cv plan">${neg(pv)} ₽</td><td class="op-cv fore">${neg(fv)} ₽</td><td class="op-cv ${dp>=0?'dp':'dn'}">${dp>=0?'+':''}${ownerPnl_fmt(dp)} ₽</td><td class="op-cv ${dp>=0?'dp':'dn'}">${dp>=0?'+':''}${dpct.toFixed(1)}%</td></tr>`;};
@@ -6640,7 +6710,7 @@ function ownerPnl_renderPnL() {
 // ── Render waterfall ─────────────────────────────────
 function ownerPnl_renderWaterfall() {
   const pd=ownerPnl_getPeriodData(), sc=ownerPnl_getScen();
-  const fn={...OP_NORMS,foodcost:sc.foodcost,deliveryShare:sc.del,staffFixed:Math.round(pd.foreRev*sc.fotPct/100*0.65),mgmtFixed:Math.round(pd.foreRev*sc.fotPct/100*0.35)};
+  const fn={...OP_NORMS,foodcost:sc.foodcost,deliveryShare:sc.del,fotPct:sc.fotPct};
   const P=ownerPnl_calcPnL(pd.planRev,{}), F=ownerPnl_calcPnL(pd.foreRev,fn);
   const items=[{n:'Выручка',d:F.revenue-P.revenue,b:P.net},{n:'Фудкост',d:-(F.fc-P.fc),b:null},{n:'Переменные',d:-(F.varC-P.varC-(F.fc-P.fc)),b:null},{n:'ФОТ',d:-(F.staffC-P.staffC),b:null},{n:'Постоянные',d:-(F.fixedC-P.fixedC),b:null},{n:'УСН',d:-(F.usn-P.usn),b:null},{n:'Чист. прибыль',d:0,b:F.net}];
   const mx=Math.max(Math.abs(P.net),Math.abs(F.net),...items.map(i=>Math.abs(i.d)));
@@ -6661,7 +6731,7 @@ function ownerPnl_renderDrivers() {
   const menuE=(sc.star*0.35+sc.plw*0.40+sc.pzl*0.15+sc.dog*0.10)/100*pd.foreRev;
   const discE=-(sc.disc-3)/100*pd.foreRev;
   const fcE=-(sc.foodcost-OP_NORMS.foodcost)/100*pd.foreRev;
-  const fotE=-(sc.fotPct/100-(OP_NORMS.staffFixed+OP_NORMS.mgmtFixed)/pd.planRev)*pd.foreRev;
+  const fotE=-(sc.fotPct/100-OP_SLIDER_DEFAULTS.fotPct/100)*pd.foreRev;
   const mixE=(pd.foreRev-pd.planRev)-volE-priceE;
   const drivers=[{n:'Объём чеков',v:volE},{n:'Средний чек',v:priceE},{n:'Скидки',v:discE},{n:'Изменение цен меню',v:menuE},{n:'Фудкост Δ',v:-fcE},{n:'ФОТ Δ',v:fotE},{n:'Прочее/микс',v:mixE}];
   const mx=Math.max(...drivers.map(d=>Math.abs(d.v)),1);
@@ -6711,7 +6781,19 @@ async function ownerPnl_bootstrap() {
     OP_HISTORY=data;OP_byDate={};
     OP_HISTORY.forEach(d=>OP_byDate[d.date]=d);
     OP_TODAY=OP_HISTORY[OP_HISTORY.length-1].date;OP_TODAY_D=new Date(OP_TODAY);
+    if(hist.sliderDefaults)OP_SLIDER_DEFAULTS={...OP_SLIDER_DEFAULTS,...hist.sliderDefaults};
+    if(hist.mgtSalary)OP_NORMS.mgtSalary=hist.mgtSalary;
     if(costsR&&costsR.ok){try{const cj=await costsR.json();if(cj&&cj.costs)OP_NORMS={...OP_NORMS,...cj.costs};}catch(_){}}
+    // Вычисляем медианы чеков/ср.чека текущего месяца для дефолтов слайдеров
+    ownerPnl_computeSliderDefaults();
+    // Инициализируем все слайдеры из реальных данных
+    const setSl=(id,v)=>{const el=document.getElementById(id);if(el){el.max=Math.max(+el.max,v*1.5|0).toString();el.value=String(v);}};
+    setSl('op-ss-fc',OP_SLIDER_DEFAULTS.foodcostPct);
+    setSl('op-ss-fot',OP_SLIDER_DEFAULTS.fotPct);
+    setSl('op-ss-wkd',OP_SLIDER_DEFAULTS.wkd);
+    setSl('op-ss-wke',OP_SLIDER_DEFAULTS.wke);
+    setSl('op-ss-avg',OP_SLIDER_DEFAULTS.avg);
+    setSl('op-ss-disc',OP_SLIDER_DEFAULTS.disc);
     ownerPnl_showApp();
   } catch(e) {
     ownerPnl_showError('Ошибка загрузки: '+e.message);
