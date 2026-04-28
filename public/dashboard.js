@@ -2813,8 +2813,9 @@ const PNL_CONFIG = {
 const PNL_STATE = { initialized:false, base:null, baseKey:'', scenario:'base', activePlan:null };
 
 function pnlEnsureKaliningrad() {
-  if (!RESTS || !RESTS.length || (R && R.city === 'Калининград' && !NETWORK_MODE)) return;
-  const idx = RESTS.findIndex(r => r.city === 'Калининград');
+  const isKaln = c => c && c.toLowerCase().includes('калининград');
+  if (!RESTS || !RESTS.length || (R && isKaln(R.city) && !NETWORK_MODE)) return;
+  const idx = RESTS.findIndex(r => isKaln(r.city));
   if (idx < 0) return;
   NETWORK_MODE = false;
   R = RESTS[idx];
@@ -6703,10 +6704,10 @@ async function ownerPnl_bootstrap() {
       fetch('/api/owner/history',{credentials:'same-origin'}),
       fetch('/api/owner/costs',{credentials:'same-origin'}),
     ]);
-    if(!histR.ok){ownerPnl_showError('История недоступна ('+histR.status+'). Проверьте ClickHouse mart_restaurant_daily_base / dept_id=101.');return;}
+    if(!histR.ok){ownerPnl_showError('История недоступна ('+histR.status+'). Проверьте ClickHouse mart_restaurant_daily_base.');return;}
     const hist=await histR.json();
     const data=Array.isArray(hist.data)?hist.data:[];
-    if(!data.length){ownerPnl_showError('Нет данных по Калининграду (dept_id=101). ClickHouse mart_restaurant_daily_base может быть пуст или фильтр revenue_total_rub > 0 режет все строки.');return;}
+    if(!data.length){ownerPnl_showError('Нет данных по Калининграду. ClickHouse mart_restaurant_daily_base не вернул строк (city=Калининград, revenue>0).');return;}
     OP_HISTORY=data;OP_byDate={};
     OP_HISTORY.forEach(d=>OP_byDate[d.date]=d);
     OP_TODAY=OP_HISTORY[OP_HISTORY.length-1].date;OP_TODAY_D=new Date(OP_TODAY);
