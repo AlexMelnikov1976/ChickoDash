@@ -262,12 +262,14 @@ export async function handleForecast(request: Request, env: Env): Promise<Respon
       return jsonResponse({ error: 'No data available' }, request, 404);
     }
 
-    // Опорная дата для прогноза — сегодня (UTC), а не последняя дата в данных.
-    // Это гарантирует корректный прогноз на 1-е число нового месяца:
-    // ClickHouse ещё не залил данные за текущий месяц, но прогноз строим
-    // через Method B (прошлый год × YoY) или Method C (DOW-профиль 90 дней).
+    // Опорная дата: as_of из запроса (конец выбранного периода) или сегодня.
+    // Это позволяет смотреть прогноз на любой месяц, а не только текущий.
+    // Валидация: допускаем только формат YYYY-MM-DD, не дальше будущего.
     const todayStr = new Date().toISOString().slice(0, 10);
-    const maxDateStr = todayStr;
+    const asOfRaw = url.searchParams.get('as_of') || '';
+    const maxDateStr = /^\d{4}-\d{2}-\d{2}$/.test(asOfRaw) && asOfRaw <= todayStr
+      ? asOfRaw
+      : todayStr;
 
     // --- SQL #2: 90-day DOW fallback ---
     // Only needed if variants A and B won't fire, but cheap enough to always run.

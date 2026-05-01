@@ -845,11 +845,15 @@ const FORECAST_CACHE = {};
 let FORECAST_INFLIGHT = null; // для отмены устаревших запросов
 
 async function fetchForecast(restOrNull, networkMode) {
-  const key = networkMode ? '__network__' : (restOrNull && restOrNull.id ? String(restOrNull.id) : null);
-  if (!key) return null;
+  // as_of = конец выбранного глобального периода (или сегодня если не задан)
+  const asOf = (CAL_STATE && CAL_STATE.global && CAL_STATE.global.end) || new Date().toISOString().slice(0, 10);
+  const baseKey = networkMode ? '__network__' : (restOrNull && restOrNull.id ? String(restOrNull.id) : null);
+  if (!baseKey) return null;
+  const key = baseKey + '|' + asOf;
   if (FORECAST_CACHE[key]) return FORECAST_CACHE[key];
 
-  const qs = networkMode ? '?network=1' : ('?restaurant_id=' + restOrNull.id);
+  let qs = networkMode ? '?network=1' : ('?restaurant_id=' + restOrNull.id);
+  qs += '&as_of=' + encodeURIComponent(asOf);
   try {
     const r = await fetch(API_BASE + '/api/forecast' + qs, {
       credentials: 'include'
