@@ -3660,7 +3660,11 @@ function renderMenuKPIs(summary) {
 
   return (
     '<div class="menu-kpi-row">' +
-      kpi('Всего блюд', summary.total_dishes, 'в KS-анализе') +
+      '<div class="menu-kpi" style="cursor:pointer" onclick="clearMenuClassFilter()" title="Показать все блюда">' +
+        '<div class="lbl">Всего блюд</div>' +
+        '<div class="val">' + escapeHtml(String(summary.total_dishes)) + '</div>' +
+        '<div class="sub">в KS-анализе</div>' +
+      '</div>' +
       kpi('Выручка меню', revFmt, 'за выбранный период') +
       kpi('Средняя маржа', (summary.avg_margin_pct || 0).toFixed(1) + '%', 'по всему меню', 'accent-gold') +
       kpi('⭐ Лидеры', leaders, 'Stars + Plowhorses', 'accent-gold') +
