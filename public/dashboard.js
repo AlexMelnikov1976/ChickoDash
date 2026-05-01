@@ -2944,7 +2944,6 @@ function pnlSetSlider(id, value) {
 function renderPnl(forceReset) {
   const root = document.getElementById('p-pnl');
   if (!root || !R) return;
-  pnlEnsureKaliningrad();
   const base = pnlBuildBase();
   if (!base) return;
   const shouldReset = forceReset || !PNL_STATE.initialized || PNL_STATE.baseKey !== base.key;
@@ -6273,9 +6272,10 @@ let OP_INITIALIZED = false;
 let OP_NORMS = {
   foodcost:22.5, franchise:5.0, writeoff:2.3, hozy:4.0, acquiring:1.9,
   deliveryCost:31.44, mgtSalary:657500, salaryTax:16,
-  rent:650000, utilities:50000, usn:15
+  fixed:1250000, usn:15
 };
-let OP_SLIDER_DEFAULTS = { foodcostPct: 22.5, fotPct: 18, wkd: 120, wke: 150, avg: 1400, disc: 3 };
+let OP_SLIDER_DEFAULTS = { foodcostPct: 22.5, fotPct: 18, wkd: 120, wke: 150, avg: 1400, disc: 3, del: 0 };
+let OP_FACT_METRICS = null; // факт текущего месяца: factRev, factDelivery, factFoodcost
 let OP_periodMode = 'month';
 let OP_customPlan = JSON.parse(localStorage.getItem('chiko_owner_custom_plan')||'{}');
 
@@ -6377,25 +6377,92 @@ function ownerPnl_forecastDayBase(iso){
   // Fallback: autoPlanDay (DOW медианы всей истории + тренд + сезонность)
   return ownerPnl_autoPlanDay(iso);
 }
-// Вычисляет медианы чеков/ср.чека из текущего месяца → дефолты слайдеров
+// Вычисляет медианы чеков/ср.чека из текущего месяца → дефолты слайдеров.
+// Долю доставки берём из прошлого полного месяца (взвешенное среднее) → OP_NORMS.deliveryShare.
 function ownerPnl_computeSliderDefaults(){
   const localISO=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  const now=new Date(),todayISO=localISO(now),yr=now.getFullYear(),mo=now.getMonth();
+  const now=new Date(OP_TODAY),todayISO=localISO(now),yr=now.getFullYear(),mo=now.getMonth();
   const cur=OP_HISTORY.filter(h=>{const d=new Date(h.date);return d.getFullYear()===yr&&d.getMonth()===mo&&h.date<todayISO;});
-  if(!cur.length)return;
-  const wkd=cur.filter(h=>{const d=new Date(h.date).getDay();return d>=1&&d<=5;});
-  const wke=cur.filter(h=>{const d=new Date(h.date).getDay();return d===0||d===6;});
-  if(wkd.length)OP_SLIDER_DEFAULTS.wkd=Math.round(ownerPnl_medArr(wkd.map(h=>h.checks)))||OP_SLIDER_DEFAULTS.wkd;
-  if(wke.length)OP_SLIDER_DEFAULTS.wke=Math.round(ownerPnl_medArr(wke.map(h=>h.checks)))||OP_SLIDER_DEFAULTS.wke;
-  if(cur.length)OP_SLIDER_DEFAULTS.avg=Math.round(ownerPnl_medArr(cur.map(h=>h.avgCheck)))||OP_SLIDER_DEFAULTS.avg;
-  if(cur.length)OP_SLIDER_DEFAULTS.disc=+ownerPnl_medArr(cur.map(h=>h.discPct)).toFixed(1)||OP_SLIDER_DEFAULTS.disc;
+  if(cur.length){
+    const wkd=cur.filter(h=>{const d=new Date(h.date).getDay();return d>=1&&d<=5;});
+    const wke=cur.filter(h=>{const d=new Date(h.date).getDay();return d===0||d===6;});
+    if(wkd.length)OP_SLIDER_DEFAULTS.wkd=Math.round(ownerPnl_medArr(wkd.map(h=>h.checks)))||OP_SLIDER_DEFAULTS.wkd;
+    if(wke.length)OP_SLIDER_DEFAULTS.wke=Math.round(ownerPnl_medArr(wke.map(h=>h.checks)))||OP_SLIDER_DEFAULTS.wke;
+    OP_SLIDER_DEFAULTS.avg=Math.round(ownerPnl_medArr(cur.map(h=>h.avgCheck)))||OP_SLIDER_DEFAULTS.avg;
+    OP_SLIDER_DEFAULTS.disc=+ownerPnl_medArr(cur.map(h=>h.discPct)).toFixed(1)||OP_SLIDER_DEFAULTS.disc;
+  }
+  // Доля доставки: прошлый полный месяц (взвешенное по выручке)
+  const prevMo=mo===0?11:mo-1, prevYr=mo===0?yr-1:yr;
+  const prev=OP_HISTORY.filter(h=>{const d=new Date(h.date);return d.getFullYear()===prevYr&&d.getMonth()===prevMo;});
+  if(prev.length){
+    const totalRev=prev.reduce((s,h)=>s+h.revenue,0);
+    const totalDel=prev.reduce((s,h)=>s+h.revenueDelivery,0);
+    if(totalRev>0){
+      const delShare=+(totalDel/totalRev*100).toFixed(1);
+      OP_NORMS.deliveryShare=delShare;
+      OP_SLIDER_DEFAULTS.del=delShare;
+    }
+  }
+}
+
+// Факт-метрики текущего месяца (delivery и foodcost — точные, из daily history)
+function ownerPnl_computeFactMetrics() {
+  const localISO=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const now=new Date(OP_TODAY), yest=new Date(now); yest.setDate(now.getDate()-1);
+  const yesterdayISO=localISO(yest), yr=now.getFullYear(), mo=now.getMonth();
+  const fd=OP_HISTORY.filter(h=>{const d=new Date(h.date);return d.getFullYear()===yr&&d.getMonth()===mo&&h.date<=yesterdayISO;});
+  if(!fd.length){OP_FACT_METRICS=null;return;}
+  OP_FACT_METRICS={
+    factRev:fd.reduce((s,h)=>s+h.revenue,0),
+    factDelivery:fd.reduce((s,h)=>s+h.revenueDelivery,0),
+    factFoodcost:fd.reduce((s,h)=>s+h.revenue*h.foodcostPct/100,0),
+  };
+}
+// Устанавливает min слайдеров чтобы нельзя было уйти ниже факта
+function ownerPnl_updateSliderLimits() {
+  if(!OP_FACT_METRICS)return;
+  const setMin=(id,v)=>{const el=document.getElementById(id);if(el&&+el.min<v)el.min=String(v);};
+  // Delivery min: доля уже случившейся доставки от прогнозной выручки периода
+  const pd=ownerPnl_getPeriodData();
+  const useFactM=pd.factRev>0&&pd.foreRev>pd.factRev;
+  if(useFactM){
+    // del слайдер = % оставшихся дней → min=0 (факт уже зафиксирован в calcPnL)
+    const factDelShare=OP_FACT_METRICS.factRev>0?+(OP_FACT_METRICS.factDelivery/OP_FACT_METRICS.factRev*100).toFixed(1):0;
+    setMin('op-ss-del',Math.max(0,factDelShare-2)); // небольшой допуск
+    // FOT min: нельзя ниже исторической нормы
+    setMin('op-ss-fot',OP_SLIDER_DEFAULTS.fotPct);
+  }
+}
+// Сброс всех ползунков к медианам текущего месяца
+function ownerPnl_resetSliders() {
+  const setSl=(id,v)=>{const el=document.getElementById(id);if(el){el.value=String(v);}};
+  setSl('op-ss-fc',OP_SLIDER_DEFAULTS.foodcostPct);
+  setSl('op-ss-fot',OP_SLIDER_DEFAULTS.fotPct);
+  setSl('op-ss-wkd',OP_SLIDER_DEFAULTS.wkd);
+  setSl('op-ss-wke',OP_SLIDER_DEFAULTS.wke);
+  setSl('op-ss-avg',OP_SLIDER_DEFAULTS.avg);
+  setSl('op-ss-disc',OP_SLIDER_DEFAULTS.disc);
+  setSl('op-ss-del',OP_SLIDER_DEFAULTS.del||OP_NORMS.deliveryShare||0);
+  setSl('op-ss-star',0);setSl('op-ss-plw',0);setSl('op-ss-pzl',0);setSl('op-ss-dog',0);
+  ownerPnl_renderAll();
 }
 
 // ── P&L calculation ─────────────────────────────────
-function ownerPnl_calcPnL(revenue, norms) {
+// factM: когда передан — delivery и foodcost разбиваются на факт + прогноз×слайдер.
+// Это не даёт слайдерам «обнулить» уже случившиеся затраты прошедших дней месяца.
+function ownerPnl_calcPnL(revenue, norms, factM) {
   const n = {...OP_NORMS, ...norms};
-  const delRev=revenue*(n.deliveryShare||0)/100, fc=revenue*n.foodcost/100,
-        fr=revenue*n.franchise/100, wo=revenue*n.writeoff/100,
+  // forecastRev — только оставшиеся дни (если factM передан); иначе весь revenue
+  const forecastRev=factM?Math.max(0,revenue-factM.factRev):revenue;
+  // Delivery: факт зафиксирован + прогноз × слайдер
+  const delRev=factM
+    ?factM.factDelivery+forecastRev*(n.deliveryShare||0)/100
+    :revenue*(n.deliveryShare||0)/100;
+  // Foodcost: факт зафиксирован + прогноз × слайдер
+  const fc=factM
+    ?factM.factFoodcost+forecastRev*n.foodcost/100
+    :revenue*n.foodcost/100;
+  const fr=revenue*n.franchise/100, wo=revenue*n.writeoff/100,
         hz=revenue*n.hozy/100, aq=revenue*n.acquiring/100,
         dc=delRev*n.deliveryCost/100;
   const varC=fc+fr+wo+hz+aq+dc, grossP=revenue-varC;
@@ -6406,10 +6473,10 @@ function ownerPnl_calcPnL(revenue, norms) {
   const fotPersonnel=Math.max(0,staffTotal-mgtSalary);
   const stax=staffTotal*n.salaryTax/100,
         staffC=staffTotal+stax, ebitda=grossP-staffC;
-  const fixedC=n.rent+n.utilities, opP=ebitda-fixedC;
+  const fixedC=n.fixed??((n.rent||0)+(n.utilities||0)), opP=ebitda-fixedC;
   const usnRate=(n.usn||15)/100, minTax=revenue*0.01;
   const usn=opP>0?Math.max(opP*usnRate,minTax):minTax;
-  return {revenue,delRev,fc,fr,wo,hz,aq,dc,varC,grossP,fotPersonnel,mgtSalary,staffTotal,stax,staffC,ebitda,rent:n.rent,utilities:n.utilities,fixedC,opP,usn,net:opP-usn};
+  return {revenue,delRev,fc,fr,wo,hz,aq,dc,varC,grossP,fotPersonnel,mgtSalary,staffTotal,stax,staffC,ebitda,fixedC,opP,usn,net:opP-usn};
 }
 
 // ── Scenario ────────────────────────────────────────
@@ -6566,7 +6633,8 @@ function ownerPnl_setEl(id,val,cls){
 function ownerPnl_renderKPIs() {
   const pd=ownerPnl_getPeriodData(), sc=ownerPnl_getScen();
   const fn={...OP_NORMS,foodcost:sc.foodcost,deliveryShare:sc.del,fotPct:sc.fotPct};
-  const P=ownerPnl_calcPnL(pd.planRev,{}), F=ownerPnl_calcPnL(pd.foreRev,fn);
+  const useFactM=OP_FACT_METRICS&&pd.factRev>0&&pd.foreRev>pd.factRev;
+  const P=ownerPnl_calcPnL(pd.planRev,{}), F=ownerPnl_calcPnL(pd.foreRev,fn,useFactM?OP_FACT_METRICS:null);
   const dRev=pd.foreRev-pd.planRev;
   const yoy=pd.prevYrFact>0?(pd.foreRev/pd.prevYrFact-1)*100:0;
   const mom=pd.prevMoFact>0?(pd.foreRev/pd.prevMoFact-1)*100:0;
@@ -6696,13 +6764,14 @@ function ownerPnl_renderChart() {
 function ownerPnl_renderPnL() {
   const pd=ownerPnl_getPeriodData(), sc=ownerPnl_getScen();
   const fn={...OP_NORMS,foodcost:sc.foodcost,deliveryShare:sc.del,fotPct:sc.fotPct};
-  const P=ownerPnl_calcPnL(pd.planRev,{}), F=ownerPnl_calcPnL(pd.foreRev,fn), r=P.revenue;
+  const useFactM=OP_FACT_METRICS&&pd.factRev>0&&pd.foreRev>pd.factRev;
+  const P=ownerPnl_calcPnL(pd.planRev,{}), F=ownerPnl_calcPnL(pd.foreRev,fn,useFactM?OP_FACT_METRICS:null), r=P.revenue;
   const neg=v=>v<0?`(${ownerPnl_fmt(-v)})`:ownerPnl_fmt(v);
   const row=(name,ind,pv,fv)=>{const dp=fv-pv,dpct=pv!==0?(fv/pv-1)*100:0;return`<tr><td class="op-cn ${ind?'i':''}">${name}</td><td class="op-pct-col">${ownerPnl_p1(ownerPnl_pctOf(Math.abs(pv),r))}</td><td class="op-cv plan">${neg(pv)} ₽</td><td class="op-cv fore">${neg(fv)} ₽</td><td class="op-cv ${dp>=0?'dp':'dn'}">${dp>=0?'+':''}${ownerPnl_fmt(dp)} ₽</td><td class="op-cv ${dp>=0?'dp':'dn'}">${dp>=0?'+':''}${dpct.toFixed(1)}%</td></tr>`;};
   const sub=(n,pv,fv)=>row(n,false,pv,fv).replace('<tr>','<tr class="op-sub">');
   const tot=(n,pv,fv)=>row(n,false,pv,fv).replace('<tr>','<tr class="op-tot">');
   const sep=lbl=>`<tr><td colspan="6" class="op-sep-td">${lbl}</td></tr>`;
-  let h=sep('📈 Выручка')+row('Выручка (нетто)',false,P.revenue,F.revenue)+row('в т.ч. доставка',true,P.delRev,F.delRev)+sep('📦 Переменные затраты')+row('Фудкост',true,-P.fc,-F.fc)+row('Франшиза',true,-P.fr,-F.fr)+row('Списание',true,-P.wo,-F.wo)+row('Хозяйственные',true,-P.hz,-F.hz)+row('Эквайринг+банк',true,-P.aq,-F.aq)+row('Расходы доставка',true,-P.dc,-F.dc)+sub('Валовая прибыль',P.grossP,F.grossP)+sep('👥 ФОТ')+row('ФОТ персонал',true,-P.staffTotal,-F.staffTotal)+row('Налоги на ЗП',true,-P.stax,-F.stax)+sub('EBITDA',P.ebitda,F.ebitda)+sep('🏢 Постоянные')+row('Аренда',true,-P.rent,-F.rent)+row('Коммунальные',true,-P.utilities,-F.utilities)+sub('Прибыль до УСН',P.opP,F.opP)+sep('🏛 Налог')+row('УСН',true,-P.usn,-F.usn)+tot('💰 ЧИСТАЯ ПРИБЫЛЬ',P.net,F.net);
+  let h=sep('📈 Выручка')+row('Выручка (нетто)',false,P.revenue,F.revenue)+row('в т.ч. доставка',true,P.delRev,F.delRev)+sep('📦 Переменные затраты')+row('Фудкост',true,-P.fc,-F.fc)+row('Франшиза',true,-P.fr,-F.fr)+row('Списание',true,-P.wo,-F.wo)+row('Хозяйственные',true,-P.hz,-F.hz)+row('Эквайринг+банк',true,-P.aq,-F.aq)+row('Расходы доставка',true,-P.dc,-F.dc)+sub('Валовая прибыль',P.grossP,F.grossP)+sep('👥 ФОТ')+row('ФОТ персонал',true,-P.staffTotal,-F.staffTotal)+row('Налоги на ЗП',true,-P.stax,-F.stax)+sub('EBITDA',P.ebitda,F.ebitda)+sep('🏢 Постоянные')+row('Постоянные затраты',true,-P.fixedC,-F.fixedC)+sub('Прибыль до УСН',P.opP,F.opP)+sep('🏛 Налог')+row('УСН',true,-P.usn,-F.usn)+tot('💰 ЧИСТАЯ ПРИБЫЛЬ',P.net,F.net);
   const tb=document.getElementById('op-pnl-body');if(tb)tb.innerHTML=h;
   const lbl=document.getElementById('op-pnl-period-lbl');if(lbl)lbl.textContent=ownerPnl_getPeriodData().label;
 }
@@ -6711,7 +6780,8 @@ function ownerPnl_renderPnL() {
 function ownerPnl_renderWaterfall() {
   const pd=ownerPnl_getPeriodData(), sc=ownerPnl_getScen();
   const fn={...OP_NORMS,foodcost:sc.foodcost,deliveryShare:sc.del,fotPct:sc.fotPct};
-  const P=ownerPnl_calcPnL(pd.planRev,{}), F=ownerPnl_calcPnL(pd.foreRev,fn);
+  const useFactM=OP_FACT_METRICS&&pd.factRev>0&&pd.foreRev>pd.factRev;
+  const P=ownerPnl_calcPnL(pd.planRev,{}), F=ownerPnl_calcPnL(pd.foreRev,fn,useFactM?OP_FACT_METRICS:null);
   const items=[{n:'Выручка',d:F.revenue-P.revenue,b:P.net},{n:'Фудкост',d:-(F.fc-P.fc),b:null},{n:'Переменные',d:-(F.varC-P.varC-(F.fc-P.fc)),b:null},{n:'ФОТ',d:-(F.staffC-P.staffC),b:null},{n:'Постоянные',d:-(F.fixedC-P.fixedC),b:null},{n:'УСН',d:-(F.usn-P.usn),b:null},{n:'Чист. прибыль',d:0,b:F.net}];
   const mx=Math.max(Math.abs(P.net),Math.abs(F.net),...items.map(i=>Math.abs(i.d)));
   const el=document.getElementById('op-wf-body');if(!el)return;
@@ -6784,8 +6854,9 @@ async function ownerPnl_bootstrap() {
     if(hist.sliderDefaults)OP_SLIDER_DEFAULTS={...OP_SLIDER_DEFAULTS,...hist.sliderDefaults};
     if(hist.mgtSalary)OP_NORMS.mgtSalary=hist.mgtSalary;
     if(costsR&&costsR.ok){try{const cj=await costsR.json();if(cj&&cj.costs)OP_NORMS={...OP_NORMS,...cj.costs};}catch(_){}}
-    // Вычисляем медианы чеков/ср.чека текущего месяца для дефолтов слайдеров
+    // Вычисляем медианы текущего месяца для дефолтов слайдеров + факт-метрики
     ownerPnl_computeSliderDefaults();
+    ownerPnl_computeFactMetrics();
     // Инициализируем все слайдеры из реальных данных
     const setSl=(id,v)=>{const el=document.getElementById(id);if(el){el.max=Math.max(+el.max,v*1.5|0).toString();el.value=String(v);}};
     setSl('op-ss-fc',OP_SLIDER_DEFAULTS.foodcostPct);
@@ -6794,6 +6865,8 @@ async function ownerPnl_bootstrap() {
     setSl('op-ss-wke',OP_SLIDER_DEFAULTS.wke);
     setSl('op-ss-avg',OP_SLIDER_DEFAULTS.avg);
     setSl('op-ss-disc',OP_SLIDER_DEFAULTS.disc);
+    if(OP_SLIDER_DEFAULTS.del)setSl('op-ss-del',OP_SLIDER_DEFAULTS.del);
+    ownerPnl_updateSliderLimits();
     ownerPnl_showApp();
   } catch(e) {
     ownerPnl_showError('Ошибка загрузки: '+e.message);
