@@ -3700,6 +3700,14 @@ function renderClassesBreakdown(counts, dormantReasons) {
     { key: 'dormant',   ico: '🔁', name: 'Dormant' },
   ];
 
+  const totalDishes = CLASSES.reduce((s, c) => s + (counts[c.key] || 0), 0);
+  const allChip =
+    '<div class="menu-class menu-class-all" title="Все блюда" onclick="clearMenuClassFilter()">' +
+      '<div class="ico">📋</div>' +
+      '<div class="n" style="color:var(--text)">' + totalDishes + '</div>' +
+      '<div class="name">Все</div>' +
+    '</div>';
+
   const cells = CLASSES.map(c => {
     const n = counts[c.key] || 0;
     return (
@@ -3731,7 +3739,7 @@ function renderClassesBreakdown(counts, dormantReasons) {
   return (
     '<div class="menu-classes">' +
       '<div class="menu-classes-title">Структура меню по классам Kasavana-Smith</div>' +
-      '<div class="menu-classes-grid">' + cells + '</div>' +
+      '<div class="menu-classes-grid">' + allChip + cells + '</div>' +
       dormantNote +
     '</div>'
   );
@@ -3975,6 +3983,9 @@ function setMenuActiveClass(cls) {
     const m = (el.className || '').match(/cls-([a-z_]+)/);
     el.classList.toggle('active', m && m[1] === cls);
   });
+  // Снимаем активность с чипа «Все»
+  const allChip = document.querySelector('.menu-class-all');
+  if (allChip) allChip.classList.remove('active');
 
   // Заполняем правую панель
   const panel = document.getElementById('menuActionPanel');
@@ -4233,6 +4244,11 @@ function resetMenuFilters() {
 
 function clearMenuClassFilter() {
   MENU_STATE.filters.classes.clear();
+  // Подсвечиваем чип «Все», снимаем активность с остальных классов и матрицы
+  document.querySelector('.menu-class-all')?.classList.add('active');
+  document.querySelectorAll('.menu-class:not(.menu-class-all)').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.menu-ks-quad').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.menu-ks-outside-chip').forEach(el => el.classList.remove('active'));
   applyMenuFilters();
 }
 

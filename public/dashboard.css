@@ -524,7 +524,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 }
 .menu-classes-grid{
   display:grid;
-  grid-template-columns:repeat(8, 1fr);
+  grid-template-columns:repeat(9, 1fr);
   gap:6px;
 }
 .menu-class{
