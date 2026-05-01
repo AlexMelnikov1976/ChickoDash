@@ -6242,41 +6242,49 @@ function mktDrawDynamics() {
     const dLtv    = (last.ltv_median ?? null) !== null && (first.ltv_median ?? null) !== null
                   ? (last.ltv_median - first.ltv_median) : null;
 
-    mktUpdateDelta('mkt-kd-total', dTotal,  '',     realDays);
-    mktUpdateDelta('mkt-kd-act',   dActive, '',     realDays);
-    if (dRepeat !== null) mktUpdateDeltaPct('mkt-kd-rep', dRepeat, realDays);
-    if (dLtv    !== null) mktUpdateDelta('mkt-kd-ltv', dLtv, ' ₽', realDays);
+    const fromTotal  = first.clients_total      ?? first.total ?? null;
+    const fromActive = first.clients_active_30d ?? first.dau   ?? null;
+    const fromRepeat = first.repeat_rate_pct    ?? null;
+    const fromLtv    = first.ltv_median         ?? null;
+    mktUpdateDelta('mkt-kd-total', dTotal,  '',     realDays, fromTotal);
+    mktUpdateDelta('mkt-kd-act',   dActive, '',     realDays, fromActive);
+    if (dRepeat !== null) mktUpdateDeltaPct('mkt-kd-rep', dRepeat, realDays, fromRepeat);
+    if (dLtv    !== null) mktUpdateDelta('mkt-kd-ltv', dLtv, ' ₽', realDays, fromLtv);
   }
 }
 
 // Спец-форматтер для % — десятые п.п.
-function mktUpdateDeltaPct(elId, delta, days) {
+function mktUpdateDeltaPct(elId, delta, days, prevVal) {
   const el = document.getElementById(elId);
   if (!el) return;
+  const prevStr = (prevVal !== null && prevVal !== undefined)
+    ? ' <span style="opacity:.6">· было ' + prevVal.toFixed(1) + '%</span>' : '';
   if (Math.abs(delta) < 0.05) {
     el.className = 'kdelta nt';
-    el.innerHTML = '— стабильно к ' + days + 'д назад';
+    el.innerHTML = '— стабильно к ' + days + 'д назад' + prevStr;
   } else if (delta > 0) {
     el.className = 'kdelta up';
-    el.innerHTML = '▲ +' + delta.toFixed(1) + ' п.п. за ' + days + 'д';
+    el.innerHTML = '▲ +' + delta.toFixed(1) + ' п.п. за ' + days + 'д' + prevStr;
   } else {
     el.className = 'kdelta dn';
-    el.innerHTML = '▼ −' + Math.abs(delta).toFixed(1) + ' п.п. за ' + days + 'д';
+    el.innerHTML = '▼ −' + Math.abs(delta).toFixed(1) + ' п.п. за ' + days + 'д' + prevStr;
   }
 }
 
-function mktUpdateDelta(elId, delta, suffix, days) {
+function mktUpdateDelta(elId, delta, suffix, days, prevVal) {
   const el = document.getElementById(elId);
   if (!el) return;
+  const prevStr = (prevVal !== null && prevVal !== undefined)
+    ? ' <span style="opacity:.6">· было ' + Math.round(prevVal).toLocaleString('ru') + suffix + '</span>' : '';
   if (delta === 0) {
     el.className = 'kdelta nt';
-    el.innerHTML = '— стабильно к ' + days + 'д назад';
+    el.innerHTML = '— стабильно к ' + days + 'д назад' + prevStr;
   } else if (delta > 0) {
     el.className = 'kdelta up';
-    el.innerHTML = '▲ +' + Math.round(Math.abs(delta)).toLocaleString('ru') + suffix + ' за ' + days + 'д';
+    el.innerHTML = '▲ +' + Math.round(Math.abs(delta)).toLocaleString('ru') + suffix + ' за ' + days + 'д' + prevStr;
   } else {
     el.className = 'kdelta dn';
-    el.innerHTML = '▼ −' + Math.round(Math.abs(delta)).toLocaleString('ru') + suffix + ' за ' + days + 'д';
+    el.innerHTML = '▼ −' + Math.round(Math.abs(delta)).toLocaleString('ru') + suffix + ' за ' + days + 'д' + prevStr;
   }
 }
 
