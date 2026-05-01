@@ -293,6 +293,7 @@ const S = {
 let R = null;
 // Сохранённое состояние при переходе на вкладки только-Калининград (staff, owner-pnl)
 let _KALN_SAVED = null;
+let _KALN_LOCKED = false; // true когда активна вкладка только-Калининград
 const CHS = {};
 const COMP_COLORS=['#D4A84B','#1ABC9C','#9B59B6','#F39C12','#E74C3C'];
 const N_COMP=5;
@@ -345,7 +346,10 @@ function buildSelList(list, query='') {
   ul.innerHTML = filtered.map((r,i) => {
     const idx = RESTS.indexOf(r);
     const isActive = R && r.name === R.name;
-    return `<div class="sel-item${isActive?' active':''}" onclick="pickRest(${idx})">
+    const isKaln = r.city && r.city.toLowerCase().includes('калининград');
+    const locked = _KALN_LOCKED && !isKaln;
+    const lockStyle = locked ? 'opacity:0.3;pointer-events:none;cursor:default;' : '';
+    return `<div class="sel-item${isActive?' active':''}" style="${lockStyle}" ${locked ? '' : `onclick="pickRest(${idx})"`}>
       <span style="font-weight:500;color:var(--text)">${r.city}</span>
       <span class="sel-city" style="flex:1;text-align:right">${r.name.replace('Чико (','').replace(')','').replace('Чико Рико ','Рико ').slice(0,24)}</span>
     </div>`;
@@ -782,13 +786,16 @@ function goTab(el) {
       const sel = document.getElementById('mainSel'); if (sel) sel.value = kIdx;
       const inp = document.getElementById('selSearch'); if (inp) inp.value = R.city;
     }
-    // Скрываем выбор ресторана и переключатель сети
-    const sw = document.getElementById('selWrap'); if (sw) sw.style.display = 'none';
-    const nt = document.getElementById('netToggle'); if (nt) nt.style.display = 'none';
+    // Блокируем выбор других городов: некалининградские пункты станут серыми
+    _KALN_LOCKED = true;
+    buildSelList(RESTS);
+    // Переключатель «Вся сеть» недоступен на этих вкладках
+    const nt = document.getElementById('netToggle'); if (nt) { nt.style.opacity = '0.35'; nt.style.pointerEvents = 'none'; }
   }
 
   // Выходим с вкладки только-Калининград на обычную вкладку
   if (!toKaln && wasKaln && _KALN_SAVED) {
+    _KALN_LOCKED = false;
     R = _KALN_SAVED.r;
     S.restIdx = _KALN_SAVED.restIdx;
     NETWORK_MODE = _KALN_SAVED.netMode;
@@ -800,12 +807,13 @@ function goTab(el) {
     const inp = document.getElementById('selSearch');
     if (NETWORK_MODE) {
       if (inp) inp.value = 'Вся сеть';
-      const sw = document.getElementById('selWrap'); if (sw) { sw.style.display = ''; sw.style.opacity = '0.35'; sw.style.pointerEvents = 'none'; }
+      const sw = document.getElementById('selWrap'); if (sw) { sw.style.opacity = '0.35'; sw.style.pointerEvents = 'none'; }
     } else {
       if (inp && R) inp.value = R.city;
-      const sw = document.getElementById('selWrap'); if (sw) { sw.style.display = ''; sw.style.opacity = '1'; sw.style.pointerEvents = 'auto'; }
+      const sw = document.getElementById('selWrap'); if (sw) { sw.style.opacity = '1'; sw.style.pointerEvents = 'auto'; }
     }
-    const nt = document.getElementById('netToggle'); if (nt) nt.style.display = '';
+    buildSelList(RESTS);
+    const nt = document.getElementById('netToggle'); if (nt) { nt.style.opacity = '1'; nt.style.pointerEvents = ''; }
   }
 
   document.querySelectorAll('.ntab').forEach(t=>t.classList.remove('active'));
@@ -6330,10 +6338,8 @@ let OP_periodMode = 'month';
 let OP_customPlan = JSON.parse(localStorage.getItem('chiko_owner_custom_plan')||'{}');
 
 // ── Tab reveal ──────────────────────────────────────
-async function checkOwnerAndShowTab() {
+function checkOwnerAndShowTab() {
   try {
-    const r = await apiGet('/api/owner/me');
-    if (!r || r.is_owner !== true) return;
     const marketingBtn = document.querySelector('[data-tab="marketing"]');
     if (!marketingBtn || !marketingBtn.parentElement) return;
     const navContainer = marketingBtn.parentElement;
@@ -6344,9 +6350,8 @@ async function checkOwnerAndShowTab() {
     btn.setAttribute('onclick', 'goTab(this)');
     btn.textContent = '👑 Owner PnL';
     marketingBtn.insertAdjacentElement('afterend', btn);
-    console.log('[owner-pnl] is_owner=true, tab added');
   } catch(e) {
-    console.log('[owner-pnl] check failed (normal for non-owners):', e.message);
+    console.log('[owner-pnl] tab init failed:', e.message);
   }
 }
 
