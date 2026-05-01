@@ -827,7 +827,10 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
           <button class="op-btn op-btn-clear" onclick="ownerPnl_clearCustomPlan()">↺ Авто-план</button>
         </div>
         <div class="op-scen-block">
-          <div class="op-scen-title">⚙️ Сценарий (остаток периода)</div>
+          <div class="op-scen-title" style="display:flex;align-items:center;justify-content:space-between">
+            <span>⚙️ Сценарий (остаток периода)</span>
+            <button onclick="ownerPnl_resetSliders()" style="font-size:10px;padding:2px 9px;border:1px solid var(--op-border);border-radius:4px;background:rgba(124,92,191,.12);color:var(--op-scen);cursor:pointer;white-space:nowrap;text-transform:none;letter-spacing:0;font-weight:600">↺ Сброс</button>
+          </div>
           <div class="op-sl">
             <div class="op-sl-lbl"><span class="op-sl-name">Чеков/день — будни</span><span class="op-sl-val" id="op-sv-wkd">120</span></div>
             <input type="range" id="op-ss-wkd" min="50" max="300" value="120" oninput="ownerPnl_updateScen()">

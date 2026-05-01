@@ -291,6 +291,8 @@ const S = {
   plWeChk: 0, plWeCnt: 0, plWeDisc: 0,
 };
 let R = null;
+// Сохранённое состояние при переходе на вкладки только-Калининград (staff, owner-pnl)
+let _KALN_SAVED = null;
 const CHS = {};
 const COMP_COLORS=['#D4A84B','#1ABC9C','#9B59B6','#F39C12','#E74C3C'];
 const N_COMP=5;
@@ -757,10 +759,58 @@ function goTab(el) {
     return;
   }
   trackUI('tab', { tab: el.dataset.tab });
+
+  const tab = el.dataset.tab;
+  const KALN_TABS = ['staff', 'owner-pnl'];
+  const prevTab = document.querySelector('.ntab.active')?.dataset.tab;
+  const wasKaln = KALN_TABS.includes(prevTab);
+  const toKaln  = KALN_TABS.includes(tab);
+
+  // Входим на вкладку только-Калининград из обычной вкладки
+  if (toKaln && !wasKaln) {
+    _KALN_SAVED = { r: R, restIdx: S.restIdx, netMode: NETWORK_MODE };
+    // Выключаем сетевой режим, если был активен
+    if (NETWORK_MODE) {
+      NETWORK_MODE = false;
+      const cb = document.getElementById('netCb'); if (cb) cb.checked = false;
+    }
+    // Переключаем на Калининград
+    const kIdx = RESTS ? RESTS.findIndex(r => r.city && r.city.toLowerCase().includes('калининград')) : -1;
+    if (kIdx >= 0) {
+      R = RESTS[kIdx];
+      S.restIdx = kIdx;
+      const sel = document.getElementById('mainSel'); if (sel) sel.value = kIdx;
+      const inp = document.getElementById('selSearch'); if (inp) inp.value = R.city;
+    }
+    // Скрываем выбор ресторана и переключатель сети
+    const sw = document.getElementById('selWrap'); if (sw) sw.style.display = 'none';
+    const nt = document.getElementById('netToggle'); if (nt) nt.style.display = 'none';
+  }
+
+  // Выходим с вкладки только-Калининград на обычную вкладку
+  if (!toKaln && wasKaln && _KALN_SAVED) {
+    R = _KALN_SAVED.r;
+    S.restIdx = _KALN_SAVED.restIdx;
+    NETWORK_MODE = _KALN_SAVED.netMode;
+    _KALN_SAVED = null;
+    // Восстанавливаем UI переключателя сети
+    const cb = document.getElementById('netCb'); if (cb) cb.checked = NETWORK_MODE;
+    // Восстанавливаем выбор ресторана
+    const sel = document.getElementById('mainSel'); if (sel) sel.value = S.restIdx;
+    const inp = document.getElementById('selSearch');
+    if (NETWORK_MODE) {
+      if (inp) inp.value = 'Вся сеть';
+      const sw = document.getElementById('selWrap'); if (sw) { sw.style.display = ''; sw.style.opacity = '0.35'; sw.style.pointerEvents = 'none'; }
+    } else {
+      if (inp && R) inp.value = R.city;
+      const sw = document.getElementById('selWrap'); if (sw) { sw.style.display = ''; sw.style.opacity = '1'; sw.style.pointerEvents = 'auto'; }
+    }
+    const nt = document.getElementById('netToggle'); if (nt) nt.style.display = '';
+  }
+
   document.querySelectorAll('.ntab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   el.classList.add('active');
-  const tab = el.dataset.tab;
   document.getElementById('p-'+tab).classList.add('active');
   // Phase 2.9.4: запоминаем вкладку для восстановления после рефреша
   try { sessionStorage.setItem('chicko_tab', tab); } catch(e) {}

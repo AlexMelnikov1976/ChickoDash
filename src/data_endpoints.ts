@@ -50,6 +50,78 @@ function mkClickhouse(env: Env): ClickHouseClient {
   });
 }
 
+function isLocalPreview(request: Request): boolean {
+  const host = new URL(request.url).hostname;
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
+function localRestaurantRows(fullHistory = false) {
+  const rests = [
+    { dept_id: 101, restaurant_name: 'Чико (Калининград)', city: 'Калининград', base: 245000, checks: 142, avg: 1725, fc: 22.4, disc: 5.2, delivery: 18.5 },
+    { dept_id: 102, restaurant_name: 'Чико (Мурманск)', city: 'Мурманск', base: 185000, checks: 118, avg: 1568, fc: 24.1, disc: 6.4, delivery: 24.0 },
+    { dept_id: 103, restaurant_name: 'Чико (Сальск)', city: 'Сальск', base: 128000, checks: 86, avg: 1488, fc: 21.8, disc: 4.7, delivery: 14.2 },
+    { dept_id: 104, restaurant_name: 'Чико (Балашов)', city: 'Балашов', base: 112000, checks: 79, avg: 1418, fc: 23.2, disc: 5.8, delivery: 11.0 },
+  ];
+  const rows: Array<Record<string, unknown>> = [];
+  const start = new Date(fullHistory ? '2024-05-01T00:00:00Z' : '2026-01-29T00:00:00Z');
+  const end = new Date('2026-04-28T00:00:00Z');
+  for (let dt = new Date(start), i = 0; dt <= end; dt.setUTCDate(dt.getUTCDate() + 1), i++) {
+    const y = dt.getUTCFullYear();
+    const m = dt.getUTCMonth() + 1;
+    const day = dt.getUTCDate();
+    const ds = `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const dow = dt.getUTCDay();
+    const weekendK = dow === 0 || dow === 6 ? 1.18 : 1;
+    const seasonK = [0.94, 0.92, 0.98, 1.02, 1.05, 1.08, 1.12, 1.10, 1.04, 1.03, 1.07, 1.18][m - 1];
+    const trendK = 1 + i * 0.00032;
+    const wave = 1 + Math.sin(i / 9) * 0.04 + Math.cos(day / 5) * 0.025;
+    for (const r of rests) {
+      const revenue = Math.round(r.base * weekendK * seasonK * trendK * wave * (1 + ((day + r.dept_id) % 5 - 2) * 0.012));
+      const checks = Math.max(1, Math.round(r.checks * weekendK * (1 + ((day + r.dept_id) % 4 - 1.5) * 0.025)));
+      rows.push({
+        dept_id: r.dept_id,
+        restaurant_name: r.restaurant_name,
+        city: r.city,
+        report_date_str: ds,
+        revenue_total_rub: revenue,
+        revenue_bar_rub: Math.round(revenue * 0.08),
+        revenue_kitchen_rub: Math.round(revenue * 0.78),
+        revenue_delivery_rub: Math.round(revenue * r.delivery / 100),
+        avg_check_total_rub: Math.round(revenue / checks),
+        checks_total: checks,
+        foodcost_total_pct: +(r.fc + Math.sin(day / 4) * 0.5).toFixed(1),
+        discount_total_pct: +(r.disc + Math.cos(day / 5) * 0.4).toFixed(1),
+        delivery_share_pct: +(r.delivery + Math.sin(day / 6) * 1.2).toFixed(1),
+        is_anomaly_day: 0,
+      });
+    }
+  }
+  return rows;
+}
+
+function localBenchmarks() {
+  return {
+    net: {
+      revenue: 158000,
+      avgCheck: 1550,
+      checks: 104,
+      foodcost: 22.8,
+      discount: 5.4,
+      deliveryPct: 17.0,
+      restCount: 4,
+    },
+    top10: {
+      revenue: 255000,
+      avgCheck: 1730,
+      foodcost: 21.2,
+      discount: 4.2,
+      deliveryPct: 24.0,
+    },
+    rest_count: 4,
+    insufficient_data: false,
+  };
+}
+
 // Local auth() helper removed in Phase 2.4d — заменён на shared authFromCookie
 // из security.ts. Использует HttpOnly session cookie вместо Bearer token.
 // Date validation moved to security.ts (parseIsoDate, daysBetween) in Phase 2.4a.
@@ -67,6 +139,12 @@ export async function handleRestaurantsList(request: Request, env: Env): Promise
   try {
     const a = await authFromCookieOrServiceKey(request, env);
     if (a instanceof Response) return a;
+
+    if (isLocalPreview(request)) {
+      const fullHistory = new URL(request.url).searchParams.get('full_history') === '1';
+      const data = localRestaurantRows(fullHistory);
+      return jsonResponse({ data, rows: data.length, local_preview: true }, request);
+    }
 
     const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);
     if (rl) return rl;
@@ -152,6 +230,10 @@ export async function handleBenchmarks(request: Request, env: Env): Promise<Resp
   try {
     const a = await authFromCookieOrServiceKey(request, env);
     if (a instanceof Response) return a;
+
+    if (isLocalPreview(request)) {
+      return jsonResponse(Object.assign(localBenchmarks(), { local_preview: true }), request);
+    }
 
     const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);
     if (rl) return rl;
