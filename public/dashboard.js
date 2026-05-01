@@ -1715,7 +1715,7 @@ function renderScore(){
 const RANK_FULL_STATE = { sortCol: 'revenue', sortDir: 'desc' };
 
 const RANK_FULL_COLS = [
-  { key: 'revenue',  label: 'Выручка',    agg: 'sum', fmt: v => fmtR(v), better: 'high' },
+  { key: 'revenue',  label: 'Выручка',    agg: 'sum', fmt: v => fmtR(v, true), better: 'high' },
   { key: 'avgCheck', label: 'Ср.чек',     agg: 'avg', fmt: v => Math.round(v).toLocaleString('ru') + '\u00A0₽', better: 'high' },
   { key: 'checks',   label: 'Чеки',       agg: 'sum', fmt: v => Math.round(v).toLocaleString('ru'), better: 'high' },
   { key: 'foodcost', label: 'Фудкост%',    agg: 'avg', fmt: v => v !== null ? v.toFixed(1) : '—', better: 'low' },
