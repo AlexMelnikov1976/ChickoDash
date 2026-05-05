@@ -513,7 +513,7 @@ export async function handleDataDate(request: Request, env: Env): Promise<Respon
 
     const clickhouse = mkClickhouse(env);
     const result = await clickhouse.query(
-      'SELECT MAX(snapshot_date) as max_date FROM chicko.premiumbonus_clients FORMAT JSON'
+      'SELECT MAX(snapshot_date) as max_date FROM chicko.premiumbonus_clients'
     );
     const rows = result.data as Array<Record<string, unknown>>;
     const maxDate = rows.length && rows[0].max_date ? String(rows[0].max_date) : '—';
