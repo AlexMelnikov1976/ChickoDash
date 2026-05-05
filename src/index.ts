@@ -17,7 +17,7 @@ import {
 import { handleDashboard } from './dashboard';
 import { handleDowProfiles } from './dow_profiles';
 import { handleForecast } from './forecast';
-import { handleRestaurantsList, handleBenchmarks, handleRestaurantMeta, handleGrillDaily } from './data_endpoints';
+import { handleRestaurantsList, handleBenchmarks, handleRestaurantMeta, handleGrillDaily, handleDataDate } from './data_endpoints';
 import { handleCspReport } from './csp_report';
 import { handleAiInsight } from './ai_insight';
 import { handleMenuAnalysis } from './menu_analysis';
@@ -324,6 +324,13 @@ export default {
     // --- Grill Daily (Phase 2.9.4) ---
     if (url.pathname === "/api/grill-daily" && request.method === "GET") {
       const _r = await handleGrillDaily(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+
+    // --- Data Last Update Date ---
+    if (url.pathname === "/api/data-date" && request.method === "GET") {
+      const _r = await handleDataDate(request, env);
       _logReq(request, env, ctx, _r, _t0);
       return _r;
     }

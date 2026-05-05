@@ -197,6 +197,24 @@ function trackUI(action, extra) {
   } catch(_e) {}
 }
 
+// ═══ Load data last update date ═══
+async function updateDataLastDate() {
+  try {
+    const r = await fetch(API_BASE + '/api/data-date', {
+      credentials: 'include'
+    });
+    if (r.ok) {
+      const data = await r.json();
+      const dateVal = document.getElementById('dataDateValue');
+      if (dateVal && data.data_date) {
+        dateVal.textContent = data.data_date;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load data date:', e);
+  }
+}
+
 // ═══ Auth flow on page load (Phase 2.4d: cookie-based) ═══
 (async function bootAuth() {
   if (IS_LOCAL_PREVIEW) {
@@ -245,6 +263,7 @@ function trackUI(action, extra) {
         if (data && data.email) USER_EMAIL = data.email;
       } catch (e) { /* non-JSON 200 не ожидается, но не падаем */ }
       hideLogin();
+      updateDataLastDate();
     } else {
       showLogin();
     }

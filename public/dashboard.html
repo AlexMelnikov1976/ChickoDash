@@ -160,6 +160,11 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
       </button>
       <div class="cal-dropdown" id="globalCalDrop"></div>
     </div>
+    <!-- Data Last Updated Indicator -->
+    <div id="dataLastUpdated" style="display:flex;align-items:center;gap:8px;font-size:11px;padding:0 12px;border-left:1px solid var(--border);flex-shrink:0">
+      <span style="color:var(--text2)">Данные на:</span>
+      <span id="dataDateValue" style="font-weight:600;color:var(--gold)">—</span>
+    </div>
   </div>
 </div>
 

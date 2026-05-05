@@ -493,3 +493,35 @@ export async function handleGrillDaily(request: Request, env: Env): Promise<Resp
     return jsonResponse({ error: 'Request failed' }, request, 500);
   }
 }
+
+/**
+ * GET /api/data-date
+ *
+ * Returns the maximum snapshot_date from premiumbonus_clients table.
+ * Used to display "Data as of: YYYY-MM-DD" in dashboard header.
+ *
+ * Returns:
+ *   { data_date: "YYYY-MM-DD" }
+ */
+export async function handleDataDate(request: Request, env: Env): Promise<Response> {
+  try {
+    const a = await authFromCookie(request, env);
+    if (a instanceof Response) return a;
+
+    const rl = await rateLimitOrResponse(env.MAGIC_LINKS, `data:${a.user_id}`, RATE_LIMIT_DATA, request);
+    if (rl) return rl;
+
+    const clickhouse = mkClickhouse(env);
+    const result = await clickhouse.query(
+      'SELECT MAX(snapshot_date) as max_date FROM chicko.premiumbonus_clients FORMAT JSON'
+    );
+    const rows = result.data as Array<Record<string, unknown>>;
+    const maxDate = rows.length && rows[0].max_date ? String(rows[0].max_date) : '—';
+
+    return jsonResponse({ data_date: maxDate }, request);
+  } catch (error) {
+    const err = error as Error;
+    console.error(`[data-date] error: ${err.message}`, err.stack);
+    return jsonResponse({ data_date: '—' }, request, 500);
+  }
+}
