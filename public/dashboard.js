@@ -6251,7 +6251,16 @@ function mktDrawDynamics() {
   mktDrawLine('mktChartNewReg', labels, newReg, '#9B59B6');
 
   const lbl = document.getElementById('mkt-dyn-lbl');
-  if (lbl) lbl.textContent = days === 365 ? 'год' : days + ' дней';
+  if (lbl) {
+    const periodNames = {
+      1: 'день',
+      7: 'неделю',
+      30: 'месяц',
+      90: 'квартал',
+      365: 'год'
+    };
+    lbl.textContent = periodNames[days] || (days + ' дней');
+  }
 
   // Дельты на KPI-карточках. Используем realDays для подписи —
   // если в slice меньше точек чем запрошено (нет столько истории), не врём.

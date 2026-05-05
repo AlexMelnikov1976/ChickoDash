@@ -611,12 +611,11 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
       <div id="mkt-meta" style="font-size:11px;color:var(--text3)">Загрузка…</div>
     </div>
     <div class="pgroup" id="mktPeriodBtns">
-      <button class="pbtn" data-d="7" onclick="mktSetPeriod(7,this)">7д</button>
-      <button class="pbtn" data-d="14" onclick="mktSetPeriod(14,this)">14д</button>
-      <button class="pbtn" data-d="30" onclick="mktSetPeriod(30,this)">30д</button>
-      <button class="pbtn active" data-d="90" onclick="mktSetPeriod(90,this)">90д</button>
-      <button class="pbtn" data-d="120" onclick="mktSetPeriod(120,this)">120д</button>
-      <button class="pbtn" data-d="365" onclick="mktSetPeriod(365,this)">Год</button>
+      <button class="pbtn" data-d="1" onclick="mktSetPeriod(1,this)">день</button>
+      <button class="pbtn" data-d="7" onclick="mktSetPeriod(7,this)">неделя</button>
+      <button class="pbtn active" data-d="30" onclick="mktSetPeriod(30,this)">месяц</button>
+      <button class="pbtn" data-d="90" onclick="mktSetPeriod(90,this)">квартал</button>
+      <button class="pbtn" data-d="365" onclick="mktSetPeriod(365,this)">год</button>
     </div>
   </div>
 
