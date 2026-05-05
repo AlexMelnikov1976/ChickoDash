@@ -5873,7 +5873,7 @@ function mktDraw() {
   // Meta информация в шапке
   const meta = document.getElementById('mkt-meta');
   if (meta && d.meta) {
-    meta.innerHTML = 'Снапшот <b style="color:var(--gold2)">' + escapeHtml(d.meta.snapshot_date) + '</b>';
+    meta.innerHTML = '';
   }
 
   // ── Insights ──────────────────────────────────────────────────────────
@@ -6095,7 +6095,7 @@ function mktDraw() {
     </div>
 
     <div class="mkt-foot">
-      <b>Источник:</b> ${escapeHtml(d.meta.source)} · Снапшот <b>${escapeHtml(d.meta.snapshot_date)}</b> · Обновляется ежедневно в 06:45 ·
+      <b>Источник:</b> ${escapeHtml(d.meta.source)} · Обновляется ежедневно в 06:45 ·
       <span class="mkt-tag-no-history" style="margin:0 4px">только сейчас</span> — данные доступны только из текущего CRM-снапшота
     </div>
   `;
