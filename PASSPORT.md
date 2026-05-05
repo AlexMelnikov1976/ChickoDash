@@ -1,8 +1,8 @@
 # Chicko Analytics — Паспорт проекта
 
-**Версия:** v3.52
-**Дата обновления:** 01.05.2026
-**Focus:** Phase 2.13 — UX Polish + forecast as_of (прогноз по выбранному периоду)
+**Версия:** v3.53
+**Дата обновления:** 05.05.2026
+**Focus:** Phase 2.14 — Data freshness + UX cleanup (удаление дублирующих дат, визуальный индикатор свежести)
 
 ---
 
@@ -1011,6 +1011,7 @@ npx tsc --noEmit
 
 ## Лог версий паспорта
 
+- **v3.53 (05.05.2026)** — Data freshness indicator: новый endpoint `/api/data-date` возвращает MAX(snapshot_date) из chicko.premiumbonus_clients. Добавлена визуальная плашка в header с золотым текстом «Данные на: YYYY-MM-DD» (верхний правый угол). Удалены дублирующие отображения дат из CRM-портрета (мета-шапка + footer). Deployed to production.
 - **v3.52 (01.05.2026)** — Forecast as_of: прогноз строится по выбранному периоду (as_of=globalEnd). Кэш по restId|as_of. Валидация на сервере. Первый день месяца — прогноз на текущий месяц через Method B/C.
 - **v3.51 (01.05.2026)** — fix(forecast): maxDateStr = today() вместо последней даты в CH (fix для 1 мая — плашка прогноза показывала апрель).
 - **v3.50 (01.05.2026)** — Phase 2.13 closed: UX Polish. City lock (Staff+Owner → Калининград, некалининградские dim+disabled, selWrap видим). Owner PnL для всех (is_owner check снят). Меню: чип «📋 Все» + плашка «Всего блюд» → clearMenuClassFilter(). Обзор: выручка полным числом (fmtR full). Маркетинг: «было N» в дельтах KPI-карточек. Фиксы 1 мая (OP_TODAY вместо new Date). Локальный preview-мок для dev (localhost bypass).
