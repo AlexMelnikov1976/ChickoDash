@@ -489,12 +489,17 @@ async function loadFullHistory(silent=false) {
   const btn = document.getElementById('loadHistBtn');
   if (btn) { btn.textContent = '⏳ Загрузка...'; btn.disabled = true; }
   try {
-    // Грузим 2025 по кварталам параллельно — каждый чанк < 10s, обходим CF 30s subrequest limit
+    // Грузим 2025 + начало 2026 по кварталам параллельно. CF 30s subrequest limit обходим
+    // мелкими чанками. 2026 Q1 нужен потому, что 90-дневное окно по умолчанию не достаёт
+    // до января 2026 — и в календаре месяц был не подсвечен.
+    const today = new Date();
+    const todayISO = today.toISOString().slice(0,10);
     const quarters = [
       ['2025-01-01','2025-03-31'],
       ['2025-04-01','2025-06-30'],
       ['2025-07-01','2025-09-30'],
       ['2025-10-01','2025-12-31'],
+      ['2026-01-01', todayISO < '2026-03-31' ? todayISO : '2026-03-31'],
     ];
     const chunkResults = await Promise.all(
       quarters.map(([from, to]) =>
@@ -5895,7 +5900,7 @@ function mktDraw() {
   // ── HTML ───────────────────────────────────────────────────────────────
   root.innerHTML = `
     <!-- Row 2: KPI -->
-    <div class="g5">
+    <div class="g6">
       <div class="kcard" data-mkt-tip="kpi.clients_total">
         <div class="klbl">База клиентов</div>
         <div class="kval"><span id="mkt-k-total">${mktFmtNum(d.kpi.clients_total)}</span></div>
@@ -5930,6 +5935,13 @@ function mktDraw() {
         <div class="kdelta nt">— только текущий снапшот</div>
         <div class="kbench">${mktFmtNum(d.balances.clients_with_gift)} клиентов с подарком</div>
         <div class="kbar ba" style="width:100%"></div>
+      </div>
+      <div class="kcard">
+        <div class="klbl">Новых за период</div>
+        <div class="kval"><span id="mkt-k-newperiod">—</span></div>
+        <div class="kdelta nt" id="mkt-kd-newperiod">выберите период</div>
+        <div class="kbench">Регистраций за выбранный период</div>
+        <div class="kbar" style="width:70%;background:var(--purple,#9B59B6)"></div>
       </div>
     </div>
 
@@ -6254,6 +6266,7 @@ function mktDrawDynamics() {
   if (lbl) {
     const periodNames = {
       1: 'день',
+      5: '5 дней',
       7: 'неделю',
       30: 'месяц',
       90: 'квартал',
@@ -6282,6 +6295,16 @@ function mktDrawDynamics() {
     mktUpdateDelta('mkt-kd-act',   dActive, '',     realDays, fromActive);
     if (dRepeat !== null) mktUpdateDeltaPct('mkt-kd-rep', dRepeat, realDays, fromRepeat);
     if (dLtv    !== null) mktUpdateDelta('mkt-kd-ltv', dLtv, ' ₽', realDays, fromLtv);
+  }
+
+  // Карточка «Новых за период» — сумма new_registrations_today по всему слайсу
+  const sumNew = slice.reduce((acc, p) => acc + (p.new_registrations_today ?? p.new_today ?? 0), 0);
+  const elNew = document.getElementById('mkt-k-newperiod');
+  const elNewD = document.getElementById('mkt-kd-newperiod');
+  if (elNew) elNew.textContent = mktFmtNum(sumNew);
+  if (elNewD) {
+    const periodLabel = {1:'за день',5:'за 5 дней',7:'за неделю',30:'за месяц',90:'за квартал',365:'за год'}[days] || ('за ' + days + ' дней');
+    elNewD.textContent = slice.length ? (periodLabel + ' · ' + slice[0].date.slice(5).replace('-','.') + '–' + slice[slice.length-1].date.slice(5).replace('-','.')) : '—';
   }
 }
 
