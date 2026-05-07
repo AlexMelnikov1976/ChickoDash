@@ -789,7 +789,7 @@ function goTab(el) {
   trackUI('tab', { tab: el.dataset.tab });
 
   const tab = el.dataset.tab;
-  const KALN_TABS = ['staff', 'owner-pnl'];
+  const KALN_TABS = ['staff', 'owner-pnl', 'marketing'];
   const prevTab = document.querySelector('.ntab.active')?.dataset.tab;
   const wasKaln = KALN_TABS.includes(prevTab);
   const toKaln  = KALN_TABS.includes(tab);
