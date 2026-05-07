@@ -207,21 +207,6 @@ export default {
       return handleDashboard(request, env.ASSETS, HTML_SECURITY_HEADERS);
     }
 
-    // --- Owner P&L (изолированный раздел, доступ только is_owner) ---
-    // HTML отдаём с теми же security headers, что и основной дашборд.
-    // Сама проверка owner-доступа — на уровне /api/owner/*; HTML открыт
-    // (внутри он сам зовёт /api/owner/me и редиректит при 403/401).
-    if (url.pathname === '/owner-pnl' && request.method === 'GET') {
-      const assetUrl = new URL(url);
-      assetUrl.pathname = '/owner-pnl.html';
-      const r = await env.ASSETS.fetch(new Request(assetUrl.toString(), request));
-      if (r.status !== 200) return r;
-      const headers = new Headers(r.headers);
-      headers.set('Cache-Control', 'no-store');
-      for (const [k, v] of Object.entries(HTML_SECURITY_HEADERS)) headers.set(k, v);
-      return new Response(r.body, { status: r.status, headers });
-    }
-
     // --- Public API endpoints ---
 
     if (url.pathname === '/health') {
