@@ -31,7 +31,7 @@ import {
   handleStaffRatings,
 } from './staff';
 import { handleAdminMe, handleAdminActivity } from './admin';
-import { handleMarketingOverview } from './marketing';
+import { handleMarketingOverview, handleLoyaltyUsers } from './marketing';
 import {
   handleOwnerMe,
   handleOwnerHistory,
@@ -372,6 +372,13 @@ export default {
     // --- Marketing (Phase 2.10) ---
     if (url.pathname === "/api/marketing-overview" && request.method === "GET") {
       const _r = await handleMarketingOverview(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+
+    // Список клиентов программы лояльности за период (CSV-экспорт на фронте).
+    if (url.pathname === "/api/marketing/loyalty-users" && request.method === "GET") {
+      const _r = await handleLoyaltyUsers(request, env);
       _logReq(request, env, ctx, _r, _t0);
       return _r;
     }

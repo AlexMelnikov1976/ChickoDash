@@ -1321,6 +1321,13 @@ function calApply(key,ev){
         // Перерисовываем всё, даже если сейчас видна другая вкладка
         if (typeof renderDynamics === 'function') renderDynamics();
         if (typeof renderCompare === 'function') renderCompare();
+        // Маркетинг: пересинхронизируем период со span календаря и перерисуем
+        // sparkline-блок, если данные уже загружены. Сами KPI/snapshot не зависят
+        // от календаря — графики и карточка «Новых за период» зависят.
+        if (typeof mktSyncPeriodFromCalendar === 'function' && MKT_STATE && MKT_STATE.data) {
+          mktSyncPeriodFromCalendar();
+          if (typeof mktDrawDynamics === 'function') mktDrawDynamics();
+        }
       } catch(e) {
         alert('Ошибка при применении дат:\n'+e.message);
         console.error(e);
@@ -5823,6 +5830,10 @@ async function renderMarketing() {
   const root = document.getElementById('mkt-root');
   if (!root) return;
 
+  // Период по умолчанию = ширина глобального календаря.
+  // Кнопки в шапке Маркетинга — это override (после клика юзер сам меняет горизонт).
+  mktSyncPeriodFromCalendar();
+
   // Кэшируем — не перегружаем при каждом возврате на вкладку
   if (MKT_STATE.data) {
     mktDraw();
@@ -5850,12 +5861,125 @@ async function renderMarketing() {
   }
 }
 
+// Пресеты периодов в Маркетинге. Если span календаря совпадает с одним из них —
+// подсвечиваем соответствующую кнопку; иначе ни одна не активна (custom-режим).
+const MKT_PERIOD_PRESETS = [1, 5, 7, 30, 90, 365];
+
 function mktSetPeriod(days, btnEl) {
   MKT_STATE.period = days;
-  document.querySelectorAll('#mktPeriodBtns .pbtn').forEach(b => b.classList.remove('active'));
-  if (btnEl) btnEl.classList.add('active');
-  // Перерисуем только KPI-дельты и графики динамики
+  MKT_STATE.periodSource = 'preset';
+  mktUpdatePeriodButtons();
+  if (btnEl) btnEl.classList.add('active'); // на случай если переход не по data-d
   if (MKT_STATE.data) mktDrawDynamics();
+}
+
+// Синхронизирует MKT_STATE.period с шириной глобального календаря.
+// Вызывается при открытии вкладки и при смене календаря.
+function mktSyncPeriodFromCalendar() {
+  if (!S || !S.globalStart || !S.globalEnd) return;
+  let span;
+  try { span = daysBetween(S.globalStart, S.globalEnd); } catch (e) { span = null; }
+  if (!span || span < 1) return;
+  // Sparkline endpoint отдаёт максимум 365 дней. Если выбран более широкий
+  // период — обрежем до 365 (графики и без того сглажены, ниже точности
+  // дневного снапшота не уйдём).
+  MKT_STATE.period = Math.min(span, 365);
+  MKT_STATE.periodSource = 'calendar';
+  mktUpdatePeriodButtons();
+}
+
+function mktUpdatePeriodButtons() {
+  const btns = document.querySelectorAll('#mktPeriodBtns .pbtn');
+  if (!btns.length) return;
+  btns.forEach(b => {
+    const d = parseInt(b.dataset.d, 10);
+    // Подсвечиваем только при ТОЧНОМ совпадении периода с пресетом.
+    if (d === MKT_STATE.period && MKT_PERIOD_PRESETS.indexOf(d) !== -1) b.classList.add('active');
+    else b.classList.remove('active');
+  });
+}
+
+// ── Скачивание CSV: «Кто пользовался программой лояльности за период» ───────
+// Период берётся из глобального календаря (S.globalStart/globalEnd).
+// Ресторан: если NETWORK_MODE=true → всё; иначе R.city как фильтр city на бэке.
+async function mktDownloadLoyaltyUsers() {
+  const btn = document.getElementById('mktDlLoyaltyBtn');
+  if (!btn) return;
+  if (!S || !S.globalStart || !S.globalEnd) {
+    alert('Не задан период в календаре');
+    return;
+  }
+  const cityParam = (typeof NETWORK_MODE !== 'undefined' && NETWORK_MODE)
+    ? 'all'
+    : (R && R.city ? R.city : 'all');
+  const url = API_BASE + '/api/marketing/loyalty-users'
+    + '?start=' + encodeURIComponent(S.globalStart)
+    + '&end='   + encodeURIComponent(S.globalEnd)
+    + '&city='  + encodeURIComponent(cityParam);
+
+  const origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Загружаю...';
+
+  try {
+    const r = await fetch(url, { credentials: 'include' });
+    if (r.status === 401) { showLogin(); return; }
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error('HTTP ' + r.status + ': ' + txt.slice(0, 200));
+    }
+    const j = await r.json();
+    const rows = (j && j.rows) || [];
+    if (!rows.length) {
+      alert('За период ' + S.globalStart + ' — ' + S.globalEnd
+        + (cityParam !== 'all' ? ' (' + cityParam + ')' : '')
+        + ' нет операций по программе лояльности.');
+      return;
+    }
+    mktExportLoyaltyCsv(rows, S.globalStart, S.globalEnd, cityParam);
+  } catch (e) {
+    console.error('[loyalty-users] error:', e);
+    alert('Ошибка загрузки: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
+}
+
+function mktCsvCell(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  if (/[",;\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function mktExportLoyaltyCsv(rows, start, end, city) {
+  const headers = [
+    'Телефон', 'ID клиента', 'Имя', 'Группа лояльности', 'Точка-источник',
+    'Первый визит', 'Последний визит', 'Визитов',
+    'Сумма прайс ₽', 'Оплачено ₽', 'Скидка ₽', 'Бонусами ₽', 'Точки в периоде'
+  ];
+  const lines = [headers.join(';')];
+  rows.forEach(r => {
+    lines.push([
+      r.phone, r.client_id, r.name, r.loyalty_group, r.home_point,
+      r.first_visit, r.last_visit, r.visits,
+      r.gross, r.paid, r.discount, r.bonus_used, r.points_used
+    ].map(mktCsvCell).join(';'));
+  });
+  // BOM \uFEFF — чтобы Excel корректно открыл кириллицу UTF-8.
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const slug = (city && city !== 'all' ? city : 'all').replace(/[^\p{L}\d-]+/gu, '_');
+  const filename = 'loyalty_users_' + slug + '_' + start + '_' + end + '.csv';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(a.href);
+    a.remove();
+  }, 0);
 }
 
 function mktFmtNum(n) {
@@ -6272,8 +6396,12 @@ function mktDrawDynamics() {
       90: 'квартал',
       365: 'год'
     };
-    lbl.textContent = periodNames[days] || (days + ' дней');
+    const fromCal = MKT_STATE.periodSource === 'calendar';
+    const base = periodNames[days] || (days + ' дней');
+    lbl.textContent = fromCal && !periodNames[days] ? base + ' (из календаря)' : base;
   }
+  // Подсветка активной кнопки (актуально после смены календаря/первой отрисовки)
+  mktUpdatePeriodButtons();
 
   // Дельты на KPI-карточках. Используем realDays для подписи —
   // если в slice меньше точек чем запрошено (нет столько истории), не врём.

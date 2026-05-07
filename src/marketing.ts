@@ -8,7 +8,7 @@
 // История восстановлена за 112 дней (с 2026-01-01).
 // ════════════════════════════════════════════════════════════════════════════
 
-import { authFromCookie } from './security';
+import { authFromCookie, parseIsoDate, daysBetween, MAX_DATE_RANGE_DAYS } from './security';
 import { ClickHouseClient } from './clickhouse';
 
 interface Env {
@@ -157,6 +157,155 @@ export async function handleMarketingOverview(request: Request, env: Env): Promi
 
   } catch (e: any) {
     console.error('[marketing-overview] error:', e.message);
+    return new Response(
+      JSON.stringify({ error: 'internal', message: e.message }),
+      { status: 500, headers: { 'content-type': 'application/json' } }
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// /api/marketing/loyalty-users
+//
+// Список клиентов программы лояльности с операциями за период.
+// Источник: chicko.premiumbonus_detail (по одной строке на покупку с картой)
+// LEFT JOIN chicko.mart_crm_clients (по phone) для имени и сегмента.
+//
+// Query params:
+//   start=YYYY-MM-DD     обязателен
+//   end=YYYY-MM-DD       обязателен
+//   city=<строка>        опционально, фильтр по point_of_sale (positionCaseInsensitive)
+//
+// Ответ: { rows: [...], meta: { start, end, city, count, source } }
+// ════════════════════════════════════════════════════════════════════════════
+const LOYALTY_USERS_LIMIT = 50000;
+
+// Фильтр city — допускаем только безопасные символы (буквы кириллица/латиница,
+// цифры, пробел, дефис, точка, запятая). Всё прочее (кавычки, бэкслеши и т.п.)
+// отклоняется. Это защищает от SQL-injection при подстановке в запрос.
+function sanitizeCity(s: string): string | null {
+  if (!s) return null;
+  if (s.length > 100) return null;
+  // \p{L} требует флаг u — допустим: буквы любых алфавитов, цифры, пробел, - . , /
+  if (!/^[\p{L}\d\s\-.,/]+$/u.test(s)) return null;
+  return s.trim();
+}
+
+export async function handleLoyaltyUsers(request: Request, env: Env): Promise<Response> {
+  const auth = await authFromCookie(request, env as any);
+  if (auth instanceof Response) return auth;
+
+  const url = new URL(request.url);
+  const start = parseIsoDate(url.searchParams.get('start'));
+  const end = parseIsoDate(url.searchParams.get('end'));
+  const cityRaw = url.searchParams.get('city');
+
+  if (!start || !end) {
+    return new Response(
+      JSON.stringify({ error: 'bad_request', message: 'invalid start/end (expected YYYY-MM-DD)' }),
+      { status: 400, headers: { 'content-type': 'application/json' } }
+    );
+  }
+  if (start > end) {
+    return new Response(
+      JSON.stringify({ error: 'bad_request', message: 'start must be <= end' }),
+      { status: 400, headers: { 'content-type': 'application/json' } }
+    );
+  }
+  const span = daysBetween(start, end);
+  if (span > MAX_DATE_RANGE_DAYS) {
+    return new Response(
+      JSON.stringify({ error: 'bad_request', message: `date range too wide (max ${MAX_DATE_RANGE_DAYS} days)` }),
+      { status: 400, headers: { 'content-type': 'application/json' } }
+    );
+  }
+
+  let cityFilter = '';
+  let cityNormalized: string | null = null;
+  if (cityRaw && cityRaw !== 'all') {
+    cityNormalized = sanitizeCity(cityRaw);
+    if (!cityNormalized) {
+      return new Response(
+        JSON.stringify({ error: 'bad_request', message: 'invalid city filter' }),
+        { status: 400, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    // Уже отфильтровали безопасные символы — подставляем как литерал.
+    cityFilter = `AND positionCaseInsensitiveUTF8(point_of_sale, '${cityNormalized}') > 0`;
+  }
+
+  try {
+    const ch = new ClickHouseClient({
+      host: env.CLICKHOUSE_HOST,
+      user: env.CLICKHOUSE_USER,
+      password: env.CLICKHOUSE_PASSWORD
+    });
+
+    // Aggregate per phone, потом LEFT JOIN с последним снапшотом mart_crm_clients
+    // для имени, loyalty_group и last_check_pos.
+    const sql = `
+      WITH period_users AS (
+        SELECT
+          phone,
+          any(client_id)                AS client_id,
+          toString(min(purchase_date))  AS first_visit,
+          toString(max(purchase_date))  AS last_visit,
+          count()                       AS visits,
+          round(sum(price_sum), 2)      AS gross,
+          round(sum(payment_sum), 2)    AS paid,
+          round(sum(discount_sum), 2)   AS discount,
+          round(sum(bonus_sum), 2)      AS bonus_used,
+          arrayStringConcat(arrayDistinct(groupArray(point_of_sale)), ' | ') AS points
+        FROM chicko.premiumbonus_detail
+        WHERE purchase_date BETWEEN '${start}' AND '${end}'
+          ${cityFilter}
+        GROUP BY phone
+      )
+      SELECT
+        pu.phone        AS phone,
+        pu.client_id    AS client_id,
+        c.name          AS name,
+        c.loyalty_group AS loyalty_group,
+        c.last_check_pos AS home_point,
+        pu.first_visit  AS first_visit,
+        pu.last_visit   AS last_visit,
+        pu.visits       AS visits,
+        pu.gross        AS gross,
+        pu.paid         AS paid,
+        pu.discount     AS discount,
+        pu.bonus_used   AS bonus_used,
+        pu.points       AS points_used
+      FROM period_users pu
+      LEFT JOIN (
+        SELECT phone, name, loyalty_group, last_check_pos
+        FROM chicko.mart_crm_clients
+        WHERE snapshot_date = (SELECT max(snapshot_date) FROM chicko.mart_crm_clients)
+      ) c USING (phone)
+      ORDER BY pu.visits DESC, pu.gross DESC
+      LIMIT ${LOYALTY_USERS_LIMIT}
+    `;
+
+    const result = await ch.query(sql);
+
+    return new Response(JSON.stringify({
+      rows: result.data,
+      meta: {
+        start,
+        end,
+        city: cityNormalized,
+        count: result.data.length,
+        limit: LOYALTY_USERS_LIMIT,
+        source: 'chicko.premiumbonus_detail + mart_crm_clients'
+      }
+    }), {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'cache-control': 'private, max-age=120'
+      }
+    });
+  } catch (e: any) {
+    console.error('[loyalty-users] error:', e.message);
     return new Response(
       JSON.stringify({ error: 'internal', message: e.message }),
       { status: 500, headers: { 'content-type': 'application/json' } }

@@ -610,14 +610,15 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
       <div style="font-family:'Cormorant Garamond',serif;font-size:22px;color:var(--gold);font-weight:700">CRM-портрет лояльности</div>
       <div id="mkt-meta" style="font-size:11px;color:var(--text3)">Загрузка…</div>
     </div>
-    <div class="pgroup" id="mktPeriodBtns">
+    <div class="pgroup" id="mktPeriodBtns" title="По умолчанию подстраивается под календарь сверху. Клик — переопределить горизонт sparkline.">
       <button class="pbtn" data-d="1" onclick="mktSetPeriod(1,this)">день</button>
       <button class="pbtn" data-d="5" onclick="mktSetPeriod(5,this)">5 дней</button>
       <button class="pbtn" data-d="7" onclick="mktSetPeriod(7,this)">неделя</button>
-      <button class="pbtn active" data-d="30" onclick="mktSetPeriod(30,this)">месяц</button>
+      <button class="pbtn" data-d="30" onclick="mktSetPeriod(30,this)">месяц</button>
       <button class="pbtn" data-d="90" onclick="mktSetPeriod(90,this)">квартал</button>
       <button class="pbtn" data-d="365" onclick="mktSetPeriod(365,this)">год</button>
     </div>
+    <button class="pbtn" id="mktDlLoyaltyBtn" onclick="mktDownloadLoyaltyUsers()" title="Скачать CSV со списком клиентов программы лояльности за выбранный в календаре период (с фильтром по текущему ресторану, либо по всей сети)">📥 Скачать клиентов ПЛ за период</button>
   </div>
 
   <div id="mkt-root">
