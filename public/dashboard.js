@@ -1327,6 +1327,7 @@ function calApply(key,ev){
         if (typeof mktSyncPeriodFromCalendar === 'function' && MKT_STATE && MKT_STATE.data) {
           mktSyncPeriodFromCalendar();
           if (typeof mktDrawDynamics === 'function') mktDrawDynamics();
+          if (typeof mktLoadPlCard === 'function') mktLoadPlCard();
         }
       } catch(e) {
         alert('Ошибка при применении дат:\n'+e.message);
@@ -5837,6 +5838,7 @@ async function renderMarketing() {
   // Кэшируем — не перегружаем при каждом возврате на вкладку
   if (MKT_STATE.data) {
     mktDraw();
+    mktLoadPlCard();
     return;
   }
   if (MKT_STATE.loading) return;
@@ -5852,6 +5854,7 @@ async function renderMarketing() {
     }
     MKT_STATE.data = await r.json();
     mktDraw();
+    mktLoadPlCard();
   } catch (e) {
     console.error('[marketing] error:', e.message);
     MKT_STATE.error = e.message;
@@ -5899,16 +5902,11 @@ function mktUpdatePeriodButtons() {
   });
 }
 
-// ── Скачивание CSV: «Кто пользовался программой лояльности за период» ───────
-// Период берётся из глобального календаря (S.globalStart/globalEnd).
-// Ресторан: если NETWORK_MODE=true → всё; иначе R.city как фильтр city на бэке.
-async function mktDownloadLoyaltyUsers() {
-  const btn = document.getElementById('mktDlLoyaltyBtn');
-  if (!btn) return;
-  if (!S || !S.globalStart || !S.globalEnd) {
-    alert('Не задан период в календаре');
-    return;
-  }
+// ── Карточка «По ПЛ за период» ────────────────────────────────────────────────
+// Загружает /api/marketing/loyalty-users за текущий диапазон календаря
+// и обновляет карточку #mkt-k-pl в KPI-ряду.
+async function mktLoadPlCard() {
+  if (!S || !S.globalStart || !S.globalEnd) return;
   const cityParam = (typeof NETWORK_MODE !== 'undefined' && NETWORK_MODE)
     ? 'all'
     : (R && R.city ? R.city : 'all');
@@ -5916,70 +5914,20 @@ async function mktDownloadLoyaltyUsers() {
     + '?start=' + encodeURIComponent(S.globalStart)
     + '&end='   + encodeURIComponent(S.globalEnd)
     + '&city='  + encodeURIComponent(cityParam);
-
-  const origLabel = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '⏳ Загружаю...';
-
+  const elVal = document.getElementById('mkt-k-pl');
+  const elDelta = document.getElementById('mkt-kd-pl');
+  if (!elVal) return;
   try {
     const r = await fetch(url, { credentials: 'include' });
-    if (r.status === 401) { showLogin(); return; }
-    if (!r.ok) {
-      const txt = await r.text();
-      throw new Error('HTTP ' + r.status + ': ' + txt.slice(0, 200));
-    }
+    if (!r.ok) { if (elDelta) elDelta.textContent = 'нет данных'; return; }
     const j = await r.json();
-    const rows = (j && j.rows) || [];
-    if (!rows.length) {
-      alert('За период ' + S.globalStart + ' — ' + S.globalEnd
-        + (cityParam !== 'all' ? ' (' + cityParam + ')' : '')
-        + ' нет операций по программе лояльности.');
-      return;
-    }
-    mktExportLoyaltyCsv(rows, S.globalStart, S.globalEnd, cityParam);
+    const count = (j && j.meta && j.meta.count != null) ? j.meta.count : 0;
+    elVal.textContent = mktFmtNum(count);
+    if (elDelta) elDelta.textContent = S.globalStart + ' — ' + S.globalEnd;
   } catch (e) {
-    console.error('[loyalty-users] error:', e);
-    alert('Ошибка загрузки: ' + e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = origLabel;
+    if (elDelta) elDelta.textContent = 'ошибка';
+    console.error('[pl-card] error:', e);
   }
-}
-
-function mktCsvCell(v) {
-  if (v === null || v === undefined) return '';
-  const s = String(v);
-  if (/[",;\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
-  return s;
-}
-
-function mktExportLoyaltyCsv(rows, start, end, city) {
-  const headers = [
-    'Телефон', 'ID клиента', 'Имя', 'Группа лояльности', 'Точка-источник',
-    'Первый визит', 'Последний визит', 'Визитов',
-    'Сумма прайс ₽', 'Оплачено ₽', 'Скидка ₽', 'Бонусами ₽', 'Точки в периоде'
-  ];
-  const lines = [headers.join(';')];
-  rows.forEach(r => {
-    lines.push([
-      r.phone, r.client_id, r.name, r.loyalty_group, r.home_point,
-      r.first_visit, r.last_visit, r.visits,
-      r.gross, r.paid, r.discount, r.bonus_used, r.points_used
-    ].map(mktCsvCell).join(';'));
-  });
-  // BOM \uFEFF — чтобы Excel корректно открыл кириллицу UTF-8.
-  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-  const slug = (city && city !== 'all' ? city : 'all').replace(/[^\p{L}\d-]+/gu, '_');
-  const filename = 'loyalty_users_' + slug + '_' + start + '_' + end + '.csv';
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    URL.revokeObjectURL(a.href);
-    a.remove();
-  }, 0);
 }
 
 function mktFmtNum(n) {
@@ -6024,7 +5972,7 @@ function mktDraw() {
   // ── HTML ───────────────────────────────────────────────────────────────
   root.innerHTML = `
     <!-- Row 2: KPI -->
-    <div class="g6">
+    <div class="g7">
       <div class="kcard" data-mkt-tip="kpi.clients_total">
         <div class="klbl">База клиентов</div>
         <div class="kval"><span id="mkt-k-total">${mktFmtNum(d.kpi.clients_total)}</span></div>
@@ -6066,6 +6014,13 @@ function mktDraw() {
         <div class="kdelta nt" id="mkt-kd-newperiod">выберите период</div>
         <div class="kbench">Регистраций за выбранный период</div>
         <div class="kbar" style="width:70%;background:var(--purple,#9B59B6)"></div>
+      </div>
+      <div class="kcard">
+        <div class="klbl">По ПЛ за период</div>
+        <div class="kval"><span id="mkt-k-pl">—</span></div>
+        <div class="kdelta nt" id="mkt-kd-pl">загрузка…</div>
+        <div class="kbench">Уникальных клиентов с чеком</div>
+        <div class="kbar" style="width:0%;background:var(--gold)"></div>
       </div>
     </div>
 
