@@ -33,20 +33,82 @@ const KALININGRAD_DEPT_ID = 42;
 // Не зависит от выручки, начисляется каждый месяц.
 const MGT_SALARY = 657500;
 
-// Нормативы из УпрЧико (Лист1 + Var/Калининград).
-// Пользователь может перезаписать через POST /api/owner/costs.
-const DEFAULT_COSTS = {
-  fixed: 1250000,     // Постоянные затраты итого (Лист1, строка Постоянные)
-  mgtSalary: MGT_SALARY, // ЗП упр фикс (Лист1)
-  salaryTax: 16,      // Налог с ФОТ % (Лист1)
-  foodcost: 22.5,     // Фудкост % (Лист1, факт инициализируется из CH)
-  franchise: 5.0,     // Франшиза % (Лист1)
-  writeoff: 2.3,      // Списание % (Лист1)
-  hozy: 4.0,          // Хозрасходы % (Лист1)
-  acquiring: 1.9,     // Эквайринг % (Var/Калининград)
-  deliveryCost: 31.44,// Доставка % от выручки доставки (Лист1)
-  usn: 15,            // УСН % (Лист1)
+// Google Sheets УпрЧико — Лист1, публичный доступ (только просмотр).
+// Читается через Visualization API, кэшируется в KV на 1 час.
+const SHEETS_SPREADSHEET_ID = '1nqpQ97D9rS2hPVQrrlbPKO5QG5RXvc936xvw6TSHnXc';
+const SHEETS_CACHE_KEY = 'owner:sheets:defaults';
+const SHEETS_CACHE_TTL = 3600; // секунды
+
+// Хардкоженные дефолты — используются только при недоступности Google Sheets.
+const HARDCODED_DEFAULTS: Record<string, number> = {
+  rent:         690000,   // Аренда (фикс)
+  fixed:        1250000,  // Постоянные затраты итого
+  mgtSalary:    MGT_SALARY,
+  salaryTax:    16,       // Налог с ФОТ %
+  foodcost:     22.5,     // Фудкост %
+  franchise:    5.0,      // Франшиза %
+  writeoff:     2.3,      // Списание %
+  hozy:         4.0,      // Хозрасходы %
+  acquiring:    0.7,      // Эквайринг %
+  bankFee:      0.3,      // Комиссия банка %
+  deliveryCost: 31.44,    // Доставка % от выручки доставки
+  usn:          15,       // УСН % (в таблице пусто — оставляем дефолт)
 };
+
+// Маппинг: название строки в Лист1 → поле в HARDCODED_DEFAULTS + колонка (D=Сумма, E=%)
+const SHEETS_FIELD_MAP: Record<string, { field: string; col: 'D' | 'E' }> = {
+  'Аренда':           { field: 'rent',         col: 'D' },
+  'Процент списания': { field: 'writeoff',      col: 'E' },
+  'Процент хозы':     { field: 'hozy',          col: 'E' },
+  'Процент доставка': { field: 'deliveryCost',  col: 'E' },
+  'Фудкост':          { field: 'foodcost',      col: 'E' },
+  'Франшиза':         { field: 'franchise',     col: 'E' },
+  'Эквайринг':        { field: 'acquiring',     col: 'E' },
+  'Комиссия банка':   { field: 'bankFee',       col: 'E' },
+  'ЗП упр':           { field: 'mgtSalary',     col: 'D' },
+  'Налоги ЗП':        { field: 'salaryTax',     col: 'E' },
+  'Постоянные':       { field: 'fixed',         col: 'D' },
+  'УСН':              { field: 'usn',           col: 'E' },
+};
+
+function parseRuNumber(s: string): number | null {
+  if (!s) return null;
+  const clean = s.replace('%', '').replace(',', '.').trim();
+  const n = parseFloat(clean);
+  return isFinite(n) ? n : null;
+}
+
+async function fetchSheetsDefaults(kv: KVNamespace): Promise<Record<string, number>> {
+  // Сначала пробуем KV-кэш
+  try {
+    const cached = await kv.get(SHEETS_CACHE_KEY);
+    if (cached) return JSON.parse(cached) as Record<string, number>;
+  } catch { /* битый кэш — идём в Sheets */ }
+
+  // Читаем CSV через gviz (cols A=название, D=Сумма, E=%)
+  const url = `https://docs.google.com/spreadsheets/d/${SHEETS_SPREADSHEET_ID}/gviz/tq?tq=select+A,D,E+limit+14&gid=0&tqx=out:csv`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Sheets HTTP ${resp.status}`);
+  const csv = await resp.text();
+
+  const result: Record<string, number> = { ...HARDCODED_DEFAULTS };
+  const lines = csv.trim().split('\n').slice(1); // пропускаем заголовок
+
+  for (const line of lines) {
+    const cols = [...line.matchAll(/"([^"]*)"/g)].map(m => m[1]);
+    if (cols.length < 3) continue;
+    const [rowName, dVal, eVal] = cols;
+    const trimmed = rowName.trim();
+    const entry = Object.entries(SHEETS_FIELD_MAP).find(([k]) => trimmed.startsWith(k));
+    if (!entry) continue;
+    const { field, col } = entry[1];
+    const n = parseRuNumber(col === 'D' ? dVal : eVal);
+    if (n !== null) result[field] = n;
+  }
+
+  await kv.put(SHEETS_CACHE_KEY, JSON.stringify(result), { expirationTtl: SHEETS_CACHE_TTL });
+  return result;
+}
 
 function jsonResponse(body: unknown, request: Request, status: number = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -230,7 +292,7 @@ export async function handleOwnerHistory(request: Request, env: Env): Promise<Re
 
     const sliderDefaults = lastComplete
       ? { foodcostPct: lastComplete.foodcostPct, fotPct: lastComplete.fotPct, month: lastComplete.month }
-      : { foodcostPct: DEFAULT_COSTS.foodcost, fotPct: 18, month: null };
+      : { foodcostPct: HARDCODED_DEFAULTS.foodcost, fotPct: 18, month: null };
 
     return jsonResponse({
       dept_id: KALININGRAD_DEPT_ID,
@@ -255,9 +317,9 @@ export async function handleOwnerHistory(request: Request, env: Env): Promise<Re
 // -----------------------------------------------------------------------------
 const COSTS_KV_KEY = (email: string) => `owner:costs:${email.trim().toLowerCase()}`;
 
-function sanitizeCosts(input: Record<string, unknown>): Record<string, number> {
-  const out: Record<string, number> = { ...DEFAULT_COSTS };
-  for (const k of Object.keys(DEFAULT_COSTS)) {
+function sanitizeCosts(input: Record<string, unknown>, defaults: Record<string, number> = HARDCODED_DEFAULTS): Record<string, number> {
+  const out: Record<string, number> = { ...defaults };
+  for (const k of Object.keys(defaults)) {
     if (k in input) {
       const v = Number(input[k]);
       if (isFinite(v) && v >= 0 && v < 1e9) out[k] = v;
@@ -274,18 +336,26 @@ export async function handleOwnerCostsGet(request: Request, env: Env): Promise<R
     const owner = await isOwner(env.USERS, a.email);
     if (!owner) return jsonResponse({ error: 'Forbidden' }, request, 403);
 
+    // Нормативы из Google Sheets (кэш 1ч), fallback на хардкод
+    let sheetDefaults: Record<string, number>;
+    try {
+      sheetDefaults = await fetchSheetsDefaults(env.USERS);
+    } catch (e) {
+      console.warn('[owner-costs] sheets unavailable, using hardcoded:', (e as Error).message);
+      sheetDefaults = { ...HARDCODED_DEFAULTS };
+    }
+
     const raw = await env.USERS.get(COSTS_KV_KEY(a.email));
-    let costs: Record<string, number> = { ...DEFAULT_COSTS };
+    let costs: Record<string, number> = { ...sheetDefaults };
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as Record<string, unknown>;
-        costs = sanitizeCosts(parsed);
+        costs = sanitizeCosts(parsed, sheetDefaults);
       } catch {
-        // битый JSON в KV — отдаём дефолты, пишем варн
-        console.warn(`[owner-costs] corrupt KV for ${a.email}, using defaults`);
+        console.warn(`[owner-costs] corrupt KV for ${a.email}, using sheet defaults`);
       }
     }
-    return jsonResponse({ costs, defaults: DEFAULT_COSTS }, request);
+    return jsonResponse({ costs, defaults: sheetDefaults }, request);
   } catch (error) {
     const err = error as Error;
     console.error(`[owner-costs-get] error: ${err.message}`);
