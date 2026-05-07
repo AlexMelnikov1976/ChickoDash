@@ -31,7 +31,7 @@ import {
   handleStaffRatings,
 } from './staff';
 import { handleAdminMe, handleAdminActivity } from './admin';
-import { handleMarketingOverview, handleLoyaltyUsers } from './marketing';
+import { handleMarketingOverview, handleLoyaltyUsers, handleLoyaltyCount } from './marketing';
 import {
   handleOwnerMe,
   handleOwnerHistory,
@@ -376,9 +376,16 @@ export default {
       return _r;
     }
 
-    // Список клиентов программы лояльности за период (CSV-экспорт на фронте).
+    // Список клиентов программы лояльности за период.
     if (url.pathname === "/api/marketing/loyalty-users" && request.method === "GET") {
       const _r = await handleLoyaltyUsers(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+
+    // COUNT уникальных клиентов ПЛ за период (для KPI-карточки, без строк).
+    if (url.pathname === "/api/marketing/loyalty-count" && request.method === "GET") {
+      const _r = await handleLoyaltyCount(request, env);
       _logReq(request, env, ctx, _r, _t0);
       return _r;
     }

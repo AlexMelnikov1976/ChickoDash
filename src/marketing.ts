@@ -312,3 +312,93 @@ export async function handleLoyaltyUsers(request: Request, env: Env): Promise<Re
     );
   }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// /api/marketing/loyalty-count
+//
+// Лёгкий COUNT-запрос для KPI-карточки «По ПЛ за период».
+// Возвращает только число уникальных клиентов — без строк.
+//
+// Query params: start, end, city (те же что у loyalty-users)
+// Ответ: { count, start, end, city }
+// ════════════════════════════════════════════════════════════════════════════
+
+export async function handleLoyaltyCount(request: Request, env: Env): Promise<Response> {
+  const auth = await authFromCookie(request, env as any);
+  if (auth instanceof Response) return auth;
+
+  const url = new URL(request.url);
+  const start = parseIsoDate(url.searchParams.get('start'));
+  const end = parseIsoDate(url.searchParams.get('end'));
+  const cityRaw = url.searchParams.get('city');
+
+  if (!start || !end) {
+    return new Response(
+      JSON.stringify({ error: 'bad_request', message: 'invalid start/end (expected YYYY-MM-DD)' }),
+      { status: 400, headers: { 'content-type': 'application/json' } }
+    );
+  }
+  if (start > end) {
+    return new Response(
+      JSON.stringify({ error: 'bad_request', message: 'start must be <= end' }),
+      { status: 400, headers: { 'content-type': 'application/json' } }
+    );
+  }
+  const span = daysBetween(start, end);
+  if (span > MAX_DATE_RANGE_DAYS) {
+    return new Response(
+      JSON.stringify({ error: 'bad_request', message: `date range too wide (max ${MAX_DATE_RANGE_DAYS} days)` }),
+      { status: 400, headers: { 'content-type': 'application/json' } }
+    );
+  }
+
+  let cityFilter = '';
+  let cityNormalized: string | null = null;
+  if (cityRaw && cityRaw !== 'all') {
+    cityNormalized = sanitizeCity(cityRaw);
+    if (!cityNormalized) {
+      return new Response(
+        JSON.stringify({ error: 'bad_request', message: 'invalid city filter' }),
+        { status: 400, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    cityFilter = `AND positionCaseInsensitiveUTF8(point_of_sale, '${cityNormalized}') > 0`;
+  }
+
+  try {
+    const ch = new ClickHouseClient({
+      host: env.CLICKHOUSE_HOST,
+      user: env.CLICKHOUSE_USER,
+      password: env.CLICKHOUSE_PASSWORD
+    });
+
+    const sql = `
+      SELECT count(DISTINCT phone) AS unique_clients
+      FROM chicko.premiumbonus_detail
+      WHERE purchase_date BETWEEN '${start}' AND '${end}'
+        ${cityFilter}
+    `;
+
+    const result = await ch.query(sql);
+    const count = result.data.length > 0 ? Number(result.data[0].unique_clients) : 0;
+
+    return new Response(JSON.stringify({
+      count,
+      start,
+      end,
+      city: cityNormalized
+    }), {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'cache-control': 'private, max-age=300'
+      }
+    });
+  } catch (e: any) {
+    console.error('[loyalty-count] error:', e.message);
+    return new Response(
+      JSON.stringify({ error: 'internal', message: e.message }),
+      { status: 500, headers: { 'content-type': 'application/json' } }
+    );
+  }
+}

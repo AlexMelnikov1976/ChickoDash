@@ -5910,7 +5910,7 @@ async function mktLoadPlCard() {
   const cityParam = (typeof NETWORK_MODE !== 'undefined' && NETWORK_MODE)
     ? 'all'
     : (R && R.city ? R.city : 'all');
-  const url = API_BASE + '/api/marketing/loyalty-users'
+  const url = API_BASE + '/api/marketing/loyalty-count'
     + '?start=' + encodeURIComponent(S.globalStart)
     + '&end='   + encodeURIComponent(S.globalEnd)
     + '&city='  + encodeURIComponent(cityParam);
@@ -5921,7 +5921,7 @@ async function mktLoadPlCard() {
     const r = await fetch(url, { credentials: 'include' });
     if (!r.ok) { if (elDelta) elDelta.textContent = 'нет данных'; return; }
     const j = await r.json();
-    const count = (j && j.meta && j.meta.count != null) ? j.meta.count : 0;
+    const count = (j && j.count != null) ? Number(j.count) : 0;
     elVal.textContent = mktFmtNum(count);
     if (elDelta) elDelta.textContent = S.globalStart + ' — ' + S.globalEnd;
   } catch (e) {
