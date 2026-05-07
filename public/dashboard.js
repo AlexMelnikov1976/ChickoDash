@@ -5907,9 +5907,9 @@ function mktUpdatePeriodButtons() {
 // и обновляет карточку #mkt-k-pl в KPI-ряду.
 async function mktLoadPlCard() {
   if (!S || !S.globalStart || !S.globalEnd) return;
-  const cityParam = (typeof NETWORK_MODE !== 'undefined' && NETWORK_MODE)
-    ? 'all'
-    : (R && R.city ? R.city : 'all');
+  // Marketing-таб всегда отключает NETWORK_MODE, поэтому не используем его
+  // для определения фильтра — всегда берём all (ПЛ данные только Калининград).
+  const cityParam = 'all';
   const url = API_BASE + '/api/marketing/loyalty-count'
     + '?start=' + encodeURIComponent(S.globalStart)
     + '&end='   + encodeURIComponent(S.globalEnd)
