@@ -375,6 +375,49 @@ let _selOpen = false;
 const PENDING_SCOPE = new Set();
 const APPLIED_SCOPE = new Set();
 
+// Persist state в localStorage (Phase 2.14): scope + period сохраняются между
+// сессиями. Ключ versionный — на случай схемы.
+const _PERSIST_KEY = 'chicko_dashboard_state_v1';
+function _persistState() {
+  try {
+    const period = (typeof CAL_STATE !== 'undefined' && CAL_STATE.global)
+      ? { start: CAL_STATE.global.start || null, end: CAL_STATE.global.end || null }
+      : null;
+    const state = {
+      scope: Array.from(APPLIED_SCOPE),
+      period,
+      v: 1,
+    };
+    localStorage.setItem(_PERSIST_KEY, JSON.stringify(state));
+  } catch (e) { /* quota / private mode — игнорируем */ }
+}
+function _loadPersistedState() {
+  try {
+    const raw = localStorage.getItem(_PERSIST_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (!s || s.v !== 1) return null;
+    return s;
+  } catch (e) { return null; }
+}
+
+// Bug 1 фикс: renderAll() не покрывает «Меню» / «Персонал» / «Маркетинг»,
+// поэтому после смены scope (selApplyScope, toggleNetworkView) нужно явно
+// перерендерить активную вкладку, если это одна из «специальных».
+function _rerenderActiveTab() {
+  // renderAll() рисует Обзор + Динамика + Сравнение + Анализ + Owner PnL
+  try { renderAll(); } catch (e) { console.warn('[_rerenderActiveTab] all:', e.message); }
+  const active = document.querySelector('.ntab.active');
+  const tab = active ? active.dataset.tab : null;
+  if (tab === 'menu' && typeof renderMenu === 'function') {
+    try { renderMenu(); } catch (e) { console.warn('[_rerenderActiveTab] menu:', e.message); }
+  } else if (tab === 'staff' && typeof renderStaff === 'function') {
+    try { renderStaff(); } catch (e) { console.warn('[_rerenderActiveTab] staff:', e.message); }
+  } else if (tab === 'marketing' && typeof renderMarketing === 'function') {
+    try { renderMarketing(); } catch (e) { console.warn('[_rerenderActiveTab] marketing:', e.message); }
+  }
+}
+
 function buildSelList(list, query='') {
   const ul = document.getElementById('selList');
   const cnt = document.getElementById('selCount');
@@ -513,18 +556,24 @@ function selApplyScope(ev) {
   const total = RESTS ? RESTS.length : 0;
   const wantNetwork = total > 0 && APPLIED_SCOPE.size === total;
   const netCb = document.getElementById('netCb');
+  let _rerenderHandled = false;
   if (wantNetwork) {
     if (!NETWORK_MODE) {
       if (netCb) netCb.checked = true;
+      // toggleNetworkView сам зовёт renderAll() — отметим, чтобы не дублировать.
       toggleNetworkView(true);
+      _rerenderHandled = true;
     }
   } else {
     if (NETWORK_MODE) {
       if (netCb) netCb.checked = false;
       toggleNetworkView(false);
+      _rerenderHandled = true;
     }
     if (firstIdx >= 0) {
       selectRest(firstIdx);
+      // selectRest вызывает renderAll() для не-Меню вкладок, но не renderMenu.
+      // Пометка не ставится — ниже всё равно перерендерим активную вкладку.
     }
   }
 
@@ -535,6 +584,15 @@ function selApplyScope(ev) {
   // Перерисовать список (без чекбоксов в pending — они равны applied)
   const q = (document.getElementById('selFilter') || {}).value || '';
   buildSelList(RESTS, q);
+
+  // Bug 1 фикс: явно перерендерить активную вкладку. renderAll() уже мог
+  // вызваться внутри toggleNetworkView/selectRest, но он не покрывает
+  // «Меню» / «Персонал» / «Маркетинг» — без этого данные на «Меню»
+  // не обновлялись при клике «Вся сеть».
+  _rerenderActiveTab();
+
+  // Сохранить применённый выбор в localStorage (Phase 2.14)
+  _persistState();
 }
 
 // Legacy-обёртка: код в init() и selectRest() ещё вызывает pickRest(idx)
@@ -611,7 +669,59 @@ async function init() {
     buildSelList(RESTS);
     buildCompSlots(); buildCalendars();
     hideLoader();
-    selectRest(0);
+
+    // Phase 2.14: восстановление сохранённого состояния (scope + period)
+    // перед первым selectRest, чтобы не дёргать selectRest дважды.
+    let _firstIdx = 0;
+    let _persistedScopeIsAll = false;
+    try {
+      const _persisted = _loadPersistedState();
+      if (_persisted) {
+        // 1) Период — заменяем дефолтный [MIN_DATE, MAX_DATE] на сохранённый,
+        //    если он в пределах доступного диапазона.
+        if (_persisted.period && _persisted.period.start && _persisted.period.end) {
+          const ps = _persisted.period.start;
+          const pe = _persisted.period.end;
+          if (ps >= MIN_DATE && pe <= MAX_DATE && ps <= pe && CAL_STATE.global) {
+            CAL_STATE.global.start = ps;
+            CAL_STATE.global.end   = pe;
+            S.globalStart = S.dynStart = S.cmpStart = ps;
+            S.globalEnd   = S.dynEnd   = S.cmpEnd   = pe;
+            updateCalLabel('global');
+            // Пересчёт сетевых бенчмарков для нового периода.
+            await loadNetworkBenchmarks(S.globalStart, S.globalEnd);
+          }
+        }
+        // 2) Scope — восстанавливаем APPLIED_SCOPE и индекс первого ресторана.
+        if (Array.isArray(_persisted.scope) && _persisted.scope.length > 0) {
+          const _validIds = _persisted.scope.filter(id => RESTS.some(r => r.id === id));
+          if (_validIds.length > 0) {
+            APPLIED_SCOPE.clear();
+            _validIds.forEach(id => APPLIED_SCOPE.add(id));
+            const _idx = RESTS.findIndex(r => r.id === _validIds[0]);
+            if (_idx >= 0) _firstIdx = _idx;
+            if (_validIds.length >= 2 && typeof MENU_STATE !== 'undefined') {
+              MENU_STATE.selectedDeptIds.clear();
+              _validIds.forEach(id => MENU_STATE.selectedDeptIds.add(id));
+            }
+            _persistedScopeIsAll = (_validIds.length === RESTS.length);
+          }
+        }
+      }
+    } catch (e) { console.warn('[persist] restore failed:', e.message); }
+
+    selectRest(_firstIdx);
+
+    // Если scope == все рестораны → включить NETWORK_MODE для согласованного UI
+    // на не-Меню вкладках (как было до Phase 2.14).
+    if (_persistedScopeIsAll) {
+      const _nb = document.getElementById('netCb');
+      if (_nb) _nb.checked = true;
+      try { toggleNetworkView(true); } catch(e) { console.warn('[persist] netView:', e.message); }
+    }
+    // Обновить лейбл в поле верхнего селектора + чекбоксы в dropdown'е
+    _updateSelSearchLabel();
+    buildSelList(RESTS);
     // Phase 2.9.4: восстанавливаем вкладку, на которой был пользователь до рефреша
     try {
       const _savedTab = sessionStorage.getItem('chicko_tab');
@@ -828,10 +938,15 @@ function toggleNetworkView(on) {
     if (inp && R) inp.value = R.city;
     // Перезагружаем DOW-профили для ресторана
     if (R && R.id) {
-      loadDowProfiles(R.id).then(()=>{ try { renderAll(); } catch(e) { console.error(e); }});
+      loadDowProfiles(R.id).then(()=>{ try { _rerenderActiveTab(); } catch(e) { console.error(e); }});
     }
   }
-  renderAll();
+  // Bug 1: renderAll() не покрывает «Меню» — без этого галка «Вся сеть»
+  // не обновляла данные при активной вкладке Касаван-Смит.
+  _rerenderActiveTab();
+  // Сохранить выбор: при on=true APPLIED_SCOPE = все рестораны,
+  // при on=false APPLIED_SCOPE = { R.id }.
+  _persistState();
 }
 
 
@@ -1482,6 +1597,9 @@ function calApply(key,ev){
   else if(key==='dyn'){S.dynStart=st.start;S.dynEnd=st.end;}
   else if(key==='cmp'){S.cmpStart=st.start;S.cmpEnd=st.end;}
   updateCalLabel(key);
+  // Phase 2.14: сохранить период в localStorage (только глобальный календарь;
+  // динамика/сравнение синкаются с глобальным ниже и попадут в state автоматически).
+  if (key === 'global') { try { _persistState(); } catch(e) {} }
   document.getElementById(key+'CalDrop').classList.remove('open');
   if(key==='global'){
     // При изменении глобального календаря синкаем периоды всех вкладок
