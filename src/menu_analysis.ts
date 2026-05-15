@@ -263,14 +263,37 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
     if (rl) return rl;
 
     const url = new URL(request.url);
-    const restId = parsePositiveIntStrict(url.searchParams.get('restaurant_id'));
+    // Phase 2.14: multi-city mode. Параметр restaurant_ids (CSV из dept_id) имеет
+    // приоритет над restaurant_id. Если задан — анализируем выбранные точки как
+    // один большой ресторан (SUM по dept_uuid IN (...)). Network benchmark
+    // исключает все выбранные точки. Backwards-compat: если restaurant_ids не
+    // задан, работает старая логика с одним restaurant_id.
+    let restIds: number[] = [];
+    const restIdsRaw = url.searchParams.get('restaurant_ids');
+    if (restIdsRaw && restIdsRaw.trim() !== '') {
+      const parts = restIdsRaw.split(',').map(s => s.trim()).filter(s => s.length > 0);
+      for (const p of parts) {
+        const n = parsePositiveIntStrict(p);
+        if (n === null) {
+          return jsonResponse({ error: `Invalid restaurant_ids: '${p}'` }, request, 400);
+        }
+        restIds.push(n);
+      }
+      // дедупликация на случай повторов в CSV
+      restIds = Array.from(new Set(restIds));
+      if (restIds.length === 0) return jsonResponse({ error: 'Empty restaurant_ids' }, request, 400);
+      if (restIds.length > 100) return jsonResponse({ error: 'Too many restaurants (max 100)' }, request, 400);
+    } else {
+      const single = parsePositiveIntStrict(url.searchParams.get('restaurant_id'));
+      if (single === null) return jsonResponse({ error: 'Invalid restaurant_id' }, request, 400);
+      restIds = [single];
+    }
     const start = parseIsoDate(url.searchParams.get('start'));
     const end = parseIsoDate(url.searchParams.get('end'));
 
     // DIAG: убрать после фикса Phase 2.9.4
-    console.log(`[menu-diag] raw: restaurant_id=${url.searchParams.get('restaurant_id')} start=${url.searchParams.get('start')} end=${url.searchParams.get('end')} → parsed: restId=${restId} start=${start} end=${end}`);
+    console.log(`[menu-diag] raw: restaurant_ids=${restIdsRaw ?? '-'} restaurant_id=${url.searchParams.get('restaurant_id')} start=${url.searchParams.get('start')} end=${url.searchParams.get('end')} → parsed: restIds=[${restIds.join(',')}] start=${start} end=${end}`);
 
-    if (restId === null) return jsonResponse({ error: 'Invalid restaurant_id' }, request, 400);
     if (!start || !end) return jsonResponse({ error: 'Invalid dates' }, request, 400);
     if (start > end) return jsonResponse({ error: 'start > end' }, request, 400);
     if (daysBetween(start, end) > MAX_DATE_RANGE_DAYS) return jsonResponse({ error: 'Range too wide' }, request, 400);
@@ -280,7 +303,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
     const includeEvent = url.searchParams.get('include_event') !== '0';
     const includeTooSmall = url.searchParams.get('include_too_small') !== '0';
 
-    console.log(`[menu] user=${a.user_id} rest=${restId} ${start}..${end} ` +
+    console.log(`[menu] user=${a.user_id} rest_ids=[${restIds.join(',')}] (${restIds.length} pts) ${start}..${end} ` +
       `includes: dormant=${includeDormant ? 1 : 0} event=${includeEvent ? 1 : 0} too_small=${includeTooSmall ? 1 : 0}`);
 
     const ch = new ClickHouseClient({
@@ -289,12 +312,16 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
       password: env.CLICKHOUSE_PASSWORD || '',
     });
 
+    // Lookup всех dept_uuid по списку dept_id. restIds — отвалидированные
+    // positive integers (parsePositiveIntStrict), SQL-injection невозможна.
     const uuidR = await ch.query(
-      `SELECT DISTINCT dept_uuid FROM chicko.mart_restaurant_daily_base WHERE dept_id = ${restId} LIMIT 1`
+      `SELECT DISTINCT dept_uuid FROM chicko.mart_restaurant_daily_base WHERE dept_id IN (${restIds.join(',')})`
     );
     const uuidRows = uuidR.data as Array<{ dept_uuid: string }>;
-    if (!uuidRows.length) return jsonResponse({ error: 'Restaurant not found' }, request, 404);
-    const deptUuid = uuidRows[0].dept_uuid;
+    if (!uuidRows.length) return jsonResponse({ error: 'Restaurant(s) not found' }, request, 404);
+    const deptUuids = uuidRows.map(r => r.dept_uuid);
+    // SQL-фрагмент: 'uuid1','uuid2',... — используется во всех 3-х запросах ниже.
+    const uuidsSql = deptUuids.map(u => `'${u}'`).join(',');
 
     // Расширенное окно для seasonal — ±30 дней от календарного года назад
     const seasonalStart = shiftIsoDate(shiftOneYearBack(start), -SEASONAL_WINDOW_DAYS);
@@ -307,7 +334,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
           SELECT dept_uuid, report_date
           FROM chicko.mart_restaurant_daily_base
           WHERE is_anomaly_day = 0
-            AND dept_uuid = '${deptUuid}'
+            AND dept_uuid IN (${uuidsSql})
         ),
         history AS (
           SELECT
@@ -316,7 +343,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
             max(d.report_date) AS last_sold_at
           FROM chicko.dish_sales d
           INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
-          WHERE d.dept_uuid = '${deptUuid}'
+          WHERE d.dept_uuid IN (${uuidsSql})
             AND d.report_date <= '${end}'
             AND d.qty > 0
             AND d.dish_code != ''
@@ -342,7 +369,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
       FROM chicko.dish_sales d
       INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
       INNER JOIN history h ON d.dish_code = h.dish_code
-      WHERE d.dept_uuid = '${deptUuid}'
+      WHERE d.dept_uuid IN (${uuidsSql})
         AND d.report_date BETWEEN '${start}' AND '${end}'
         AND d.qty > 0
         AND d.dish_code != ''
@@ -364,7 +391,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
           SELECT DISTINCT d.dish_code
           FROM chicko.dish_sales d
           INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
-          WHERE d.dept_uuid = '${deptUuid}'
+          WHERE d.dept_uuid IN (${uuidsSql})
             AND d.qty > 0
             AND d.revenue_rub > 0
             AND d.dish_code != ''
@@ -378,7 +405,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
             (SUM(d.revenue_rub) - SUM(d.foodcost_rub)) / nullIf(SUM(d.qty), 0) AS margin_per_unit
           FROM chicko.dish_sales d
           INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
-          WHERE d.dept_uuid != '${deptUuid}'
+          WHERE d.dept_uuid NOT IN (${uuidsSql})
             AND d.dish_code IN (SELECT dish_code FROM mine)
             AND d.qty > 0
           GROUP BY d.dept_uuid, d.dish_code
@@ -389,7 +416,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
             SUM(d.qty) AS total_q
           FROM chicko.dish_sales d
           INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
-          WHERE d.dept_uuid != '${deptUuid}'
+          WHERE d.dept_uuid NOT IN (${uuidsSql})
             AND d.qty > 0
           GROUP BY d.dept_uuid
         )
@@ -409,7 +436,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
       FROM chicko.dish_sales d
       INNER JOIN chicko.mart_restaurant_daily_base b
         ON d.dept_uuid = b.dept_uuid AND d.report_date = b.report_date
-      WHERE d.dept_uuid = '${deptUuid}'
+      WHERE d.dept_uuid IN (${uuidsSql})
         AND b.is_anomaly_day = 0
         AND d.report_date BETWEEN '${seasonalStart}' AND '${seasonalEnd}'
         AND d.qty > 0
