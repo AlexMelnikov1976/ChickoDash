@@ -174,9 +174,9 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
     <div class="ntab active" data-tab="overview"  onclick="goTab(this)">📊 Обзор</div>
     <div class="ntab"        data-tab="dynamics"  onclick="goTab(this)">📈 Динамика</div>
     <div class="ntab"        data-tab="compare"   onclick="goTab(this)">⚡ Сравнение</div>
-    <div class="ntab"        data-tab="analysis"  onclick="goTab(this)">🧮 Анализ</div>
+    <div class="ntab"        data-tab="analysis"  onclick="goTab(this)">🧮 Что-если</div>
     <div class="ntab"        data-tab="pnl"       onclick="goTab(this)" style="display:none">💼 PnL</div>
-    <div class="ntab"        data-tab="menu"      onclick="goTab(this)">📋 Меню</div>
+    <div class="ntab"        data-tab="menu"      onclick="goTab(this)">📋 Касаван-Смит</div>
     <div class="ntab"          data-tab="staff"     onclick="goTab(this)">👥 Персонал</div>
     <div class="ntab"        data-tab="marketing" onclick="goTab(this)">💎 Маркетинг</div>
     <!-- dev tab hidden for users -->
@@ -243,6 +243,7 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
         <div class="kcard" title="Себестоимость продуктов как % выручки (iiko). Целевой диапазон: 20-23%. Ниже = лучше маржа."><div class="klbl">Фудкост %</div><div class="kval" id="kv-fc">—</div><div class="kdelta" id="kd-fc"></div><div class="kbench" id="kb-fc"></div><div class="kbar" id="kr-fc" style="width:0"></div></div>
         <div class="kcard" title="Доля скидок и списаний в выручке. Высокие скидки снижают маржу — контролируй причины."><div class="klbl">Скидки %</div><div class="kval" id="kv-disc">—</div><div class="kdelta" id="kd-disc"></div><div class="kbench" id="kb-disc"></div><div class="kbar" id="kr-disc" style="width:0"></div></div>
         <div class="kcard" id="kcard-del" title="Доля выручки от доставки. Высокая доля = зависимость от агрегаторов (Яндекс.Еда и др.)."><div class="klbl">Доставка %</div><div class="kval" id="kv-del">—</div><div class="kdelta" id="kd-del"></div><div class="kbench" id="kb-del"></div><div class="kbar bg" id="kr-del" style="width:0"></div></div>
+        <div class="kcard" id="kcard-ipc" title="Среднее количество блюд в одном чеке (из iiko). Выше = гости заказывают больше позиций; хорошо реагирует на допродажи и комбо."><div class="klbl">Блюд / чек</div><div class="kval" id="kv-ipc">—</div><div class="kdelta" id="kd-ipc"></div><div class="kbench" id="kb-ipc"></div><div class="kbar bb" id="kr-ipc" style="width:0"></div></div>
       </div>
       <div style="font-size:9px;color:var(--text3);margin-top:4px;text-align:right" title="Дни с техническими сбоями iiko (is_anomaly_day=1) автоматически исключаются из расчётов">ⓘ Дни с техсбоями исключены из расчётов</div>
       <div class="card" style="margin-bottom:0;margin-top:10px">
@@ -300,6 +301,7 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
     <div class="card"><div class="ctitle">🥩 Фудкост %</div><div style="height:150px"><canvas id="fcC"></canvas></div></div>
     <div class="card"><div class="ctitle">🏷️ Скидки %</div><div style="height:150px"><canvas id="discC"></canvas></div></div>
   </div>
+  <div class="card" id="ipc-dyn-card" style="display:none;margin-bottom:12px"><div class="ctitle">🍽️ Блюд / чек</div><div style="height:150px"><canvas id="ipcC"></canvas></div></div>
 
   <!-- DOW Analysis -->
   <div class="card" style="margin-bottom:12px">
@@ -310,6 +312,7 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
       <button class="mtbtn" onclick="setDOWMet('checks',this)">Чеки</button>
       <button class="mtbtn" onclick="setDOWMet('foodcost',this)">Фудкост</button>
       <button class="mtbtn" onclick="setDOWMet('discount',this)">Скидки</button>
+      <button class="mtbtn" onclick="setDOWMet('itemsPerCheck',this)">Блюд/чек</button>
     </div>
     <div id="dowCards" class="dow-grid"></div>
     <div style="height:170px"><canvas id="dowC"></canvas></div>
@@ -374,6 +377,7 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
       <button class="mtbtn" onclick="setCmpM('checks',this)">Чеки</button>
       <button class="mtbtn" onclick="setCmpM('foodcost',this)">Фудкост</button>
       <button class="mtbtn" onclick="setCmpM('discount',this)">Скидки</button>
+      <button class="mtbtn" onclick="setCmpM('itemsPerCheck',this)">Блюд/чек</button>
       <button class="mtbtn" onclick="setCmpM('delivPct',this)">Доставка%</button>
     </div>
     <div style="height:200px"><canvas id="cmpBarC"></canvas></div>
@@ -424,6 +428,10 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
           <div class="sl-hdr"><span class="sl-name">Скидки (%)</span><span><span class="sl-val" id="sl-wd-disc-v">—</span><span class="sl-unit">%</span></span></div>
           <input type="range" id="sl-wd-disc" min="0" max="25" step="0.1" oninput="calcPL()">
         </div>
+        <div class="sl-row" id="sl-wd-ipc-row" style="display:none">
+          <div class="sl-hdr"><span class="sl-name">Блюд/чек</span><span><span class="sl-val" id="sl-wd-ipc-v">—</span><span class="sl-unit"> бл</span></span></div>
+          <input type="range" id="sl-wd-ipc" min="1" max="8" step="0.1" oninput="calcPL()">
+        </div>
         <div style="border-top:1px solid rgba(74,158,245,.2);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;align-items:baseline">
           <span style="font-size:10px;color:var(--text2)">Выручка/будний день</span>
           <span id="pl-wd-rev" style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:700;color:var(--blue)">—</span>
@@ -443,6 +451,10 @@ if (location.protocol === 'file:') location.replace('http://localhost:8787/');
         <div class="sl-row">
           <div class="sl-hdr"><span class="sl-name">Скидки (%)</span><span><span class="sl-val" id="sl-we-disc-v">—</span><span class="sl-unit">%</span></span></div>
           <input type="range" id="sl-we-disc" min="0" max="25" step="0.1" oninput="calcPL()">
+        </div>
+        <div class="sl-row" id="sl-we-ipc-row" style="display:none">
+          <div class="sl-hdr"><span class="sl-name">Блюд/чек</span><span><span class="sl-val" id="sl-we-ipc-v">—</span><span class="sl-unit"> бл</span></span></div>
+          <input type="range" id="sl-we-ipc" min="1" max="8" step="0.1" oninput="calcPL()">
         </div>
         <div style="border-top:1px solid rgba(212,168,75,.2);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;align-items:baseline">
           <span style="font-size:10px;color:var(--text2)">Выручка/выходной день</span>

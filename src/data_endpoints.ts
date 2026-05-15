@@ -93,6 +93,7 @@ function localRestaurantRows(fullHistory = false) {
         discount_total_pct: +(r.disc + Math.cos(day / 5) * 0.4).toFixed(1),
         delivery_share_pct: +(r.delivery + Math.sin(day / 6) * 1.2).toFixed(1),
         is_anomaly_day: 0,
+        avg_items_per_check_total: 0,
       });
     }
   }
@@ -108,6 +109,7 @@ function localBenchmarks() {
       foodcost: 22.8,
       discount: 5.4,
       deliveryPct: 17.0,
+      itemsPerCheck: 2.5,
       restCount: 4,
     },
     top10: {
@@ -116,6 +118,7 @@ function localBenchmarks() {
       foodcost: 21.2,
       discount: 4.2,
       deliveryPct: 24.0,
+      itemsPerCheck: 3.2,
     },
     rest_count: 4,
     insufficient_data: false,
@@ -177,24 +180,29 @@ export async function handleRestaurantsList(request: Request, env: Env): Promise
 
     const sql = `
       SELECT
-        dept_id,
-        restaurant_name,
-        city,
-        toString(report_date) AS report_date_str,
-        revenue_total_rub,
-        revenue_bar_rub,
-        revenue_kitchen_rub,
-        revenue_delivery_rub,
-        avg_check_total_rub,
-        checks_total,
-        foodcost_total_pct,
-        discount_total_pct,
-        delivery_share_pct,
-        is_anomaly_day
-      FROM chicko.mart_restaurant_daily_base
+        m.dept_id,
+        m.restaurant_name,
+        m.city,
+        toString(m.report_date) AS report_date_str,
+        m.revenue_total_rub,
+        m.revenue_bar_rub,
+        m.revenue_kitchen_rub,
+        m.revenue_delivery_rub,
+        m.avg_check_total_rub,
+        m.checks_total,
+        m.foodcost_total_pct,
+        m.discount_total_pct,
+        m.delivery_share_pct,
+        m.is_anomaly_day,
+        coalesce(e.avg_items_per_check_total, 0) AS avg_items_per_check_total
+      FROM chicko.mart_restaurant_daily_base m
+      LEFT JOIN (
+        SELECT dept_id, report_date, avg_items_per_check_total
+        FROM chicko.daily_extract FINAL
+      ) e ON e.dept_id = m.dept_id AND e.report_date = m.report_date
       WHERE ${whereDate}
-        AND revenue_total_rub > 0
-      ORDER BY restaurant_name, report_date
+        AND m.revenue_total_rub > 0
+      ORDER BY m.restaurant_name, m.report_date
       SETTINGS max_execution_time=${maxExecTime}
     `;
 
@@ -265,22 +273,28 @@ export async function handleBenchmarks(request: Request, env: Env): Promise<Resp
 
     const sql = `
       SELECT
-        quantile(0.50)(revenue_total_rub)      AS rev_median,
-        quantile(0.90)(revenue_total_rub)      AS rev_p90,
-        quantile(0.50)(avg_check_total_rub)    AS chk_median,
-        quantile(0.90)(avg_check_total_rub)    AS chk_p90,
-        quantile(0.50)(checks_total)           AS cnt_median,
-        quantile(0.50)(foodcost_total_pct)     AS fc_median,
-        quantile(0.25)(foodcost_total_pct)     AS fc_p25,
-        quantile(0.50)(discount_total_pct)     AS disc_median,
-        quantile(0.25)(discount_total_pct)     AS disc_p25,
-        quantile(0.50)(delivery_share_pct)     AS del_median,
-        quantile(0.90)(delivery_share_pct)     AS del_p90,
-        count(DISTINCT dept_uuid)              AS rest_count
-      FROM chicko.mart_restaurant_daily_base
-      WHERE report_date BETWEEN '${start}' AND '${end}'
-        AND is_anomaly_day = 0
-        AND revenue_total_rub > 0
+        quantile(0.50)(m.revenue_total_rub)      AS rev_median,
+        quantile(0.90)(m.revenue_total_rub)      AS rev_p90,
+        quantile(0.50)(m.avg_check_total_rub)    AS chk_median,
+        quantile(0.90)(m.avg_check_total_rub)    AS chk_p90,
+        quantile(0.50)(m.checks_total)           AS cnt_median,
+        quantile(0.50)(m.foodcost_total_pct)     AS fc_median,
+        quantile(0.25)(m.foodcost_total_pct)     AS fc_p25,
+        quantile(0.50)(m.discount_total_pct)     AS disc_median,
+        quantile(0.25)(m.discount_total_pct)     AS disc_p25,
+        quantile(0.50)(m.delivery_share_pct)     AS del_median,
+        quantile(0.90)(m.delivery_share_pct)     AS del_p90,
+        quantileIf(0.50)(e.avg_items_per_check_total, e.avg_items_per_check_total > 0) AS ipc_median,
+        quantileIf(0.75)(e.avg_items_per_check_total, e.avg_items_per_check_total > 0) AS ipc_p75,
+        count(DISTINCT m.dept_uuid)              AS rest_count
+      FROM chicko.mart_restaurant_daily_base m
+      LEFT JOIN (
+        SELECT dept_id, report_date, avg_items_per_check_total
+        FROM chicko.daily_extract FINAL
+      ) e ON e.dept_id = m.dept_id AND e.report_date = m.report_date
+      WHERE m.report_date BETWEEN '${start}' AND '${end}'
+        AND m.is_anomaly_day = 0
+        AND m.revenue_total_rub > 0
     `;
 
     const clickhouse = mkClickhouse(env);
@@ -311,20 +325,22 @@ export async function handleBenchmarks(request: Request, env: Env): Promise<Resp
 
     return jsonResponse({
       net: {
-        revenue:     Math.round(+(b.rev_median as number | string)),
-        avgCheck:    Math.round(+(b.chk_median as number | string)),
-        checks:      Math.round(+(b.cnt_median as number | string)),
-        foodcost:    +(+(b.fc_median as number | string)).toFixed(1),
-        discount:    +(+(b.disc_median as number | string)).toFixed(1),
-        deliveryPct: +(+(b.del_median as number | string)).toFixed(1),
+        revenue:        Math.round(+(b.rev_median as number | string)),
+        avgCheck:       Math.round(+(b.chk_median as number | string)),
+        checks:         Math.round(+(b.cnt_median as number | string)),
+        foodcost:       +(+(b.fc_median as number | string)).toFixed(1),
+        discount:       +(+(b.disc_median as number | string)).toFixed(1),
+        deliveryPct:    +(+(b.del_median as number | string)).toFixed(1),
+        itemsPerCheck:  +(+(b.ipc_median as number | string) || 0).toFixed(2),
         restCount,
       },
       top10: {
-        revenue:     Math.round(+(b.rev_p90 as number | string)),
-        avgCheck:    Math.round(+(b.chk_p90 as number | string)),
-        foodcost:    +(+(b.fc_p25 as number | string)).toFixed(1),
-        discount:    +(+(b.disc_p25 as number | string)).toFixed(1),
-        deliveryPct: +(+(b.del_p90 as number | string)).toFixed(1),
+        revenue:        Math.round(+(b.rev_p90 as number | string)),
+        avgCheck:       Math.round(+(b.chk_p90 as number | string)),
+        foodcost:       +(+(b.fc_p25 as number | string)).toFixed(1),
+        discount:       +(+(b.disc_p25 as number | string)).toFixed(1),
+        deliveryPct:    +(+(b.del_p90 as number | string)).toFixed(1),
+        itemsPerCheck:  +(+(b.ipc_p75 as number | string) || 0).toFixed(2),
       },
       rest_count: restCount,
       insufficient_data: false,

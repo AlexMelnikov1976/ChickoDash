@@ -279,3 +279,71 @@ export async function handleAdminActivity(request: Request, env: Env): Promise<R
     return jsonResponse({ error: 'Request failed', detail: err.message }, request, 500);
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/admin/add-user
+// ─────────────────────────────────────────────────────────────────────────────
+// Добавляет нового пользователя в KV USERS.
+// Требует: Authorization: Bearer <ADMIN_SECRET>
+//
+// Body: { "email": "user@example.com", "is_admin": false }
+//
+export async function handleAddUser(request: Request, env: Env): Promise<Response> {
+  try {
+    // Проверка метода
+    if (request.method !== 'POST') {
+      return jsonResponse({ error: 'Method not allowed' }, request, 405);
+    }
+
+    // Проверка токена (ADMIN_SECRET из environment)
+    const authHeader = request.headers.get('Authorization') || '';
+    const expectedSecret = env.ADMIN_SECRET;
+    if (!expectedSecret || !authHeader.startsWith('Bearer ')) {
+      return jsonResponse({ error: 'Unauthorized' }, request, 401);
+    }
+
+    const token = authHeader.slice(7); // "Bearer "
+    if (token !== expectedSecret) {
+      return jsonResponse({ error: 'Invalid token' }, request, 401);
+    }
+
+    // Парсим body
+    const body = await request.json() as { email?: string; is_admin?: boolean };
+    const email = (body.email || '').trim().toLowerCase();
+    const isAdmin = body.is_admin === true;
+
+    if (!email || !email.includes('@')) {
+      return jsonResponse({ error: 'Invalid email' }, request, 400);
+    }
+
+    // Генерируем user_id из email (первая часть перед @)
+    const userId = email.split('@')[0].replace(/[^a-z0-9._-]/gi, '_');
+
+    // Добавляем в KV
+    const kvKey = `user:${email}`;
+    const kvValue = JSON.stringify({
+      email,
+      user_id: userId,
+      is_admin: isAdmin,
+      created_at: new Date().toISOString(),
+    });
+
+    await env.USERS.put(kvKey, kvValue);
+
+    return jsonResponse(
+      {
+        ok: true,
+        email,
+        user_id: userId,
+        is_admin: isAdmin,
+        message: `User ${email} added successfully`,
+      },
+      request,
+      201
+    );
+  } catch (error) {
+    const err = error as Error;
+    console.error(`[add-user] error: ${err.message}`);
+    return jsonResponse({ error: 'Request failed', detail: err.message }, request, 500);
+  }
+}

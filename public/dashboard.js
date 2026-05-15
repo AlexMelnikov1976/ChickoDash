@@ -276,8 +276,8 @@ let RESTS = [];
 // NET и TOP10 — значения по сети. Заполняются динамически через loadNetworkBenchmarks()
 // за тот же период что выбран пользователем (см. решение паспорта 5.25).
 // Начальные дефолты — только на случай если запрос не вернёт данных.
-let NET   = { revenue: 0, avgCheck: 0, checks: 0, foodcost: 0, discount: 0, deliveryPct: 0, restCount: 0 };
-let TOP10 = { revenue: 0, avgCheck: 0, foodcost: 0, discount: 0, deliveryPct: 0 };
+let NET   = { revenue: 0, avgCheck: 0, checks: 0, foodcost: 0, discount: 0, deliveryPct: 0, itemsPerCheck: 0, restCount: 0 };
+let TOP10 = { revenue: 0, avgCheck: 0, foodcost: 0, discount: 0, deliveryPct: 0, itemsPerCheck: 0 };
 
 // DOW-профили: like-for-like сравнения. Загружаются один раз при старте
 // и при смене выбранного ресторана. Окно — 90 дней.
@@ -306,8 +306,8 @@ const S = {
   // #76 v4 (21.04.2026): calc фокусируется только на выручке. Фудкост ушёл
   // в отдельную P&L-вкладку (после 1С-интеграции). Остались chk / cnt / disc
   // для каждого из сценариев (будни / выходные).
-  plWdChk: 0, plWdCnt: 0, plWdDisc: 0,
-  plWeChk: 0, plWeCnt: 0, plWeDisc: 0,
+  plWdChk: 0, plWdCnt: 0, plWdDisc: 0, plWdIpc: 0,
+  plWeChk: 0, plWeCnt: 0, plWeDisc: 0, plWeIpc: 0,
 };
 let R = null;
 // Сохранённое состояние при переходе на вкладки только-Калининград (staff, owner-pnl)
@@ -433,13 +433,13 @@ async function init() {
     for (const row of rows) {
       const id = row.dept_id;
       if (!restMap[id]) restMap[id] = { id:+id, name:row.restaurant_name, city:row.city, ts:[] };
-      if(+row.is_anomaly_day!==1) restMap[id].ts.push({ date:row.report_date_str, revenue:+row.revenue_total_rub||0, bar:+row.revenue_bar_rub||0, kitchen:+row.revenue_kitchen_rub||0, delivery:+row.revenue_delivery_rub||0, avgCheck:+row.avg_check_total_rub||0, checks:+row.checks_total||0, itemsPerCheck:0, foodcost:+row.foodcost_total_pct||0, discount:+row.discount_total_pct||0, deliveryPct:+row.delivery_share_pct||0 });
+      if(+row.is_anomaly_day!==1) restMap[id].ts.push({ date:row.report_date_str, revenue:+row.revenue_total_rub||0, bar:+row.revenue_bar_rub||0, kitchen:+row.revenue_kitchen_rub||0, delivery:+row.revenue_delivery_rub||0, avgCheck:+row.avg_check_total_rub||0, checks:+row.checks_total||0, itemsPerCheck:+row.avg_items_per_check_total||0, foodcost:+row.foodcost_total_pct||0, discount:+row.discount_total_pct||0, deliveryPct:+row.delivery_share_pct||0 });
     }
     RESTS = Object.values(restMap).filter(r=>r.ts.length>0).sort((a,b)=>a.city.localeCompare(b.city,'ru')||a.name.localeCompare(b.name,'ru'));
     for (const r of RESTS) {
       const last=r.ts[r.ts.length-1];
       r.revenue=last.revenue; r.bar=last.bar; r.kitchen=last.kitchen; r.delivery=last.delivery;
-      r.avgCheck=last.avgCheck; r.checks=last.checks; r.itemsPerCheck=0;
+      r.avgCheck=last.avgCheck; r.checks=last.checks; r.itemsPerCheck=safeAvg(r.ts,'itemsPerCheck')||0;
       r.foodcost=last.foodcost; r.discount=last.discount;
       const revs=r.ts.map(t=>t.revenue).filter(v=>v>0);
       r.avgRevenue=revs.length?revs.reduce((a,b)=>a+b,0)/revs.length:0;
@@ -511,7 +511,7 @@ async function loadFullHistory(silent=false) {
     for (const row of allRows) {
       const id = row.dept_id;
       if (!restMap[id]) restMap[id] = { id:+id, name:row.restaurant_name, city:row.city, ts:[] };
-      if(+row.is_anomaly_day!==1) restMap[id].ts.push({ date:row.report_date_str, revenue:+row.revenue_total_rub||0, bar:+row.revenue_bar_rub||0, kitchen:+row.revenue_kitchen_rub||0, delivery:+row.revenue_delivery_rub||0, avgCheck:+row.avg_check_total_rub||0, checks:+row.checks_total||0, itemsPerCheck:0, foodcost:+row.foodcost_total_pct||0, discount:+row.discount_total_pct||0, deliveryPct:+row.delivery_share_pct||0 });
+      if(+row.is_anomaly_day!==1) restMap[id].ts.push({ date:row.report_date_str, revenue:+row.revenue_total_rub||0, bar:+row.revenue_bar_rub||0, kitchen:+row.revenue_kitchen_rub||0, delivery:+row.revenue_delivery_rub||0, avgCheck:+row.avg_check_total_rub||0, checks:+row.checks_total||0, itemsPerCheck:+row.avg_items_per_check_total||0, foodcost:+row.foodcost_total_pct||0, discount:+row.discount_total_pct||0, deliveryPct:+row.delivery_share_pct||0 });
     }
     // Merge: 2025 ts вставляем перед существующими 90-дневными данными
     for (const id in restMap) {
@@ -590,7 +590,7 @@ function buildNetworkR() {
   const dateMap = {};
   for (const rest of RESTS) {
     for (const t of rest.ts) {
-      if (!dateMap[t.date]) dateMap[t.date] = { date:t.date, revenue:0, bar:0, kitchen:0, delivery:0, checks:0, avgCheck:0, foodcost_w:0, discount_w:0, deliveryPct:0, itemsPerCheck:0 };
+      if (!dateMap[t.date]) dateMap[t.date] = { date:t.date, revenue:0, bar:0, kitchen:0, delivery:0, checks:0, avgCheck:0, foodcost_w:0, discount_w:0, deliveryPct:0, ipc_w:0 };
       const d = dateMap[t.date];
       d.revenue += t.revenue;
       d.bar += t.bar||0;
@@ -599,6 +599,7 @@ function buildNetworkR() {
       d.checks += t.checks||0;
       d.foodcost_w += (t.foodcost||0) * t.revenue; // взвешиваем по выручке
       d.discount_w += (t.discount||0) * t.revenue;
+      if (t.itemsPerCheck > 0) d.ipc_w += t.itemsPerCheck * (t.checks||0); // взвешиваем по чекам
     }
   }
   const ts = Object.values(dateMap).map(d => ({
@@ -612,7 +613,7 @@ function buildNetworkR() {
     foodcost: d.revenue > 0 ? d.foodcost_w / d.revenue : 0,
     discount: d.revenue > 0 ? d.discount_w / d.revenue : 0,
     deliveryPct: d.revenue > 0 ? d.delivery / d.revenue * 100 : 0,
-    itemsPerCheck: 0,
+    itemsPerCheck: d.checks > 0 ? d.ipc_w / d.checks : 0,
   })).sort((a,b) => a.date.localeCompare(b.date));
 
   const last = ts[ts.length-1] || {};
@@ -629,7 +630,7 @@ function buildNetworkR() {
     checks: last.checks||0,
     foodcost: last.foodcost||0,
     discount: last.discount||0,
-    itemsPerCheck: 0,
+    itemsPerCheck: safeAvg(ts,'itemsPerCheck')||0,
   };
 }
 
@@ -678,20 +679,22 @@ async function loadNetworkBenchmarks(startDate, endDate) {
       return;
     }
     if (r.net) {
-      NET.revenue     = r.net.revenue;
-      NET.avgCheck    = r.net.avgCheck;
-      NET.checks      = r.net.checks;
-      NET.foodcost    = r.net.foodcost;
-      NET.discount    = r.net.discount;
-      NET.deliveryPct = r.net.deliveryPct;
-      NET.restCount   = r.net.restCount;
+      NET.revenue       = r.net.revenue;
+      NET.avgCheck      = r.net.avgCheck;
+      NET.checks        = r.net.checks;
+      NET.foodcost      = r.net.foodcost;
+      NET.discount      = r.net.discount;
+      NET.deliveryPct   = r.net.deliveryPct;
+      NET.itemsPerCheck = r.net.itemsPerCheck || 0;
+      NET.restCount     = r.net.restCount;
     }
     if (r.top10) {
-      TOP10.revenue     = r.top10.revenue;
-      TOP10.avgCheck    = r.top10.avgCheck;
-      TOP10.foodcost    = r.top10.foodcost;
-      TOP10.discount    = r.top10.discount;
-      TOP10.deliveryPct = r.top10.deliveryPct;
+      TOP10.revenue       = r.top10.revenue;
+      TOP10.avgCheck      = r.top10.avgCheck;
+      TOP10.foodcost      = r.top10.foodcost;
+      TOP10.discount      = r.top10.discount;
+      TOP10.deliveryPct   = r.top10.deliveryPct;
+      TOP10.itemsPerCheck = r.top10.itemsPerCheck || 0;
     }
   } catch(e) {
     console.error('[benchmarks] ошибка загрузки:', e.message);
@@ -1445,6 +1448,15 @@ function renderAlerts(){
     msgs.push({c:'a-red', t:`⬇️ <b>Выручка ${fmtR(cur.revenue)} — на ${fmtN(Math.abs(pctD(cur.revenue,base)))}% ниже ${cmpLabel} (${fmtR(base)})</b>, ${periodTxt}. Это системный разрыв — нужен план действий.`});
   }
 
+  // Глубина чека — сравниваем с медианой сети
+  const ipcAvg = safeAvg(ts.filter(t => t.itemsPerCheck > 0), 'itemsPerCheck') || 0;
+  const netIpc = NET.itemsPerCheck || 0;
+  if (ipcAvg > 0 && netIpc > 0 && ipcAvg < netIpc * 0.85) {
+    msgs.push({c:'a-amber', t:`🍽️ <b>Глубина чека ${fmtN(ipcAvg,1)} блюд — на ${fmtN(Math.abs(pctD(ipcAvg,netIpc)))}% ниже медианы сети (${fmtN(netIpc,1)} блюд)</b>, ${periodTxt}. Добавьте комбо-предложения или допродажи к основным блюдам.`});
+  } else if (ipcAvg > 0 && netIpc > 0 && ipcAvg >= (TOP10.itemsPerCheck||netIpc*1.15)*0.95) {
+    msgs.push({c:'a-green', t:`🍽️ <b>Глубина чека ${fmtN(ipcAvg,1)} блюд — на уровне топ-25% сети!</b> Гости заказывают больше позиций — хорошая работа с меню, ${periodTxt}.`});
+  }
+
   // Сортировка
   const order = {'a-red':0,'a-amber':1,'a-green':2,'a-blue':3};
   msgs.sort((a,b)=>(order[a.c]||9)-(order[b.c]||9));
@@ -1563,6 +1575,8 @@ function renderKPIs(){
   const fmtR_full  = (v) => fmtR(v, true);
   const fmtPct1 = (v) => v==null ? '—' : fmtN(v, 1) + '%';
   const fmtInt  = (v) => v==null ? '—' : Math.round(v) + ' чек';
+  const fmtIpc  = (v) => (v==null || v<=0) ? '—' : fmtN(v, 1) + ' блюд';
+  const curIpc = safeAvg(ts.filter(t => t.itemsPerCheck > 0), 'itemsPerCheck') || 0;
 
   renderCard('rev', cur.revenue,  fmtR_short, bm.my.rev,  bm.net_p50.rev,  bm.net_p75.rev,  false,
              (v,p75,p50) => p75 ? (v/p75)*100 : (p50 ? (v/p50)*60 : 0));
@@ -1600,6 +1614,14 @@ function renderKPIs(){
     const hasDelivery = ts.some(t => t.delivery > 0 || t.deliveryPct > 1);
     delCard.style.display = hasDelivery ? '' : 'none';
   }
+
+  // Глубина чека — используем сетевые бенчмарки напрямую (нет DOW-профиля для ipc)
+  if (curIpc > 0 || NET.itemsPerCheck > 0) {
+    renderCard('ipc', curIpc, fmtIpc, null, NET.itemsPerCheck||null, TOP10.itemsPerCheck||null, false,
+               (v,p75,p50) => p75 ? (v/p75)*100 : (p50 ? (v/p50)*60 : 0));
+  }
+  const ipcCard = document.getElementById('kcard-ipc');
+  if (ipcCard) ipcCard.style.display = (curIpc > 0 || NET.itemsPerCheck > 0) ? '' : 'none';
 }
 function setKPI(id,raw,fmt,unit,prevRaw,netBench,lb,benchLbl,barPct,barCls){
   document.getElementById('kv-'+id).innerHTML=fmt+(unit?`<span class="u">${unit}</span>`:'');
@@ -1664,14 +1686,18 @@ function _calcRestScoreDetail(r2) {
   var sDisc = _clamp(100 - disc * 5);
   var sDel  = _clamp(100 - Math.abs(dp - 20) * 3);
 
+  // Глубина чека: сравниваем с медианой сети (NET.itemsPerCheck)
+  var ipc = safeAvg(ts2.filter(function(t){ return t.itemsPerCheck > 0; }), 'itemsPerCheck') || 0;
+  var sIpc = (ipc > 0 && NET.itemsPerCheck > 0) ? _clamp(ipc / NET.itemsPerCheck * 80) : 50;
+
   var total = Math.round(
     sRev * 0.20 + sCnt * 0.10 + sChk * 0.10 +
-    sFc * 0.25 + sDisc * 0.20 + sDel * 0.15
+    sFc * 0.20 + sDisc * 0.20 + sDel * 0.15 + sIpc * 0.05
   );
   return {
     score: _clamp(total),
     growth: { rev: Math.round(sRev), cnt: Math.round(sCnt), chk: Math.round(sChk), yoy: useYoy },
-    health: { fc: Math.round(sFc), disc: Math.round(sDisc), del: Math.round(sDel) }
+    health: { fc: Math.round(sFc), disc: Math.round(sDisc), del: Math.round(sDel), ipc: Math.round(sIpc) }
   };
 }
 
@@ -1721,7 +1747,8 @@ function renderScore(){
     brHtml += '<div class="sbr-group">Здоровье (60%)</div>';
     [{l:'Фудкост',v:detail.health.fc,c:'#2ECC71'},
      {l:'Скидки',v:detail.health.disc,c:'#F39C12'},
-     {l:'Доставка',v:detail.health.del,c:'#E67E22'}].forEach(function(p){
+     {l:'Доставка',v:detail.health.del,c:'#E67E22'},
+     {l:'Глубина',v:detail.health.ipc,c:'#9B59B6'}].forEach(function(p){
       brHtml += '<div class="sbr-row"><span class="sbr-lbl">'+p.l+'</span><div class="sbr-t"><div class="sbr-f" style="width:'+p.v+'%;background:'+p.c+'"></div></div><span class="sbr-v" style="color:var(--text2);font-size:10px">'+p.v+'%</span></div>';
     });
   }
@@ -1751,12 +1778,13 @@ function renderScore(){
 const RANK_FULL_STATE = { sortCol: 'revenue', sortDir: 'desc' };
 
 const RANK_FULL_COLS = [
-  { key: 'revenue',  label: 'Выручка',    agg: 'sum', fmt: v => fmtR(v, true), better: 'high' },
-  { key: 'avgCheck', label: 'Ср.чек',     agg: 'avg', fmt: v => Math.round(v).toLocaleString('ru') + '\u00A0₽', better: 'high' },
-  { key: 'checks',   label: 'Чеки',       agg: 'sum', fmt: v => Math.round(v).toLocaleString('ru'), better: 'high' },
-  { key: 'foodcost', label: 'Фудкост%',    agg: 'avg', fmt: v => v !== null ? v.toFixed(1) : '—', better: 'low' },
-  { key: 'discount', label: 'Скидка%',     agg: 'avg', fmt: v => v !== null ? v.toFixed(1) : '—', better: 'low' },
-  { key: 'delivery', label: 'Доставка%',   agg: 'avg', fmt: v => v !== null ? v.toFixed(1) : '—', better: 'high' },
+  { key: 'revenue',       label: 'Выручка',    agg: 'sum', fmt: v => fmtR(v, true), better: 'high' },
+  { key: 'avgCheck',      label: 'Ср.чек',     agg: 'avg', fmt: v => Math.round(v).toLocaleString('ru') + '\u00A0₽', better: 'high' },
+  { key: 'checks',        label: 'Чеки',       agg: 'sum', fmt: v => Math.round(v).toLocaleString('ru'), better: 'high' },
+  { key: 'itemsPerCheck', label: 'Блюд/чек',   agg: 'avg', fmt: v => (v && v > 0) ? v.toFixed(1) : '—', better: 'high' },
+  { key: 'foodcost',      label: 'Фудкост%',   agg: 'avg', fmt: v => v !== null ? v.toFixed(1) : '—', better: 'low' },
+  { key: 'discount',      label: 'Скидка%',    agg: 'avg', fmt: v => v !== null ? v.toFixed(1) : '—', better: 'low' },
+  { key: 'delivery',      label: 'Доставка%',  agg: 'avg', fmt: v => v !== null ? v.toFixed(1) : '—', better: 'high' },
 ];
 
 function renderRankTableFull() {
@@ -1777,6 +1805,7 @@ function renderRankTableFull() {
     const fc = safeAvg(ts, 'foodcost');
     const disc = safeAvg(ts, 'discount');
     const del = safeAvg(ts, 'deliveryPct');
+    const ipc = safeAvg(ts.filter(t => t.itemsPerCheck > 0), 'itemsPerCheck');
     return {
       idx: idx,
       name: r.name,
@@ -1784,6 +1813,7 @@ function renderRankTableFull() {
       revenue: totalRev,
       avgCheck: avgChk || 0,
       checks: totalChecks,
+      itemsPerCheck: ipc || 0,
       foodcost: fc,
       discount: disc,
       delivery: del,
@@ -2218,7 +2248,7 @@ function groupTs(ts, mode) {
       foodcost: totalRev > 0 ? items.reduce((s,t) => s + (t.foodcost||0) * t.revenue, 0) / totalRev : 0,
       discount: totalRev > 0 ? items.reduce((s,t) => s + (t.discount||0) * t.revenue, 0) / totalRev : 0,
       deliveryPct: totalRev > 0 ? items.reduce((s,t) => s + (t.delivery||0), 0) / totalRev * 100 : 0,
-      itemsPerCheck: 0,
+      itemsPerCheck: (function(){ const ipcItems=items.filter(t=>t.itemsPerCheck>0); return ipcItems.length && totalChecks>0 ? ipcItems.reduce((s,t)=>s+(t.itemsPerCheck||0)*(t.checks||0),0) / ipcItems.reduce((s,t)=>s+(t.checks||0),0) : 0; })(),
       _days: items.length,
     };
   });
@@ -2264,6 +2294,10 @@ function renderDynamics(){
   renderLineChart2('cntC','checks','#9B59B6','Чеков',netTs,null);
   renderLineChart2('fcC','foodcost','#F39C12','Фудкост %',netTs,null);
   renderLineChart2('discC','discount','#E74C3C','Скидки %',netTs,null);
+  const hasIpcData = getDynTs().some(t => t.itemsPerCheck > 0);
+  const ipcDynCard = document.getElementById('ipc-dyn-card');
+  if (ipcDynCard) ipcDynCard.style.display = hasIpcData ? '' : 'none';
+  if (hasIpcData) renderLineChart2('ipcC','itemsPerCheck','#1ABC9C','Блюд/чек',netTs,null);
   renderDOW();
   renderDowFilter();
   renderDynStats();
@@ -2383,7 +2417,7 @@ function renderDowFilter(){
 
 function renderDynStats(){
   const ts=getDynTs();
-  const metrics=[{k:'revenue',l:'Выручка',f:fmtR,lb:false},{k:'avgCheck',l:'Ср. чек',f:fmtR,lb:false},{k:'checks',l:'Чеков',f:v=>Math.round(v),lb:false},{k:'foodcost',l:'Фудкост %',f:v=>v!==null?fmtN(v)+'%':'—',lb:true},{k:'discount',l:'Скидки %',f:v=>fmtN(v)+'%',lb:true}];
+  const metrics=[{k:'revenue',l:'Выручка',f:fmtR,lb:false},{k:'avgCheck',l:'Ср. чек',f:fmtR,lb:false},{k:'checks',l:'Чеков',f:v=>Math.round(v),lb:false},{k:'itemsPerCheck',l:'Блюд/чек',f:v=>v&&v>0?fmtN(v,1):'—',lb:false},{k:'foodcost',l:'Фудкост %',f:v=>v!==null?fmtN(v)+'%':'—',lb:true},{k:'discount',l:'Скидки %',f:v=>fmtN(v)+'%',lb:true}];
   document.getElementById('dynStatB').innerHTML=metrics.map(m=>{
     const vals=ts.map(t=>t[m.k]).filter(v=>v!==null&&v!==undefined&&v>0);
     if(!vals.length) return '';
@@ -2425,6 +2459,7 @@ function getCompMetVal(r2,m){
   const ts=getCmpTs(r2);
   if(!ts.length) return 0;
   if(m==='delivPct'){const r=safeAvg(ts,'revenue')||1,d=safeAvg(ts,'delivery')||0;return d/r*100;}
+  if(m==='itemsPerCheck'){const iTs=ts.filter(t=>t.itemsPerCheck>0);return iTs.length?safeAvg(iTs,'itemsPerCheck')||0:0;}
   return safeAvg(ts,m)||0;
 }
 
@@ -2437,7 +2472,7 @@ function renderCompare(){
   const trTitle=document.getElementById('cmpTrTitle');
   if(trTitle) trTitle.innerHTML='📈 Тренд выручки по '+(groupLabels[S.cmpGroup]||'дням');
   const isRub=['revenue','avgCheck'].includes(S.compMetric);
-  const netVals={revenue:NET.revenue,avgCheck:NET.avgCheck,checks:NET.checks,foodcost:NET.foodcost,discount:NET.discount,delivPct:NET.deliveryPct};
+  const netVals={revenue:NET.revenue,avgCheck:NET.avgCheck,checks:NET.checks,itemsPerCheck:NET.itemsPerCheck,foodcost:NET.foodcost,discount:NET.discount,delivPct:NET.deliveryPct};
 
   mkChart('cmpBarC',{type:'bar',data:{
     labels:comps.map(r2=>r2.city),
@@ -2450,7 +2485,7 @@ function renderCompare(){
   const baseDates=getCmpTs(comps[0]).map(t=>t.label||fmtD(t.date));
   mkChart('cmpTrC',{type:'line',data:{labels:baseDates,datasets:comps.map((r2,i)=>({label:r2.city,data:getCmpTs(r2).map(t=>t.revenue),borderColor:COMP_COLORS[i],backgroundColor:COMP_COLORS[i]+'15',borderWidth:i===0?2.5:1.5,pointRadius:i===0?3:2,fill:false,tension:.3}))},options:chartOpts(v=>fmtR(v))});
 
-  const metrics=[{k:'revenue',l:'Выручка',f:fmtR,lb:false},{k:'avgCheck',l:'Ср. чек',f:fmtR,lb:false},{k:'checks',l:'Чеков/день',f:v=>Math.round(v),lb:false},{k:'foodcost',l:'Фудкост %',f:v=>v!==null?fmtN(v)+'%':'—',lb:true},{k:'discount',l:'Скидки %',f:v=>fmtN(v)+'%',lb:true},{k:'delivPct',l:'Доставка %',f:v=>fmtN(v,1)+'%',lb:false}];
+  const metrics=[{k:'revenue',l:'Выручка',f:fmtR,lb:false},{k:'avgCheck',l:'Ср. чек',f:fmtR,lb:false},{k:'checks',l:'Чеков/день',f:v=>Math.round(v),lb:false},{k:'itemsPerCheck',l:'Блюд/чек',f:v=>v&&v>0?fmtN(v,1):'—',lb:false},{k:'foodcost',l:'Фудкост %',f:v=>v!==null?fmtN(v)+'%':'—',lb:true},{k:'discount',l:'Скидки %',f:v=>fmtN(v)+'%',lb:true},{k:'delivPct',l:'Доставка %',f:v=>fmtN(v,1)+'%',lb:false}];
   document.getElementById('cmpTH').innerHTML=`<tr><th>Метрика</th>${comps.map((r2,i)=>`<th style="color:${COMP_COLORS[i]}">${r2.city}</th>`).join('')}</tr>`;
   document.getElementById('cmpTB').innerHTML=metrics.map(m=>{
     const vals=comps.map(r2=>getCompMetVal(r2,m.k));
@@ -2467,7 +2502,9 @@ function renderCompare(){
   // #43 extension: если у ресторана доставки нет (≤1%) — не показываем строку
   // в таблице vs Сеть/ТОП-10. KPI-карточка скрывается отдельно (см. выше).
   const hasDelivery = dp > 1;
+  const ipc_r1 = getCompMetVal(comps[0], 'itemsPerCheck');
   const rows=[{l:'Выручка/день',s:r.revenue,n:NET.revenue,t:TOP10.revenue,f:fmtR,lb:false},{l:'Ср. чек',s:r.avgCheck,n:NET.avgCheck,t:TOP10.avgCheck,f:fmtR,lb:false},{l:'Чеков/день',s:r.checks,n:NET.checks,t:null,f:v=>Math.round(v),lb:false},{l:'Фудкост %',s:r.foodcost,n:NET.foodcost,t:TOP10.foodcost,f:v=>v!==null?fmtN(v)+'%':'—',lb:true},{l:'Скидки %',s:r.discount,n:NET.discount,t:TOP10.discount,f:v=>fmtN(v,1)+'%',lb:true}];
+  if (ipc_r1 > 0 || NET.itemsPerCheck > 0) rows.push({l:'Блюд/чек',s:ipc_r1||0,n:NET.itemsPerCheck||0,t:TOP10.itemsPerCheck||null,f:v=>v&&v>0?fmtN(v,1):'—',lb:false});
   if (hasDelivery) rows.push({l:'Доставка %',s:dp,n:NET.deliveryPct,t:TOP10.deliveryPct,f:v=>fmtN(v,1)+'%',lb:false});
   // Update "ваша точка" header with city name
   const ownHdr=document.getElementById('netTH_own');
@@ -2536,17 +2573,21 @@ function computePlContext() {
   const wd90 = base90.filter(t => !isWeekend(t.date));
   const we90 = base90.filter(t => isWeekend(t.date));
 
+  const wdIpc90 = wd90.filter(t => (t.itemsPerCheck||0) > 0);
+  const weIpc90 = we90.filter(t => (t.itemsPerCheck||0) > 0);
   const wdBase = {
     chk:  safeAvg(wd90, 'avgCheck') || R.avgCheck || 1400,
     cnt:  safeAvg(wd90, 'checks')   || R.checks   || 80,
     fc:   safeAvg(wd90, 'foodcost') || NET.foodcost || 23,
     disc: safeAvg(wd90, 'discount') || R.discount || 7,
+    ipc:  safeAvg(wdIpc90, 'itemsPerCheck') || 0,
   };
   const weBase = {
     chk:  safeAvg(we90, 'avgCheck') || R.avgCheck || 1400,
     cnt:  safeAvg(we90, 'checks')   || R.checks   || 80,
     fc:   safeAvg(we90, 'foodcost') || NET.foodcost || 23,
     disc: safeAvg(we90, 'discount') || R.discount || 7,
+    ipc:  safeAvg(weIpc90, 'itemsPerCheck') || 0,
   };
 
   return {
@@ -2580,6 +2621,22 @@ function renderAnalysis(){
   S.plWeCnt  = +document.getElementById('sl-we-cnt').value;
   S.plWeDisc = +document.getElementById('sl-we-disc').value;
 
+  // IPC слайдеры — показываем только если есть данные
+  const slWdIpcRow = document.getElementById('sl-wd-ipc-row');
+  const slWeIpcRow = document.getElementById('sl-we-ipc-row');
+  const slWdIpc = document.getElementById('sl-wd-ipc');
+  const slWeIpc = document.getElementById('sl-we-ipc');
+  if (slWdIpc && ctx.wdBase.ipc > 0) {
+    slWdIpcRow.style.display = '';
+    slWdIpc.value = ctx.wdBase.ipc.toFixed(1);
+    S.plWdIpc = +slWdIpc.value;
+  }
+  if (slWeIpc && ctx.weBase.ipc > 0) {
+    slWeIpcRow.style.display = '';
+    slWeIpc.value = ctx.weBase.ipc.toFixed(1);
+    S.plWeIpc = +slWeIpc.value;
+  }
+
   calcPL();
 }
 function resetPL(){renderAnalysis()}
@@ -2593,6 +2650,8 @@ function renderWDB(){
   const wdCnt=safeAvg(wdTs,'checks')||0,weCnt=safeAvg(weTs,'checks')||0;
   const wdFc=safeAvg(wdTs,'foodcost'),weFc=safeAvg(weTs,'foodcost');
   const wdDisc=safeAvg(wdTs,'discount')||0,weDisc=safeAvg(weTs,'discount')||0;
+  const wdIpc=safeAvg(wdTs.filter(t=>t.itemsPerCheck>0),'itemsPerCheck')||0;
+  const weIpc=safeAvg(weTs.filter(t=>t.itemsPerCheck>0),'itemsPerCheck')||0;
 
   document.getElementById('wdbGrid').innerHTML=`
     <div class="wdb-box wd">
@@ -2603,6 +2662,7 @@ function renderWDB(){
       <div class="wdb-row"><span>Чеков/день</span><span style="color:var(--text)">${Math.round(wdCnt)}</span></div>
       <div class="wdb-row"><span>Фудкост</span><span style="color:var(--text)">${wdFc!==null?fmtN(wdFc)+'%':'—'}</span></div>
       <div class="wdb-row"><span>Скидки</span><span style="color:var(--text)">${fmtN(wdDisc,1)}%</span></div>
+      ${wdIpc>0?`<div class="wdb-row"><span>Блюд/чек</span><span style="color:var(--text)">${wdIpc.toFixed(1)}</span></div>`:''}
     </div>
     <div class="wdb-box we">
       <div class="wdb-t" style="color:var(--gold)">🎉 Выходные (Сб–Вс) · ${weTs.length} дней</div>
@@ -2612,6 +2672,7 @@ function renderWDB(){
       <div class="wdb-row"><span>Чеков/день</span><span style="color:var(--text)">${Math.round(weCnt)}</span></div>
       <div class="wdb-row"><span>Фудкост</span><span style="color:var(--text)">${weFc!==null?fmtN(weFc)+'%':'—'}</span></div>
       <div class="wdb-row"><span>Скидки</span><span style="color:var(--text)">${fmtN(weDisc,1)}%</span></div>
+      ${weIpc>0?`<div class="wdb-row"><span>Блюд/чек</span><span style="color:var(--text)">${weIpc.toFixed(1)}</span></div>`:''}
     </div>`;
 
   // Chart showing WD vs WE by day
@@ -2671,13 +2732,17 @@ function calcPL(){
   const ctx = S._plCtx;
   if(!ctx) return;
 
-  // Читаем 6 ползунков (без фудкоста — он в P&L вкладке)
+  // Читаем 6+2 ползунков (без фудкоста — он в P&L вкладке)
   const wdChk = +slWdChk.value;
   const wdCnt = +document.getElementById('sl-wd-cnt').value;
   const wdDisc= +document.getElementById('sl-wd-disc').value;
   const weChk = +document.getElementById('sl-we-chk').value;
   const weCnt = +document.getElementById('sl-we-cnt').value;
   const weDisc= +document.getElementById('sl-we-disc').value;
+  const slWdIpcEl = document.getElementById('sl-wd-ipc');
+  const slWeIpcEl = document.getElementById('sl-we-ipc');
+  const wdIpc = slWdIpcEl ? +slWdIpcEl.value : S.plWdIpc;
+  const weIpc = slWeIpcEl ? +slWeIpcEl.value : S.plWeIpc;
 
   // Подписи. Средний чек — полный формат «1 897 ₽», остальные — как есть.
   document.getElementById('sl-wd-chk-v').textContent = fmtR(wdChk, true);
@@ -2686,12 +2751,18 @@ function calcPL(){
   document.getElementById('sl-we-chk-v').textContent = fmtR(weChk, true);
   document.getElementById('sl-we-cnt-v').textContent = weCnt;
   document.getElementById('sl-we-disc-v').textContent= fmtN(weDisc,1);
+  if (document.getElementById('sl-wd-ipc-v')) document.getElementById('sl-wd-ipc-v').textContent = fmtN(wdIpc,1);
+  if (document.getElementById('sl-we-ipc-v')) document.getElementById('sl-we-ipc-v').textContent = fmtN(weIpc,1);
+
+  // IPC мультипликатор: изменение глубины чека пропорционально сдвигает эффективный средний чек
+  const wdIpcFactor = (S.plWdIpc > 0 && wdIpc > 0) ? wdIpc / S.plWdIpc : 1;
+  const weIpcFactor = (S.plWeIpc > 0 && weIpc > 0) ? weIpc / S.plWeIpc : 1;
 
   // plCalc с фудкостом=0 — в revenue-калькуляторе фудкост не важен, margin
   // не используется. Оставляем 0 чтобы не плодить новую функцию для revenue-only.
   const FC_STUB = 0;
-  const wdScen = plCalc(wdChk, wdCnt, FC_STUB, wdDisc, S.plWdDisc);
-  const weScen = plCalc(weChk, weCnt, FC_STUB, weDisc, S.plWeDisc);
+  const wdScen = plCalc(wdChk * wdIpcFactor, wdCnt, FC_STUB, wdDisc, S.plWdDisc);
+  const weScen = plCalc(weChk * weIpcFactor, weCnt, FC_STUB, weDisc, S.plWeDisc);
   const wdFact = plCalc(S.plWdChk, S.plWdCnt, FC_STUB, S.plWdDisc, S.plWdDisc);
   const weFact = plCalc(S.plWeChk, S.plWeCnt, FC_STUB, S.plWeDisc, S.plWeDisc);
 
@@ -2759,11 +2830,13 @@ function calcPL(){
   // Каждый шаг показывает сколько ₽ добавилось именно за счёт этого изменения.
   const steps = [];
   // Текущее состояние — baseline, пересчитываем по мере применения изменений
-  let curWdChk = S.plWdChk, curWdCnt = S.plWdCnt, curWdDisc = S.plWdDisc;
-  let curWeChk = S.plWeChk, curWeCnt = S.plWeCnt, curWeDisc = S.plWeDisc;
+  let curWdChk = S.plWdChk, curWdCnt = S.plWdCnt, curWdDisc = S.plWdDisc, curWdIpc = S.plWdIpc;
+  let curWeChk = S.plWeChk, curWeCnt = S.plWeCnt, curWeDisc = S.plWeDisc, curWeIpc = S.plWeIpc;
   const curRev = () => {
-    const wd = plCalc(curWdChk, curWdCnt, 0, curWdDisc, S.plWdDisc);
-    const we = plCalc(curWeChk, curWeCnt, 0, curWeDisc, S.plWeDisc);
+    const wdIF = (S.plWdIpc > 0 && curWdIpc > 0) ? curWdIpc / S.plWdIpc : 1;
+    const weIF = (S.plWeIpc > 0 && curWeIpc > 0) ? curWeIpc / S.plWeIpc : 1;
+    const wd = plCalc(curWdChk * wdIF, curWdCnt, 0, curWdDisc, S.plWdDisc);
+    const we = plCalc(curWeChk * weIF, curWeCnt, 0, curWeDisc, S.plWeDisc);
     return wd.rev * ctx.remWd + we.rev * ctx.remWe;
   };
   let prevRev = curRev();
@@ -2794,6 +2867,11 @@ function calcPL(){
       `${fmtN(S.plWdDisc,1)}% → ${fmtN(wdDisc,1)}% (${wdDisc >= S.plWdDisc ? '+' : ''}${fmtN(wdDisc - S.plWdDisc, 1)}%)`,
       () => { curWdDisc = wdDisc; });
   }
+  if (S.plWdIpc > 0 && wdIpc !== S.plWdIpc) {
+    applyStep('📅', 'Будни — блюд/чек',
+      `${fmtN(S.plWdIpc,1)} → ${fmtN(wdIpc,1)} бл/чек`,
+      () => { curWdIpc = wdIpc; });
+  }
   // Выходные
   if (weChk !== S.plWeChk) {
     applyStep('🎉', 'Выходные — средний чек',
@@ -2809,6 +2887,11 @@ function calcPL(){
     applyStep('🎉', 'Выходные — скидки',
       `${fmtN(S.plWeDisc,1)}% → ${fmtN(weDisc,1)}% (${weDisc >= S.plWeDisc ? '+' : ''}${fmtN(weDisc - S.plWeDisc, 1)}%)`,
       () => { curWeDisc = weDisc; });
+  }
+  if (S.plWeIpc > 0 && weIpc !== S.plWeIpc) {
+    applyStep('🎉', 'Выходные — блюд/чек',
+      `${fmtN(S.plWeIpc,1)} → ${fmtN(weIpc,1)} бл/чек`,
+      () => { curWeIpc = weIpc; });
   }
 
   if (steps.length === 0) {

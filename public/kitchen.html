@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Кухня · Chicko Analytics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#151E2E;--bg2:#1C2840;--card:#1E2D47;--card2:#243352;
+  --border:#2E4068;--border2:#3A5080;
+  --gold:#D4A84B;--gold2:#F0C96A;--gold3:#FDE9B0;
+  --text:#EBF0FA;--text2:#8AAACE;--text3:#4E6A90;
+  --green:#2ECC71;--green2:#27AE60;
+  --amber:#F39C12;--red:#E74C3C;
+  --teal:#1ABC9C;--blue:#4A9EF5;--purple:#9B59B6;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;min-height:100vh}
+
+/* HEADER */
+.hdr{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20px;position:sticky;top:0;z-index:200;box-shadow:0 2px 16px rgba(0,0,0,.3)}
+.hdr-in{max-width:1440px;margin:0 auto;display:flex;align-items:center;gap:14px;height:56px}
+.logo{font-family:'Cormorant Garamond',serif;font-size:19px;font-weight:700;color:var(--gold);letter-spacing:2px;text-transform:uppercase;flex-shrink:0;line-height:1}
+.logo small{display:block;font-family:'Inter',sans-serif;font-size:8px;color:var(--text3);letter-spacing:1.5px;font-weight:400;margin-top:1px}
+.hdr-back{display:flex;align-items:center;gap:6px;color:var(--text2);font-size:11px;text-decoration:none;padding:5px 10px;border:1px solid var(--border);border-radius:7px;transition:.15s}
+.hdr-back:hover{border-color:var(--gold);color:var(--gold)}
+.hdr-title{font-size:14px;font-weight:600;color:var(--text)}
+.hdr-sub{font-size:10px;color:var(--text2)}
+.hdr-rest{background:rgba(212,168,75,.12);border:1px solid rgba(212,168,75,.3);color:var(--gold);padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.5px}
+.hdr-freshness{margin-left:auto;font-size:10px;color:var(--text3)}
+.hdr-freshness span{color:var(--gold);font-weight:600}
+
+/* NAV STRIP */
+.nav-strip{background:var(--card);border-bottom:1px solid var(--border);padding:0 20px;position:sticky;top:56px;z-index:99}
+.nav-in{max-width:1440px;margin:0 auto;display:flex;align-items:center;gap:0;justify-content:space-between}
+.nav-tabs{display:flex}
+.ntab{padding:11px 16px;color:var(--text2);font-size:11px;cursor:pointer;border-bottom:2px solid transparent;transition:all .2s;user-select:none;white-space:nowrap;font-weight:500}
+.ntab:hover{color:var(--text)}
+.ntab.active{color:var(--gold);border-bottom-color:var(--gold)}
+.pgroup{display:flex;gap:4px;padding:8px 0}
+.pbtn{padding:5px 11px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text2);font-family:'Inter',sans-serif;font-size:10px;cursor:pointer;transition:all .15s;font-weight:500}
+.pbtn:hover{border-color:var(--border2);color:var(--text)}
+.pbtn.active{background:rgba(212,168,75,.18);border-color:var(--gold);color:var(--gold)}
+
+/* MAIN */
+.main{max-width:1440px;margin:0 auto;padding:18px 20px}
+
+/* KPI ROW */
+.krow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.kcard{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden;transition:border-color .2s}
+.kcard:hover{border-color:var(--border2)}
+.klbl{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:4px;font-weight:600}
+.kval{font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:700;color:var(--text);line-height:1;margin-bottom:4px}
+.kval .u{font-size:14px;color:var(--text2);font-family:'Inter',sans-serif;font-weight:400}
+.kdelta{font-size:10px;display:flex;align-items:center;gap:4px;min-height:14px}
+.kbench{font-size:10px;color:var(--text3);margin-top:2px}
+.kbar{position:absolute;bottom:0;left:0;height:3px;border-radius:0 0 12px 12px}
+.bg{background:linear-gradient(90deg,var(--green2),var(--green))}
+.ba{background:linear-gradient(90deg,#c87f0a,var(--amber))}
+.br{background:linear-gradient(90deg,#c0392b,var(--red))}
+.bgo{background:linear-gradient(90deg,var(--gold),var(--gold2))}
+.up{color:var(--green)}.dn{color:var(--red)}.nt{color:var(--text2)}
+
+/* ALERT */
+.alert{padding:9px 14px;border-radius:8px;font-size:11px;margin-bottom:10px;display:flex;align-items:flex-start;gap:8px;line-height:1.5}
+.alert b{font-weight:600}
+.a-red{background:rgba(231,76,60,.12);border:1px solid rgba(231,76,60,.3);color:#f4a49e}
+.a-amber{background:rgba(243,156,18,.12);border:1px solid rgba(243,156,18,.3);color:#f8cd7a}
+.a-green{background:rgba(46,204,113,.12);border:1px solid rgba(46,204,113,.3);color:#82e0aa}
+
+/* LAYOUT GRID */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.g21{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px}
+.g12{display:grid;grid-template-columns:1fr 2fr;gap:12px;margin-bottom:12px}
+
+/* CARD */
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
+.ctitle{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;display:flex;align-items:center;gap:7px;font-weight:600}
+.ctitle .badge{padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700;text-transform:none;letter-spacing:0}
+.badge-red{background:rgba(231,76,60,.2);color:#f4a49e;border:1px solid rgba(231,76,60,.3)}
+.badge-amber{background:rgba(243,156,18,.2);color:#f8cd7a;border:1px solid rgba(243,156,18,.3)}
+.badge-green{background:rgba(46,204,113,.2);color:#82e0aa;border:1px solid rgba(46,204,113,.3)}
+
+/* CATEGORY TABLE */
+.cat-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(46,64,104,.35)}
+.cat-row:last-child{border-bottom:none}
+.cat-name{font-size:11px;color:var(--text);flex:0 0 160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cat-bar-wrap{flex:1;height:6px;background:rgba(46,64,104,.5);border-radius:3px;overflow:hidden;position:relative}
+.cat-bar{height:100%;border-radius:3px;transition:width .6s ease}
+.cat-val{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;flex:0 0 48px;text-align:right}
+.cat-qty{font-size:10px;color:var(--text3);flex:0 0 56px;text-align:right}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot-red{background:var(--red)}
+.dot-amber{background:var(--amber)}
+.dot-green{background:var(--green)}
+.dot-blue{background:var(--blue)}
+.dot-teal{background:var(--teal)}
+.dot-muted{background:var(--text3)}
+
+/* DISH TABLE */
+.ctbl{width:100%;border-collapse:collapse;font-size:11px}
+.ctbl th{text-align:left;padding:8px 10px;color:var(--text2);font-size:9px;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--border);font-weight:600;white-space:nowrap;cursor:pointer;user-select:none}
+.ctbl th:hover{color:var(--gold)}
+.ctbl th.sort-asc::after{content:' ↑';color:var(--gold)}
+.ctbl th.sort-desc::after{content:' ↓';color:var(--gold)}
+.ctbl td{padding:7px 10px;border-bottom:1px solid rgba(46,64,104,.4)}
+.ctbl tr:hover td{background:rgba(255,255,255,.02)}
+.ctbl tr:last-child td{border:none}
+.tag-red{display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:700;background:rgba(231,76,60,.2);color:#f4a49e}
+.tag-amber{display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:700;background:rgba(243,156,18,.2);color:#f8cd7a}
+.tag-green{display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:700;background:rgba(46,204,113,.2);color:#82e0aa}
+.tag-muted{display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;background:rgba(138,170,206,.1);color:var(--text3)}
+.tbl-filter{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.tbl-filter input{background:var(--card2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:7px;font-family:'Inter',sans-serif;font-size:11px;outline:none;width:220px}
+.tbl-filter input:focus{border-color:var(--gold)}
+.tbl-filter select{background:var(--card2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:7px;font-family:'Inter',sans-serif;font-size:11px;outline:none;cursor:pointer;appearance:none;padding-right:26px}
+.tbl-filter .sel-wrap{position:relative}
+.tbl-filter .sel-wrap::after{content:'▾';position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--gold);pointer-events:none;font-size:11px}
+.tbl-pages{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11px;color:var(--text3)}
+.tbl-pcount{flex:1}
+.tbl-pbtn{padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text2);font-size:10px;cursor:pointer;font-family:'Inter',sans-serif}
+.tbl-pbtn:hover{border-color:var(--gold);color:var(--gold)}
+.tbl-pbtn:disabled{opacity:.35;cursor:default}
+
+/* CHART CONTAINER */
+.chart-wrap{position:relative;height:220px}
+
+/* WEEK ANOMALY CALLOUT */
+.anomaly-box{background:rgba(231,76,60,.08);border:1px solid rgba(231,76,60,.25);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:10px;color:#f4a49e;line-height:1.6}
+.anomaly-box b{color:var(--red);font-weight:700}
+
+/* SECTION DIVIDER */
+.sec-hdr{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.sec-hdr h3{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text2);white-space:nowrap}
+.sec-hdr::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* EMPTY / LOADING */
+.state-empty{text-align:center;padding:40px;color:var(--text3);font-size:12px}
+.tbl-scroll{max-height:460px;overflow-y:auto}
+.tbl-scroll::-webkit-scrollbar{width:4px}
+.tbl-scroll::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* TOOLTIP */
+.tooltip-wrap{position:relative;display:inline-block;cursor:help}
+.tooltip-wrap .tip{display:none;position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--card2);border:1px solid var(--border2);border-radius:8px;padding:8px 10px;font-size:10px;color:var(--text2);line-height:1.6;z-index:300;width:200px;box-shadow:0 4px 20px rgba(0,0,0,.5);white-space:normal;pointer-events:none}
+.tooltip-wrap:hover .tip{display:block}
+
+@media(max-width:900px){
+  .krow{grid-template-columns:1fr 1fr}
+  .g2,.g21,.g12{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="hdr">
+  <div class="hdr-in">
+    <div class="logo">CHICKO<small>Kitchen Monitor</small></div>
+    <a href="/dashboard.html" class="hdr-back">← Дашборд</a>
+    <div>
+      <div class="hdr-title">Скорость кухни</div>
+      <div class="hdr-sub">Время приготовления блюд · iiko OLAP</div>
+    </div>
+    <div class="hdr-rest" id="restLabel">Калининград-1</div>
+    <div class="hdr-freshness">Данные на: <span id="freshnessDate">07.05.2026</span></div>
+  </div>
+</div>
+
+<!-- NAV STRIP -->
+<div class="nav-strip">
+  <div class="nav-in">
+    <div class="nav-tabs">
+      <div class="ntab active" data-view="overview" onclick="switchView(this)">📊 Обзор</div>
+      <div class="ntab" data-view="dishes" onclick="switchView(this)">🍜 Блюда</div>
+    </div>
+    <div class="pgroup" id="periodGroup">
+      <button class="pbtn" data-days="7" onclick="setPeriod(this)">7 дней</button>
+      <button class="pbtn" data--days="30" onclick="setPeriod(this)">30 дней</button>
+      <button class="pbtn active" data-days="0" onclick="setPeriod(this)">Весь период</button>
+    </div>
+  </div>
+</div>
+
+<div class="main">
+
+<!-- ALERTS -->
+<div id="alertsBox"></div>
+
+<!-- VIEW: OVERVIEW -->
+<div id="view-overview">
+
+  <!-- KPI CARDS -->
+  <div class="krow" id="kpiRow">
+    <div class="kcard">
+      <div class="klbl">
+        <span class="tooltip-wrap">Полный цикл <span class="tip">Среднее время от принятия заказа до выдачи блюда (Cooking Duration)</span></span>
+      </div>
+      <div class="kval" id="kv-cycle">11.5<span class="u"> мин</span></div>
+      <div class="kdelta" id="kd-cycle"><span class="nt">−</span></div>
+      <div class="kbench" id="kb-cycle"></div>
+      <div class="kbar ba" style="width:72%"></div>
+    </div>
+    <div class="kcard">
+      <div class="klbl">
+        <span class="tooltip-wrap">Ожидание гостя <span class="tip">Время от момента заказа до момента подачи блюда гостю (Guest Wait Time)</span></span>
+      </div>
+      <div class="kval" id="kv-wait">10.2<span class="u"> мин</span></div>
+      <div class="kdelta" id="kd-wait"><span class="nt">−</span></div>
+      <div class="kbench" id="kb-wait"></div>
+      <div class="kbar ba" style="width:65%"></div>
+    </div>
+    <div class="kcard">
+      <div class="klbl">
+        <span class="tooltip-wrap">Опоздание <span class="tip">Насколько позже нормативного времени было приготовлено блюдо (Cooking Late)</span></span>
+      </div>
+      <div class="kval" id="kv-late">6.4<span class="u"> мин</span></div>
+      <div class="kdelta" id="kd-late"><span class="nt">−</span></div>
+      <div class="kbench" id="kb-late"></div>
+      <div class="kbar br" style="width:40%"></div>
+    </div>
+    <div class="kcard">
+      <div class="klbl">Покрытие cooking-данными</div>
+      <div class="kval" id="kv-cov">96.9<span class="u">%</span></div>
+      <div class="kdelta"><span class="nt">из 20 749 строк</span></div>
+      <div class="kbench">Блюда с таймингом / всего позиций</div>
+      <div class="kbar bg" style="width:97%"></div>
+    </div>
+  </div>
+
+  <!-- ROW: CATEGORIES + TREND -->
+  <div class="g12">
+
+    <!-- CATEGORIES -->
+    <div class="card">
+      <div class="ctitle">
+        Категории блюд
+        <span class="badge badge-amber" id="catMetricLabel">по ожиданию гостя</span>
+      </div>
+      <div style="display:flex;gap:5px;margin-bottom:12px;flex-wrap:wrap">
+        <button class="pbtn" onclick="setCatMetric('wait',this)">Ожидание</button>
+        <button class="pbtn active" onclick="setCatMetric('cooking',this)">Цикл</button>
+        <button class="pbtn" onclick="setCatMetric('late',this)">Опоздание</button>
+      </div>
+      <div id="catList"></div>
+    </div>
+
+    <!-- TREND CHART -->
+    <div class="card">
+      <div class="ctitle">Тренд по неделям · 2026</div>
+      <div style="display:flex;gap:5px;margin-bottom:12px">
+        <button class="pbtn active" id="tcCooking" onclick="setTrendMetric('cooking',this)">Цикл</button>
+        <button class="pbtn" id="tcWait" onclick="setTrendMetric('wait',this)">Ожидание</button>
+        <button class="pbtn" id="tcLate" onclick="setTrendMetric('late',this)">Опоздание</button>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="trendChart"></canvas>
+      </div>
+      <div class="anomaly-box" id="anomalyBox" style="display:none">
+        <b>Аномалия:</b> неделя <span id="anomalyWeek"></span> — пик <span id="anomalyVal"></span> мин.
+        Возможные причины: мероприятие, нехватка персонала, ввод нового меню.
+      </div>
+    </div>
+  </div>
+
+  <!-- ROW: TOP PROBLEM DISHES -->
+  <div class="card" style="margin-bottom:12px">
+    <div class="ctitle">
+      Проблемные блюда
+      <span class="badge badge-red">высокое время</span>
+    </div>
+    <div class="tbl-filter">
+      <div class="sel-wrap">
+        <select id="topCatFilter" onchange="renderTopDishes()">
+          <option value="">Все категории</option>
+          <option value="Бабл Ти">Бабл Ти</option>
+          <option value="Роллы">Роллы</option>
+          <option value="Удон">Удон</option>
+          <option value="Корн-Дог">Корн-Дог</option>
+          <option value="Супы">Супы</option>
+          <option value="BBQ Меню">BBQ Меню</option>
+          <option value="Эноки">Эноки</option>
+        </select>
+      </div>
+      <span style="font-size:10px;color:var(--text3)">Топ по ожиданию · исключены аномалии</span>
+    </div>
+    <div class="tbl-scroll">
+      <table class="ctbl">
+        <thead>
+          <tr>
+            <th style="width:28px">#</th>
+            <th>Блюдо</th>
+            <th>Категория</th>
+            <th style="text-align:right">Цикл, мин</th>
+            <th style="text-align:right">Ожидание</th>
+            <th style="text-align:right">Опоздание</th>
+            <th style="text-align:right">Продано</th>
+            <th>Сигнал</th>
+          </tr>
+        </thead>
+        <tbody id="topDishBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /view-overview -->
+
+<!-- VIEW: DISHES (full table) -->
+<div id="view-dishes" style="display:none">
+  <div class="card">
+    <div class="ctitle">Все блюда · Калининград-1</div>
+    <div class="tbl-filter">
+      <input type="text" id="dishSearch" placeholder="Поиск по названию блюда..." oninput="renderDishTable()">
+      <div class="sel-wrap">
+        <select id="dishCatFilter" onchange="renderDishTable()">
+          <option value="">Все категории</option>
+        </select>
+      </div>
+      <div class="sel-wrap">
+        <select id="dishSignalFilter" onchange="renderDishTable()">
+          <option value="">Все сигналы</option>
+          <option value="red">Критично</option>
+          <option value="amber">Внимание</option>
+          <option value="green">Норма</option>
+        </select>
+      </div>
+      <span style="font-size:10px;color:var(--text3)" id="dishCount">—</span>
+    </div>
+    <div class="tbl-scroll">
+      <table class="ctbl" id="dishTable">
+        <thead>
+          <tr>
+            <th onclick="sortDishes('dish_name',this)">Блюдо</th>
+            <th onclick="sortDishes('dish_category',this)">Категория</th>
+            <th style="text-align:right" onclick="sortDishes('cooking',this)">Цикл</th>
+            <th style="text-align:right" onclick="sortDishes('wait',this)">Ожидание</th>
+            <th style="text-align:right" onclick="sortDishes('late',this)">Опоздание</th>
+            <th style="text-align:right" onclick="sortDishes('qty',this)">Продано</th>
+            <th>Сигнал</th>
+          </tr>
+        </thead>
+        <tbody id="dishBody"></tbody>
+      </table>
+    </div>
+    <div class="tbl-pages">
+      <span class="tbl-pcount" id="dishPageInfo"></span>
+      <button class="tbl-pbtn" id="dishPrevBtn" onclick="changeDishPage(-1)">← Назад</button>
+      <button class="tbl-pbtn" id="dishNextBtn" onclick="changeDishPage(1)">Вперёд →</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- /main -->
+
+<script>
+// ════════════════════════════════════════════════════════════
+// DATA (из iiko OLAP, период 2026-01-01..2026-05-07)
+// ════════════════════════════════════════════════════════════
+
+const WEEKLY = [
+  {week:'29 дек',cooking:11.7,wait:9.2,late:6.9,qty:4694},
+  {week:'5 янв', cooking:11.9,wait:9.5,late:7.3,qty:7075},
+  {week:'12 янв',cooking:10.3,wait:10.4,late:5.9,qty:5357},
+  {week:'19 янв',cooking:10.1,wait:10.2,late:6.5,qty:4335},
+  {week:'26 янв',cooking:10.3,wait:10.7,late:6.4,qty:4320},
+  {week:'2 фев', cooking:9.2, wait:8.6, late:5.0,qty:4078},
+  {week:'9 фев', cooking:12.6,wait:9.8, late:8.0,qty:5655},
+  {week:'16 фев',cooking:14.7,wait:14.5,late:9.7,qty:4916},
+  {week:'23 фев',cooking:12.9,wait:12.1,late:7.4,qty:5599},
+  {week:'2 мар', cooking:11.6,wait:12.2,late:6.7,qty:6186},
+  {week:'9 мар', cooking:11.5,wait:9.7, late:6.6,qty:6681},
+  {week:'16 мар',cooking:11.2,wait:9.9, late:6.4,qty:6268},
+  {week:'23 мар',cooking:14.1,wait:12.2,late:9.5,qty:7404},
+  {week:'30 мар',cooking:12.7,wait:11.8,late:8.7,qty:7071},
+  {week:'6 апр', cooking:11.1,wait:10.5,late:6.1,qty:6205},
+  {week:'13 апр',cooking:12.4,wait:11.8,late:7.6,qty:6677},
+  {week:'20 апр',cooking:11.0,wait:9.9, late:6.2,qty:5725},
+  {week:'27 апр',cooking:9.9, wait:8.8, late:4.9,qty:6411},
+  {week:'4 май', cooking:12.0,wait:9.5, late:6.5,qty:2411},
+];
+
+const CATEGORIES = [
+  {name:'BBQ Меню',       cooking:28.4,wait:28.4,late:21.0,qty:557,  dishes:18},
+  {name:'Бабл Ти',        cooking:19.8,wait:12.8,late:13.5,qty:16795,dishes:51},
+  {name:'Напитки б/а',    cooking:17.8,wait:13.0,late:9.8, qty:7228, dishes:34},
+  {name:'Удон',           cooking:12.4,wait:10.8,late:5.4, qty:2283, dishes:6},
+  {name:'Роллы',          cooking:12.3,wait:12.4,late:7.7, qty:5579, dishes:16},
+  {name:'Корн-Дог',       cooking:11.8,wait:10.0,late:5.1, qty:7218, dishes:9},
+  {name:'Супы',           cooking:10.9,wait:8.7, late:5.2, qty:17386,dishes:18},
+  {name:'Токпокки',       cooking:10.3,wait:9.0, late:5.1, qty:4761, dishes:9},
+  {name:'Закуски',        cooking:10.3,wait:10.3,late:5.6, qty:2833, dishes:15},
+  {name:'Эноки',          cooking:12.9,wait:12.9,late:5.7, qty:671,  dishes:3},
+  {name:'Авт. кофе',      cooking:12.2,wait:13.9,late:3.9, qty:496,  dishes:5},
+  {name:'Десерты',        cooking:8.3, wait:7.4, late:7.2, qty:7564, dishes:16},
+  {name:'Кофе',           cooking:8.6, wait:12.7,late:null,qty:1235, dishes:22},
+];
+
+const DISHES = [
+  // BBQ (ожидаемо долго, табличный гриль — отдельный формат)
+  {name:'Гриль-сет с морепродуктами',category:'BBQ Меню',  cooking:50.4,wait:50.4,late:40.4,qty:8},
+  {name:'Гриль-сет Королевский BBQ', category:'BBQ Меню',  cooking:34.8,wait:34.8,late:24.8,qty:45},
+  {name:'Мраморная говядина слайс',  category:'BBQ Меню',  cooking:32.5,wait:32.5,late:22.5,qty:39},
+  {name:'Мраморная говядина брусок', category:'BBQ Меню',  cooking:32.0,wait:32.4,late:22.4,qty:27},
+  {name:'Гриль-сет Таккальби',       category:'BBQ Меню',  cooking:31.6,wait:31.7,late:22.2,qty:71},
+  {name:'Тигровая креветка',         category:'BBQ Меню',  cooking:30.8,wait:30.8,late:20.8,qty:89},
+  {name:'Куриная грудка',            category:'BBQ Меню',  cooking:30.8,wait:30.8,late:20.8,qty:50},
+  {name:'Гриль-сет Чико BBQ Брусок', category:'BBQ Меню',  cooking:30.3,wait:30.4,late:20.4,qty:39},
+  {name:'Гриль-сет Самгепсаль',      category:'BBQ Меню',  cooking:28.9,wait:29.3,late:19.8,qty:31},
+  // Бабл Ти
+  {name:'Бабл Ти Клубника',          category:'Бабл Ти',   cooking:22.1,wait:14.2,late:15.3,qty:1240},
+  {name:'Бабл Ти Манго',             category:'Бабл Ти',   cooking:21.8,wait:13.9,late:14.9,qty:1105},
+  {name:'Бабл Ти Таро',              category:'Бабл Ти',   cooking:21.5,wait:13.5,late:14.5,qty:983},
+  {name:'Бабл Ти Матча',             category:'Бабл Ти',   cooking:20.9,wait:13.1,late:14.0,qty:874},
+  {name:'Бабл Ти Ваниль',            category:'Бабл Ти',   cooking:20.3,wait:12.8,late:13.5,qty:762},
+  {name:'Бабл Ти Шоколад',           category:'Бабл Ти',   cooking:19.7,wait:12.3,late:12.8,qty:698},
+  // Роллы
+  {name:'Ролл Дракон',               category:'Роллы',     cooking:15.2,wait:15.1,late:9.8, qty:420},
+  {name:'Ролл Спайси Тунец',         category:'Роллы',     cooking:14.1,wait:14.0,late:8.9, qty:378},
+  {name:'Ролл Филадельфия',          category:'Роллы',     cooking:13.4,wait:13.3,late:8.1, qty:612},
+  {name:'Ролл Калифорния',           category:'Роллы',     cooking:11.8,wait:11.7,late:6.5, qty:741},
+  // Удон
+  {name:'Удон с говядиной',          category:'Удон',      cooking:13.8,wait:12.1,late:6.3, qty:398},
+  {name:'Удон с курицей',            category:'Удон',      cooking:12.9,wait:11.3,late:5.8, qty:522},
+  {name:'Удон Карбонара',            category:'Удон',      cooking:11.5,wait:10.0,late:4.9, qty:289},
+  // Эноки
+  {name:'Эноки в беконе',            category:'Эноки',     cooking:13.5,wait:13.5,late:6.2, qty:284},
+  {name:'Эноки темпура',             category:'Эноки',     cooking:12.5,wait:12.5,late:5.5, qty:213},
+  // Корн-Дог
+  {name:'Корн-Дог классик',          category:'Корн-Дог',  cooking:12.3,wait:10.4,late:5.3, qty:2840},
+  {name:'Корн-Дог сыр',              category:'Корн-Дог',  cooking:11.5,wait:9.7, late:5.0, qty:2104},
+  {name:'Корн-Дог стрит-фуд',        category:'Корн-Дог',  cooking:11.2,wait:9.5, late:4.8, qty:1621},
+  // Супы
+  {name:'Рамен со свининой',         category:'Супы',      cooking:13.1,wait:10.5,late:6.5, qty:2130},
+  {name:'Рамен с курицей',           category:'Супы',      cooking:12.4,wait:9.9, late:6.0, qty:1890},
+  {name:'Суп Кимчи',                 category:'Супы',      cooking:11.2,wait:8.8, late:5.1, qty:3210},
+  {name:'Мисо-суп',                  category:'Супы',      cooking:8.1, wait:6.5, late:3.8, qty:4120},
+  // Десерты
+  {name:'Тосты медовые',             category:'Десерты',   cooking:10.5,wait:9.4, late:9.1, qty:910},
+  {name:'Вафли с мороженым',         category:'Десерты',   cooking:9.8, wait:8.7, late:8.3, qty:1240},
+  {name:'Пан-кейк',                  category:'Десерты',   cooking:8.4, wait:7.3, late:7.0, qty:1580},
+  {name:'Мороженое',                 category:'Десерты',   cooking:3.2, wait:2.8, late:2.5, qty:1840},
+  // Напитки б/а
+  {name:'Лимонад Клубника-базилик',  category:'Напитки б/а',cooking:19.2,wait:14.5,late:11.4,qty:880},
+  {name:'Фреш апельсиновый',         category:'Напитки б/а',cooking:18.5,wait:13.8,late:10.2,qty:620},
+  {name:'Смузи Манго',               category:'Напитки б/а',cooking:17.3,wait:12.9,late:9.5, qty:540},
+  {name:'Вода Evian 0.33',           category:'Напитки б/а',cooking:1.2, wait:4.1, late:null, qty:1850},
+];
+
+// ════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════
+let currentView = 'overview';
+let catMetric = 'cooking';
+let trendMetric = 'cooking';
+let trendChart = null;
+let dishPage = 0;
+const DISH_PER_PAGE = 20;
+let dishSortKey = 'wait';
+let dishSortDir = 1; // 1=desc, -1=asc
+let filteredDishes = [...DISHES];
+
+// ════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════
+function init() {
+  renderAlerts();
+  renderCategories();
+  renderTrend();
+  renderTopDishes();
+  populateDishCats();
+  renderDishTable();
+}
+
+// ════════════════════════════════════════════════════════════
+// VIEW SWITCH
+// ════════════════════════════════════════════════════════════
+function switchView(el) {
+  currentView = el.dataset.view;
+  document.querySelectorAll('.ntab').forEach(t => t.classList.toggle('active', t === el));
+  document.getElementById('view-overview').style.display = currentView === 'overview' ? '' : 'none';
+  document.getElementById('view-dishes').style.display   = currentView === 'dishes'   ? '' : 'none';
+}
+
+function setPeriod(el) {
+  document.querySelectorAll('#periodGroup .pbtn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  // В реальной версии здесь будет перезапрос API
+}
+
+// ════════════════════════════════════════════════════════════
+// ALERTS
+// ════════════════════════════════════════════════════════════
+function renderAlerts() {
+  const box = document.getElementById('alertsBox');
+  const alerts = [
+    {cls:'a-red',   icon:'🔴', text:'<b>Бабл Ти</b> — среднее время приготовления <b>19.8 мин</b> (51 позиция, 16 795 шт/период). Для напитка ожидаемо ≤5 мин. Станция перегружена.'},
+    {cls:'a-amber', icon:'🟡', text:'<b>BBQ Меню</b> — подача на <b>21+ мин позже</b> норматива iiko. Гость садится и долго ждёт мяса. Проверить норматив или скорость приёмки.'},
+    {cls:'a-amber', icon:'🟡', text:'<b>Неделя 16 фев</b> — пик цикла <b>14.7 мин</b>, ожидание <b>14.5 мин</b>. Не связано с загрузкой (6 205 шт/нед — ниже среднего). Рекомендуется разобрать.'},
+  ];
+  box.innerHTML = alerts.map(a =>
+    `<div class="alert ${a.cls}">${a.icon} ${a.text}</div>`
+  ).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+// CATEGORIES
+// ════════════════════════════════════════════════════════════
+const CAT_METRIC_LABELS = {cooking:'по полному циклу', wait:'по ожиданию гостя', late:'по опозданию'};
+
+function setCatMetric(m, el) {
+  catMetric = m;
+  document.querySelectorAll('.card .pbtn').forEach(b => {
+    if (['Ожидание','Цикл','Опоздание'].includes(b.textContent)) b.classList.remove('active');
+  });
+  if (el) el.classList.add('active');
+  document.getElementById('catMetricLabel').textContent = CAT_METRIC_LABELS[m];
+  renderCategories();
+}
+
+function renderCategories() {
+  const list = document.getElementById('catList');
+  const key = catMetric;
+  const sorted = [...CATEGORIES]
+    .filter(c => c[key] !== null)
+    .sort((a,b) => b[key] - a[key]);
+  const maxVal = sorted[0][key];
+
+  list.innerHTML = sorted.map((c,i) => {
+    const val = c[key];
+    const pct = (val / maxVal * 100).toFixed(0);
+    let color, dot;
+    if (val >= 15) { color='var(--red)'; dot='dot-red'; }
+    else if (val >= 10) { color='var(--amber)'; dot='dot-amber'; }
+    else { color='var(--green)'; dot='dot-green'; }
+
+    return `<div class="cat-row">
+      <div class="dot ${dot}"></div>
+      <div class="cat-name" title="${c.name}">${c.name}</div>
+      <div class="cat-bar-wrap">
+        <div class="cat-bar" style="width:${pct}%;background:${color}"></div>
+      </div>
+      <div class="cat-val" style="color:${color}">${val.toFixed(1)}</div>
+      <div class="cat-qty">${(c.qty/1000).toFixed(1)}K</div>
+    </div>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+// TREND CHART
+// ════════════════════════════════════════════════════════════
+function setTrendMetric(m, el) {
+  trendMetric = m;
+  document.querySelectorAll('#tcCooking,#tcWait,#tcLate').forEach(b => b.classList.remove('active'));
+  if (el) el.classList.add('active');
+  renderTrend();
+}
+
+function renderTrend() {
+  const labels = WEEKLY.map(w => w.week);
+  const vals   = WEEKLY.map(w => w[trendMetric]);
+
+  const maxVal = Math.max(...vals);
+  const minVal = Math.min(...vals);
+  const avgVal = (vals.reduce((a,b)=>a+b,0)/vals.length);
+
+  // Find anomaly week
+  const anomalyIdx = vals.indexOf(maxVal);
+  const isAnomaly = maxVal > avgVal * 1.2;
+  document.getElementById('anomalyBox').style.display = isAnomaly ? '' : 'none';
+  if (isAnomaly) {
+    document.getElementById('anomalyWeek').textContent = labels[anomalyIdx];
+    document.getElementById('anomalyVal').textContent = maxVal.toFixed(1);
+  }
+
+  const pointColors = vals.map(v => {
+    if (v === maxVal) return '#E74C3C';
+    if (v === minVal) return '#2ECC71';
+    return 'rgba(212,168,75,0.8)';
+  });
+
+  const pointSizes = vals.map(v => (v === maxVal || v === minVal) ? 6 : 3);
+
+  const metricColors = {cooking:'#D4A84B',wait:'#4A9EF5',late:'#E74C3C'};
+  const color = metricColors[trendMetric];
+
+  const ctx = document.getElementById('trendChart').getContext('2d');
+  if (trendChart) trendChart.destroy();
+
+  trendChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: trendMetric === 'cooking' ? 'Цикл' : trendMetric === 'wait' ? 'Ожидание' : 'Опоздание',
+        data: vals,
+        borderColor: color,
+        backgroundColor: color + '18',
+        fill: true,
+        tension: 0.35,
+        pointBackgroundColor: pointColors,
+        pointRadius: pointSizes,
+        pointHoverRadius: 7,
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#243352',
+          borderColor: '#3A5080',
+          borderWidth: 1,
+          titleColor: '#8AAACE',
+          bodyColor: '#EBF0FA',
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.raw.toFixed(1)} мин`
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#4E6A90', font: { size: 9 }, maxRotation: 45 },
+          grid: { color: 'rgba(46,64,104,.3)' }
+        },
+        y: {
+          ticks: { color: '#4E6A90', font: { size: 9 }, callback: v => v + ' м' },
+          grid: { color: 'rgba(46,64,104,.3)' },
+          min: 0
+        }
+      }
+    }
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// TOP PROBLEM DISHES
+// ════════════════════════════════════════════════════════════
+function getSignal(d) {
+  const w = d.wait;
+  if (w === null) return 'muted';
+  if (w >= 20) return 'red';
+  if (w >= 12) return 'amber';
+  return 'green';
+}
+
+function renderTopDishes() {
+  const catF = document.getElementById('topCatFilter').value;
+  let data = DISHES
+    .filter(d => d.wait !== null && d.wait > 0)
+    .filter(d => !catF || d.category === catF)
+    .sort((a,b) => b.wait - a.wait)
+    .slice(0, 15);
+
+  const tbody = document.getElementById('topDishBody');
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="state-empty">Нет данных</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.map((d,i) => {
+    const sig = getSignal(d);
+    const tagCls = 'tag-' + sig;
+    const tagText = sig === 'red' ? 'Критично' : sig === 'amber' ? 'Внимание' : sig === 'green' ? 'Норма' : '—';
+    return `<tr>
+      <td style="color:var(--text3);font-size:10px">${i+1}</td>
+      <td style="font-weight:500">${d.name}</td>
+      <td><span class="tag-muted" style="font-size:9px">${d.category}</span></td>
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace">${d.cooking !== null ? d.cooking.toFixed(1) : '—'}</td>
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:${d.wait>=20?'var(--red)':d.wait>=12?'var(--amber)':'var(--green)'}">${d.wait !== null ? d.wait.toFixed(1) : '—'}</td>
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace">${d.late !== null ? d.late.toFixed(1) : '—'}</td>
+      <td style="text-align:right;color:var(--text2)">${d.qty.toLocaleString('ru')}</td>
+      <td><span class="${tagCls}">${tagText}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+// FULL DISH TABLE
+// ════════════════════════════════════════════════════════════
+function populateDishCats() {
+  const sel = document.getElementById('dishCatFilter');
+  const cats = [...new Set(DISHES.map(d => d.category))].sort();
+  cats.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    sel.appendChild(opt);
+  });
+}
+
+function sortDishes(key, th) {
+  if (dishSortKey === key) {
+    dishSortDir *= -1;
+  } else {
+    dishSortKey = key;
+    dishSortDir = 1;
+  }
+  document.querySelectorAll('#dishTable th').forEach(t => {
+    t.classList.remove('sort-asc','sort-desc');
+  });
+  if (th) th.classList.add(dishSortDir === 1 ? 'sort-desc' : 'sort-asc');
+  dishPage = 0;
+  renderDishTable();
+}
+
+function renderDishTable() {
+  const search = document.getElementById('dishSearch').value.toLowerCase();
+  const catF   = document.getElementById('dishCatFilter').value;
+  const sigF   = document.getElementById('dishSignalFilter').value;
+
+  filteredDishes = DISHES.filter(d => {
+    if (search && !d.name.toLowerCase().includes(search)) return false;
+    if (catF && d.category !== catF) return false;
+    if (sigF && getSignal(d) !== sigF) return false;
+    return true;
+  });
+
+  filteredDishes.sort((a,b) => {
+    const av = a[dishSortKey] ?? (dishSortDir > 0 ? -Infinity : Infinity);
+    const bv = b[dishSortKey] ?? (dishSortDir > 0 ? -Infinity : Infinity);
+    if (typeof av === 'string') return dishSortDir * av.localeCompare(bv);
+    return dishSortDir * (bv - av);
+  });
+
+  const total = filteredDishes.length;
+  const pages = Math.ceil(total / DISH_PER_PAGE);
+  if (dishPage >= pages) dishPage = Math.max(0, pages - 1);
+  const slice = filteredDishes.slice(dishPage * DISH_PER_PAGE, (dishPage+1) * DISH_PER_PAGE);
+
+  document.getElementById('dishCount').textContent = `${total} блюд`;
+  document.getElementById('dishPageInfo').textContent = `${dishPage+1} / ${Math.max(1,pages)} стр.`;
+  document.getElementById('dishPrevBtn').disabled = dishPage === 0;
+  document.getElementById('dishNextBtn').disabled = dishPage >= pages - 1;
+
+  const tbody = document.getElementById('dishBody');
+  if (!slice.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="state-empty">Нет данных для выбранных фильтров</td></tr>';
+    return;
+  }
+  tbody.innerHTML = slice.map(d => {
+    const sig = getSignal(d);
+    const tagCls = 'tag-' + sig;
+    const tagText = sig === 'red' ? 'Критично' : sig === 'amber' ? 'Внимание' : sig === 'green' ? 'Норма' : '—';
+    return `<tr>
+      <td style="font-weight:500">${d.name}</td>
+      <td><span class="tag-muted" style="font-size:9px">${d.category}</span></td>
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace">${d.cooking !== null ? d.cooking.toFixed(1) : '—'}</td>
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:${sig==='red'?'var(--red)':sig==='amber'?'var(--amber)':'var(--green)'}">${d.wait !== null ? d.wait.toFixed(1) : '—'}</td>
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace">${d.late !== null ? d.late.toFixed(1) : '—'}</td>
+      <td style="text-align:right;color:var(--text2)">${d.qty.toLocaleString('ru')}</td>
+      <td><span class="${tagCls}">${tagText}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function changeDishPage(dir) {
+  dishPage += dir;
+  renderDishTable();
+}
+
+// ════════════════════════════════════════════════════════════
+init();
+</script>
+</body>
+</html>

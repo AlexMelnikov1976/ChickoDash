@@ -30,7 +30,7 @@ import {
   handleStaffLosses,
   handleStaffRatings,
 } from './staff';
-import { handleAdminMe, handleAdminActivity } from './admin';
+import { handleAdminMe, handleAdminActivity, handleAddUser } from './admin';
 import { handleMarketingOverview, handleLoyaltyUsers, handleLoyaltyCount } from './marketing';
 import {
   handleOwnerMe,
@@ -58,6 +58,7 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   FEEDBACK_WEBHOOK?: string; // n8n webhook URL for feedback → Notion + Telegram
   N8N_SERVICE_KEY?: string;  // Сервисный ключ для server-to-server вызовов (n8n, отчёты)
+  ADMIN_SECRET?: string;     // Секрет для POST /api/admin/add-user
 }
 
 // Allowed origins for CORS. Add custom domains here when ready.
@@ -365,6 +366,11 @@ export default {
     }
     if (url.pathname === "/api/admin/activity" && request.method === "GET") {
       const _r = await handleAdminActivity(request, env);
+      _logReq(request, env, ctx, _r, _t0);
+      return _r;
+    }
+    if (url.pathname === "/api/admin/add-user" && request.method === "POST") {
+      const _r = await handleAddUser(request, env);
       _logReq(request, env, ctx, _r, _t0);
       return _r;
     }
