@@ -345,6 +345,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
           INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
           WHERE d.dept_uuid IN (${uuidsSql})
             AND d.report_date <= '${end}'
+            ${restIds.length > 1 ? `AND d.report_date >= addYears(toDate('${end}'), -1)` : ''}
             AND d.qty > 0
             AND d.dish_code != ''
             AND d.dish_group != 'Архив'
@@ -582,7 +583,11 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
     }, request);
   } catch (error) {
     const err = error as Error;
-    console.error(`[menu] error: ${err.message}`, err.stack);
-    return jsonResponse({ error: 'Request failed' }, request, 500);
+    const msg = err.message || 'Unknown error';
+    console.error(`[menu] error: ${msg}`, err.stack);
+    // Phase 2.14: возвращаем читаемое сообщение (frontend ищет ключ `message`
+    // в JSON и показывает в UI через MENU_STATE.lastError). Так мы видим
+    // настоящую причину 500 вместо дженерик «Request failed».
+    return jsonResponse({ error: 'menu_failed', message: msg }, request, 500);
   }
 }
