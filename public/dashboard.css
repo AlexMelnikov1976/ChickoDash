@@ -865,6 +865,100 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
   white-space:nowrap;
 }
 
+/* ═══ Phase 2.14: мульти-селектор городов в тулбаре «Меню» ═══════════════ */
+.menu-toolbar-cities{position:relative;display:inline-flex}
+.menu-cities-btn{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:6px 10px;
+  font-size:11px;
+  color:var(--text2);
+  cursor:pointer;
+  transition:all .15s;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  white-space:nowrap;
+}
+.menu-cities-btn:hover{border-color:var(--gold);color:var(--text)}
+.menu-cities-btn .caret{font-size:9px;color:var(--text3)}
+.menu-cities-dropdown{
+  position:absolute;
+  top:calc(100% + 4px);
+  left:0;
+  z-index:200;
+  background:var(--card);
+  border:1px solid var(--border2);
+  border-radius:8px;
+  box-shadow:0 6px 24px rgba(0,0,0,.4);
+  padding:10px;
+  width:340px;
+  max-height:420px;
+  display:flex;
+  flex-direction:column;
+}
+.menu-cities-dropdown[hidden]{display:none}
+.menu-cities-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding-bottom:8px;
+  border-bottom:1px solid var(--border);
+  margin-bottom:6px;
+}
+.menu-cities-actions button{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:5px;
+  padding:4px 10px;
+  font-size:10px;
+  color:var(--text2);
+  cursor:pointer;
+  transition:all .15s;
+}
+.menu-cities-actions button:hover{border-color:var(--gold);color:var(--text)}
+.menu-cities-actions-state{
+  margin-left:auto;
+  font-size:10px;
+  color:var(--text3);
+}
+.menu-cities-list{overflow-y:auto;max-height:340px}
+.menu-cities-item{
+  display:grid;
+  grid-template-columns:auto 1fr 2fr;
+  align-items:center;
+  gap:8px;
+  padding:5px 4px;
+  font-size:11px;
+  color:var(--text2);
+  cursor:pointer;
+  border-radius:4px;
+}
+.menu-cities-item:hover{background:var(--bg2)}
+.menu-cities-item input{accent-color:var(--gold);cursor:pointer}
+.menu-cities-item .menu-cities-city{
+  font-weight:600;
+  color:var(--text);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.menu-cities-item .menu-cities-name{
+  color:var(--text3);
+  font-size:10px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.menu-cities-empty{
+  padding:20px;
+  text-align:center;
+  color:var(--text3);
+  font-size:11px;
+  font-style:italic;
+}
+
 /* Активный фильтр-чип (показывается если class-фильтр применён из матрицы) */
 .menu-active-filter-chip{
   background:var(--gold);

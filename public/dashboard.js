@@ -3629,7 +3629,7 @@ async function fbSend(){
 const MENU_STATE = {
   raw: null,           // последний ответ API
   loading: false,      // идёт ли запрос
-  loadedFor: null,     // ключ "restId|start|end" последней успешной загрузки
+  loadedFor: null,     // ключ "scope|start|end" последней успешной загрузки
   filtered: [],        // отфильтрованные блюда для таблицы (5d)
   activeClass: 'star', // активный класс в KS-матрице/action-панели (5c)
   filters: {
@@ -3642,15 +3642,29 @@ const MENU_STATE = {
   sortBy: 'rank',
   sortDir: 'asc',
   selectedDishCode: null,     // для drawer (фаза 5d)
+  // Phase 2.14 (multi-city): множество dept_id, которые выбрал пользователь
+  // в дропдауне «Города» на тулбаре «Меню».
+  //   size === 0          → single-режим, используется R.id (текущий ресторан)
+  //   0 < size < RESTS    → multi-режим (агрегация как один большой ресторан)
+  //   size === RESTS.length → «Вся сеть»
+  selectedDeptIds: new Set(),
 };
 
-// Ключ кэша: restId + период. Если ресторан или период сменились —
-// сбросим MENU_STATE.raw и перезагрузим.
+// Ключ кэша: scope + период. Если scope (текущий ресторан или
+// выбранный набор точек) или период сменились — сбросим MENU_STATE.raw
+// и перезагрузим.
 function menuCacheKey() {
-  if (!R || !R.id) return null;
   const st = CAL_STATE && CAL_STATE.global;
   if (!st || !st.start || !st.end) return null;
-  return R.id + '|' + st.start + '|' + st.end;
+  const sel = MENU_STATE.selectedDeptIds;
+  let scope;
+  if (sel.size > 0) {
+    scope = 'ids:' + Array.from(sel).sort((a, b) => a - b).join(',');
+  } else {
+    if (!R || !R.id) return null;
+    scope = 'r:' + R.id;
+  }
+  return scope + '|' + st.start + '|' + st.end;
 }
 
 async function loadMenuAnalysis() {
@@ -3679,7 +3693,13 @@ async function loadMenuAnalysis() {
       menuStart = _d.toISOString().slice(0, 10);
       console.log('[menu] range capped from ' + _rangeDays + 'd to 90d: ' + menuStart + '..' + menuEnd);
     }
-    const qs = '?restaurant_id=' + R.id +
+    // Phase 2.14: multi-city. При непустом selectedDeptIds — передаём
+    // restaurant_ids (CSV), иначе старый single-параметр restaurant_id.
+    const sel = MENU_STATE.selectedDeptIds;
+    const scopeQs = (sel.size > 0)
+      ? 'restaurant_ids=' + encodeURIComponent(Array.from(sel).sort((a, b) => a - b).join(','))
+      : 'restaurant_id=' + R.id;
+    const qs = '?' + scopeQs +
                '&start=' + encodeURIComponent(menuStart) +
                '&end=' + encodeURIComponent(menuEnd);
     const data = await apiGet('/api/menu-analysis' + qs);
@@ -3699,13 +3719,12 @@ async function renderMenu() {
   const root = document.getElementById('menuRoot');
   if (!root) return;
 
-  // Если кликнули на вкладку без выбранного ресторана — сообщение
-  if (!R || !R.id) {
-    root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">Выберите ресторан для анализа меню.</div>';
-    return;
-  }
-  if (NETWORK_MODE) {
-    root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">Анализ меню доступен только для конкретного ресторана. Снимите галку «Вся сеть».</div>';
+  // Phase 2.14: больше не блокируем NETWORK_MODE — мульти-город реализован
+  // через локальный мульти-селектор в тулбаре «Меню» (MENU_STATE.selectedDeptIds).
+  // Глобальный чекбокс «Вся сеть» (NETWORK_MODE) на эту вкладку не влияет.
+  const hasMultiSel = MENU_STATE.selectedDeptIds && MENU_STATE.selectedDeptIds.size > 0;
+  if (!hasMultiSel && (!R || !R.id)) {
+    root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text3);font-size:12px">Выберите ресторан для анализа меню — или используйте мульти-выбор городов в тулбаре «Меню».</div>';
     return;
   }
 
@@ -4167,9 +4186,10 @@ function renderMenuToolbar() {
         ' <span class="close" onclick="clearMenuClassFilter()">×</span>' +
       '</div>'
     : '';
-  
+
   return (
     '<div class="menu-toolbar">' +
+      renderMenuCitiesControl() +
       '<input class="menu-toolbar-search" id="menuSearch" placeholder="🔍 Поиск по названию блюда..." ' +
              'value="' + escapeAttr(f.search) + '" oninput="onMenuSearchInput(this.value)">' +
       '<select class="menu-toolbar-group" id="menuGroupFilter" onchange="onMenuGroupFilter(this.value)">' +
@@ -4184,6 +4204,132 @@ function renderMenuToolbar() {
       '<div class="menu-toolbar-count" id="menuCount">—</div>' +
     '</div>'
   );
+}
+
+// ═══ Phase 2.14: мульти-селектор городов на вкладке «Меню» ═══
+// MENU_STATE.selectedDeptIds = Set<dept_id>:
+//   size === 0           → single-режим (текущий ресторан)
+//   0 < size < RESTS.len → multi-режим (выбранные точки, агрегируются как
+//                          один большой ресторан на backend)
+//   size === RESTS.len   → «Вся сеть»
+function _menuCitiesLabel() {
+  const sel = MENU_STATE.selectedDeptIds;
+  const total = (typeof RESTS !== 'undefined' && RESTS) ? RESTS.length : 0;
+  if (sel.size === 0) return '🏠 Текущий ресторан';
+  if (total > 0 && sel.size >= total) return '🌐 Вся сеть';
+  // мн. число — точка / точки / точек
+  const n = sel.size;
+  const mod10 = n % 10, mod100 = n % 100;
+  let word = 'точек';
+  if (mod10 === 1 && mod100 !== 11) word = 'точка';
+  else if ([2, 3, 4].indexOf(mod10) !== -1 && [12, 13, 14].indexOf(mod100) === -1) word = 'точки';
+  return '🏙 ' + n + ' ' + word;
+}
+
+function renderMenuCitiesControl() {
+  return (
+    '<div class="menu-toolbar-cities">' +
+      '<button class="menu-cities-btn" type="button" onclick="toggleMenuCitiesDropdown(event)">' +
+        '<span id="menuCitiesLabel">' + _menuCitiesLabel() + '</span>' +
+        ' <span class="caret">▾</span>' +
+      '</button>' +
+      '<div class="menu-cities-dropdown" id="menuCitiesDropdown" hidden></div>' +
+    '</div>'
+  );
+}
+
+function renderMenuCitiesDropdownContent() {
+  if (typeof RESTS === 'undefined' || !RESTS || RESTS.length === 0) {
+    return '<div class="menu-cities-empty">Список ресторанов ещё не загружен</div>';
+  }
+  const sel = MENU_STATE.selectedDeptIds;
+  const allChecked = sel.size === RESTS.length;
+  const someChecked = sel.size > 0 && !allChecked;
+  let html = '<div class="menu-cities-actions">' +
+    '<button type="button" onclick="onMenuCitiesAll(true)">Выбрать все</button>' +
+    '<button type="button" onclick="onMenuCitiesAll(false)">Снять все</button>' +
+    '<span class="menu-cities-actions-state">' +
+      (allChecked ? 'все выбраны' : someChecked ? sel.size + ' из ' + RESTS.length : 'нет выбранных') +
+    '</span>' +
+  '</div>';
+  html += '<div class="menu-cities-list">';
+  for (const r of RESTS) {
+    const checked = sel.has(r.id) ? 'checked' : '';
+    html += '<label class="menu-cities-item">' +
+      '<input type="checkbox" ' + checked + ' onchange="onMenuCityToggle(' + r.id + ', this.checked)">' +
+      '<span class="menu-cities-city">' + escapeHtml(r.city || '—') + '</span>' +
+      '<span class="menu-cities-name">' + escapeHtml(r.name || '') + '</span>' +
+    '</label>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function toggleMenuCitiesDropdown(e) {
+  if (e) e.stopPropagation();
+  const dd = document.getElementById('menuCitiesDropdown');
+  if (!dd) return;
+  if (dd.hasAttribute('hidden')) {
+    dd.innerHTML = renderMenuCitiesDropdownContent();
+    dd.removeAttribute('hidden');
+    // закрытие по клику вне дропдауна
+    setTimeout(function() {
+      document.addEventListener('click', _closeMenuCitiesDropdownOutside, true);
+    }, 0);
+  } else {
+    _hideMenuCitiesDropdown();
+  }
+}
+
+function _hideMenuCitiesDropdown() {
+  const dd = document.getElementById('menuCitiesDropdown');
+  if (dd) dd.setAttribute('hidden', '');
+  document.removeEventListener('click', _closeMenuCitiesDropdownOutside, true);
+}
+
+function _closeMenuCitiesDropdownOutside(e) {
+  const wrap = document.querySelector('.menu-toolbar-cities');
+  if (wrap && !wrap.contains(e.target)) _hideMenuCitiesDropdown();
+}
+
+function onMenuCityToggle(deptId, checked) {
+  if (checked) MENU_STATE.selectedDeptIds.add(deptId);
+  else MENU_STATE.selectedDeptIds.delete(deptId);
+  _updateMenuCitiesLabel();
+  // Обновим состояние «N из M» в actions, не дёргая весь список (чтобы фокус
+  // не терялся при быстрых кликах подряд).
+  const stateEl = document.querySelector('.menu-cities-actions-state');
+  if (stateEl && typeof RESTS !== 'undefined' && RESTS) {
+    const sel = MENU_STATE.selectedDeptIds;
+    stateEl.textContent = (sel.size === RESTS.length) ? 'все выбраны'
+      : (sel.size > 0 ? sel.size + ' из ' + RESTS.length : 'нет выбранных');
+  }
+  _reloadMenuAfterScopeChange();
+}
+
+function onMenuCitiesAll(check) {
+  MENU_STATE.selectedDeptIds.clear();
+  if (check && typeof RESTS !== 'undefined' && RESTS) {
+    for (const r of RESTS) MENU_STATE.selectedDeptIds.add(r.id);
+  }
+  _updateMenuCitiesLabel();
+  // Перерисуем содержимое дропдауна, чтобы чекбоксы синхронизировались
+  const dd = document.getElementById('menuCitiesDropdown');
+  if (dd) dd.innerHTML = renderMenuCitiesDropdownContent();
+  _reloadMenuAfterScopeChange();
+}
+
+function _updateMenuCitiesLabel() {
+  const lbl = document.getElementById('menuCitiesLabel');
+  if (lbl) lbl.textContent = _menuCitiesLabel();
+}
+
+function _reloadMenuAfterScopeChange() {
+  // Сбрасываем кэш и перерисовываем всю вкладку. Дропдаун пере-рендерится
+  // в составе тулбара — он закроется (display:none), это ОК для UX.
+  MENU_STATE.raw = null;
+  MENU_STATE.loadedFor = null;
+  renderMenu();
 }
 
 function renderMenuTableHeader() {
