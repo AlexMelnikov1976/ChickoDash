@@ -361,6 +361,20 @@ if (window.Chart && !window.__pnlValueLabelsRegistered) {
 
 // ═══ SEARCHABLE SELECTOR ═══
 let _selOpen = false;
+// ═══ Phase 2.14: мульти-выбор ресторанов в верхнем селекторе ═══════════
+// Состояние:
+//   PENDING_SCOPE — то, что пользователь отметил в открытом dropdown'е,
+//                   но ещё не нажал ОК. Сбрасывается при закрытии без ОК.
+//   APPLIED_SCOPE — применённый выбор. size === 0 трактуется как single
+//                   (R = текущий выбранный ресторан), size === 1 → single,
+//                   size >= 2 → multi (только для вкладки «Меню»).
+//
+// На вкладках Обзор / Динамика / Сравнение / Анализ / Персонал / Маркетинг /
+// Owner PnL мульти-выбор не поддерживается: R = первый из APPLIED_SCOPE.
+// На вкладке «Меню» — MENU_STATE.selectedDeptIds = APPLIED_SCOPE.
+const PENDING_SCOPE = new Set();
+const APPLIED_SCOPE = new Set();
+
 function buildSelList(list, query='') {
   const ul = document.getElementById('selList');
   const cnt = document.getElementById('selCount');
@@ -370,40 +384,170 @@ function buildSelList(list, query='') {
   ul.innerHTML = filtered.map((r,i) => {
     const idx = RESTS.indexOf(r);
     const isActive = R && r.name === R.name;
+    const isPending = PENDING_SCOPE.has(r.id);
     const isKaln = r.city && r.city.toLowerCase().includes('калининград');
     const locked = _KALN_LOCKED && !isKaln;
     const lockStyle = locked ? 'opacity:0.3;pointer-events:none;cursor:default;' : '';
-    return `<div class="sel-item${isActive?' active':''}" style="${lockStyle}" ${locked ? '' : `onclick="pickRest(${idx})"`}>
+    // Чекбокс — multi-выбор, без авто-загрузки; применяется по ОК.
+    return `<div class="sel-item${isActive?' active':''}${isPending?' pending':''}" style="${lockStyle}" ${locked ? '' : `onclick="selToggleRest(${idx}, event)"`}>
+      <input type="checkbox" class="sel-cb" ${isPending?'checked':''} ${locked?'disabled':''} onclick="selToggleRest(${idx}, event)">
       <span style="font-weight:500;color:var(--text)">${r.city}</span>
       <span class="sel-city" style="flex:1;text-align:right">${r.name.replace('Чико (','').replace(')','').replace('Чико Рико ','Рико ').slice(0,24)}</span>
     </div>`;
   }).join('');
   if (cnt) cnt.textContent = filtered.length + ' из ' + RESTS.length + ' ресторанов';
+  _updateSelActState();
 }
+
+function _updateSelActState() {
+  const el = document.getElementById('selActState');
+  if (!el) return;
+  const n = PENDING_SCOPE.size;
+  const total = (typeof RESTS !== 'undefined' && RESTS) ? RESTS.length : 0;
+  if (n === 0) el.textContent = 'не выбрано';
+  else if (total > 0 && n >= total) el.textContent = 'вся сеть';
+  else el.textContent = n + ' / ' + total;
+}
+
+function _updateSelSearchLabel() {
+  const inp = document.getElementById('selSearch');
+  if (!inp) return;
+  const n = APPLIED_SCOPE.size;
+  const total = (typeof RESTS !== 'undefined' && RESTS) ? RESTS.length : 0;
+  if (n === 0) {
+    // Single legacy режим — показываем город текущего R, как было до Phase 2.14.
+    if (R && R.city) inp.value = R.city; else inp.value = '';
+  } else if (n === 1) {
+    const onlyId = Array.from(APPLIED_SCOPE)[0];
+    const rr = (typeof RESTS !== 'undefined' && RESTS) ? RESTS.find(r => r.id === onlyId) : null;
+    inp.value = rr ? rr.city : '';
+  } else if (total > 0 && n >= total) {
+    inp.value = '🌐 Вся сеть';
+  } else {
+    inp.value = '🏙 ' + n + ' точек';
+  }
+}
+
 function toggleSelDropdown() {
   const dd = document.getElementById('selDropdown');
   _selOpen = !_selOpen;
   dd.classList.toggle('open', _selOpen);
   if (_selOpen) {
+    // При открытии — синхронизируем PENDING с APPLIED, чтобы пользователь
+    // видел текущее состояние и мог его изменить или отменить (по закрытию).
+    PENDING_SCOPE.clear();
+    APPLIED_SCOPE.forEach(id => PENDING_SCOPE.add(id));
+    buildSelList(RESTS);
     setTimeout(()=>document.getElementById('selFilter')?.focus(), 50);
   }
 }
+
 function filterSel(q) {
   buildSelList(RESTS, q);
 }
-function pickRest(idx) {
-  const dd = document.getElementById('selDropdown');
-  _selOpen = false;
-  dd.classList.remove('open');
-  const inp = document.getElementById('selSearch');
-  if (inp) {
-    const r = RESTS[idx];
-    inp.value = r.city;
-  }
-  document.getElementById('selFilter').value = '';
-  buildSelList(RESTS);
-  selectRest(idx);
+
+// Phase 2.14: клик по строке или по чекбоксу — toggle в PENDING_SCOPE.
+// Загрузка данных не происходит до нажатия ОК.
+function selToggleRest(idx, ev) {
+  if (ev) ev.stopPropagation();
+  const r = RESTS[idx];
+  if (!r) return;
+  if (PENDING_SCOPE.has(r.id)) PENDING_SCOPE.delete(r.id);
+  else PENDING_SCOPE.add(r.id);
+  // Перерисовываем только список (чекбоксы), не закрывая dropdown.
+  const q = (document.getElementById('selFilter') || {}).value || '';
+  buildSelList(RESTS, q);
 }
+
+function selAllRests(ev) {
+  if (ev) ev.stopPropagation();
+  PENDING_SCOPE.clear();
+  if (typeof RESTS !== 'undefined' && RESTS) {
+    for (const r of RESTS) PENDING_SCOPE.add(r.id);
+  }
+  const q = (document.getElementById('selFilter') || {}).value || '';
+  buildSelList(RESTS, q);
+}
+
+function selResetRests(ev) {
+  if (ev) ev.stopPropagation();
+  PENDING_SCOPE.clear();
+  const q = (document.getElementById('selFilter') || {}).value || '';
+  buildSelList(RESTS, q);
+}
+
+// Применить PENDING_SCOPE: обновить APPLIED_SCOPE, R (= первый из выбранных),
+// MENU_STATE.selectedDeptIds, и перерисовать всё.
+function selApplyScope(ev) {
+  if (ev) ev.stopPropagation();
+  const dd = document.getElementById('selDropdown');
+  // Скопировать pending → applied
+  APPLIED_SCOPE.clear();
+  PENDING_SCOPE.forEach(id => APPLIED_SCOPE.add(id));
+
+  // R — первый из выбранных (используется на не-Меню вкладках). Если
+  // ничего не выбрано (APPLIED_SCOPE пуст) — оставляем текущий R как был.
+  let firstIdx = -1;
+  if (APPLIED_SCOPE.size > 0) {
+    for (let i = 0; i < RESTS.length; i++) {
+      if (APPLIED_SCOPE.has(RESTS[i].id)) { firstIdx = i; break; }
+    }
+  }
+
+  // MENU_STATE.selectedDeptIds управляется ИЗ ВЕРХНЕГО СЕЛЕКТОРА —
+  // при size <= 1 это single (пустой Set, обращаемся к R.id),
+  // при size >= 2 это multi (отправляем restaurant_ids).
+  if (typeof MENU_STATE !== 'undefined') {
+    MENU_STATE.selectedDeptIds.clear();
+    if (APPLIED_SCOPE.size >= 2) {
+      APPLIED_SCOPE.forEach(id => MENU_STATE.selectedDeptIds.add(id));
+    }
+    MENU_STATE.raw = null;
+    MENU_STATE.loadedFor = null;
+  }
+
+  // Глобальная галка «Вся сеть» (NETWORK_MODE) — синхронизация:
+  //   если выбраны ВСЕ рестораны → включаем NETWORK_MODE (агрегаты по сети
+  //   на не-Меню вкладках, как раньше).
+  //   иначе → выключаем NETWORK_MODE и используем R = первый.
+  const total = RESTS ? RESTS.length : 0;
+  const wantNetwork = total > 0 && APPLIED_SCOPE.size === total;
+  const netCb = document.getElementById('netCb');
+  if (wantNetwork) {
+    if (!NETWORK_MODE) {
+      if (netCb) netCb.checked = true;
+      toggleNetworkView(true);
+    }
+  } else {
+    if (NETWORK_MODE) {
+      if (netCb) netCb.checked = false;
+      toggleNetworkView(false);
+    }
+    if (firstIdx >= 0) {
+      selectRest(firstIdx);
+    }
+  }
+
+  // Закрыть dropdown
+  if (dd) { dd.classList.remove('open'); _selOpen = false; }
+  // Обновить отображение в поле ввода
+  _updateSelSearchLabel();
+  // Перерисовать список (без чекбоксов в pending — они равны applied)
+  const q = (document.getElementById('selFilter') || {}).value || '';
+  buildSelList(RESTS, q);
+}
+
+// Legacy-обёртка: код в init() и selectRest() ещё вызывает pickRest(idx)
+// после автоматического выбора первого ресторана. Сохраняем поведение —
+// записываем выбранную точку в APPLIED_SCOPE (single) и применяем без UI.
+function pickRest(idx) {
+  const r = RESTS[idx];
+  if (!r) return;
+  PENDING_SCOPE.clear();
+  PENDING_SCOPE.add(r.id);
+  selApplyScope();
+}
+
 document.addEventListener('click', e => {
   if (!e.target.closest('#selWrap')) {
     const dd = document.getElementById('selDropdown');
@@ -647,15 +791,38 @@ function toggleNetworkView(on) {
   if (on) {
     SAVED_R = R;
     R = buildNetworkR();
-    if (selWrap) selWrap.style.opacity = '0.35';
-    if (selWrap) selWrap.style.pointerEvents = 'none';
-    if (inp) inp.value = 'Вся сеть';
+    // Phase 2.14: при включении «Вся сеть» — синхронизируем APPLIED_SCOPE
+    // (все рестораны в выборе). Это даёт мульти-выбор для вкладки «Меню»
+    // и согласованный UI label («🌐 Вся сеть»). Селектор оставляем кликабельным,
+    // чтобы пользователь мог снять часть галок и нажать ОК.
+    APPLIED_SCOPE.clear();
+    if (typeof RESTS !== 'undefined' && RESTS) {
+      for (const r of RESTS) APPLIED_SCOPE.add(r.id);
+    }
+    if (typeof MENU_STATE !== 'undefined') {
+      MENU_STATE.selectedDeptIds.clear();
+      APPLIED_SCOPE.forEach(id => MENU_STATE.selectedDeptIds.add(id));
+      MENU_STATE.raw = null;
+      MENU_STATE.loadedFor = null;
+    }
+    if (selWrap) selWrap.style.opacity = '1';
+    if (selWrap) selWrap.style.pointerEvents = 'auto';
+    if (inp) inp.value = '🌐 Вся сеть';
     // Для сети используем NET_DOW, MY_DOW обнуляем
     MY_DOW = {}; MY_DOW_DAYS = 0;
     RESTAURANT_SCORE = null; RESTAURANT_RECS = [];
   } else {
     if (SAVED_R) R = SAVED_R;
     SAVED_R = null;
+    // Phase 2.14: при снятии «Вся сеть» — возвращаемся к single-режиму
+    // (только текущий R в APPLIED_SCOPE), мульти-выбор для «Меню» сбрасываем.
+    APPLIED_SCOPE.clear();
+    if (R && R.id) APPLIED_SCOPE.add(R.id);
+    if (typeof MENU_STATE !== 'undefined') {
+      MENU_STATE.selectedDeptIds.clear();
+      MENU_STATE.raw = null;
+      MENU_STATE.loadedFor = null;
+    }
     if (selWrap) selWrap.style.opacity = '1';
     if (selWrap) selWrap.style.pointerEvents = 'auto';
     if (inp && R) inp.value = R.city;
@@ -4189,7 +4356,6 @@ function renderMenuToolbar() {
 
   return (
     '<div class="menu-toolbar">' +
-      renderMenuCitiesControl() +
       '<input class="menu-toolbar-search" id="menuSearch" placeholder="🔍 Поиск по названию блюда..." ' +
              'value="' + escapeAttr(f.search) + '" oninput="onMenuSearchInput(this.value)">' +
       '<select class="menu-toolbar-group" id="menuGroupFilter" onchange="onMenuGroupFilter(this.value)">' +
@@ -4206,131 +4372,9 @@ function renderMenuToolbar() {
   );
 }
 
-// ═══ Phase 2.14: мульти-селектор городов на вкладке «Меню» ═══
-// MENU_STATE.selectedDeptIds = Set<dept_id>:
-//   size === 0           → single-режим (текущий ресторан)
-//   0 < size < RESTS.len → multi-режим (выбранные точки, агрегируются как
-//                          один большой ресторан на backend)
-//   size === RESTS.len   → «Вся сеть»
-function _menuCitiesLabel() {
-  const sel = MENU_STATE.selectedDeptIds;
-  const total = (typeof RESTS !== 'undefined' && RESTS) ? RESTS.length : 0;
-  if (sel.size === 0) return '🏠 Текущий ресторан';
-  if (total > 0 && sel.size >= total) return '🌐 Вся сеть';
-  // мн. число — точка / точки / точек
-  const n = sel.size;
-  const mod10 = n % 10, mod100 = n % 100;
-  let word = 'точек';
-  if (mod10 === 1 && mod100 !== 11) word = 'точка';
-  else if ([2, 3, 4].indexOf(mod10) !== -1 && [12, 13, 14].indexOf(mod100) === -1) word = 'точки';
-  return '🏙 ' + n + ' ' + word;
-}
-
-function renderMenuCitiesControl() {
-  return (
-    '<div class="menu-toolbar-cities">' +
-      '<button class="menu-cities-btn" type="button" onclick="toggleMenuCitiesDropdown(event)">' +
-        '<span id="menuCitiesLabel">' + _menuCitiesLabel() + '</span>' +
-        ' <span class="caret">▾</span>' +
-      '</button>' +
-      '<div class="menu-cities-dropdown" id="menuCitiesDropdown" hidden></div>' +
-    '</div>'
-  );
-}
-
-function renderMenuCitiesDropdownContent() {
-  if (typeof RESTS === 'undefined' || !RESTS || RESTS.length === 0) {
-    return '<div class="menu-cities-empty">Список ресторанов ещё не загружен</div>';
-  }
-  const sel = MENU_STATE.selectedDeptIds;
-  const allChecked = sel.size === RESTS.length;
-  const someChecked = sel.size > 0 && !allChecked;
-  let html = '<div class="menu-cities-actions">' +
-    '<button type="button" onclick="onMenuCitiesAll(true)">Выбрать все</button>' +
-    '<button type="button" onclick="onMenuCitiesAll(false)">Снять все</button>' +
-    '<span class="menu-cities-actions-state">' +
-      (allChecked ? 'все выбраны' : someChecked ? sel.size + ' из ' + RESTS.length : 'нет выбранных') +
-    '</span>' +
-  '</div>';
-  html += '<div class="menu-cities-list">';
-  for (const r of RESTS) {
-    const checked = sel.has(r.id) ? 'checked' : '';
-    html += '<label class="menu-cities-item">' +
-      '<input type="checkbox" ' + checked + ' onchange="onMenuCityToggle(' + r.id + ', this.checked)">' +
-      '<span class="menu-cities-city">' + escapeHtml(r.city || '—') + '</span>' +
-      '<span class="menu-cities-name">' + escapeHtml(r.name || '') + '</span>' +
-    '</label>';
-  }
-  html += '</div>';
-  return html;
-}
-
-function toggleMenuCitiesDropdown(e) {
-  if (e) e.stopPropagation();
-  const dd = document.getElementById('menuCitiesDropdown');
-  if (!dd) return;
-  if (dd.hasAttribute('hidden')) {
-    dd.innerHTML = renderMenuCitiesDropdownContent();
-    dd.removeAttribute('hidden');
-    // закрытие по клику вне дропдауна
-    setTimeout(function() {
-      document.addEventListener('click', _closeMenuCitiesDropdownOutside, true);
-    }, 0);
-  } else {
-    _hideMenuCitiesDropdown();
-  }
-}
-
-function _hideMenuCitiesDropdown() {
-  const dd = document.getElementById('menuCitiesDropdown');
-  if (dd) dd.setAttribute('hidden', '');
-  document.removeEventListener('click', _closeMenuCitiesDropdownOutside, true);
-}
-
-function _closeMenuCitiesDropdownOutside(e) {
-  const wrap = document.querySelector('.menu-toolbar-cities');
-  if (wrap && !wrap.contains(e.target)) _hideMenuCitiesDropdown();
-}
-
-function onMenuCityToggle(deptId, checked) {
-  if (checked) MENU_STATE.selectedDeptIds.add(deptId);
-  else MENU_STATE.selectedDeptIds.delete(deptId);
-  _updateMenuCitiesLabel();
-  // Обновим состояние «N из M» в actions, не дёргая весь список (чтобы фокус
-  // не терялся при быстрых кликах подряд).
-  const stateEl = document.querySelector('.menu-cities-actions-state');
-  if (stateEl && typeof RESTS !== 'undefined' && RESTS) {
-    const sel = MENU_STATE.selectedDeptIds;
-    stateEl.textContent = (sel.size === RESTS.length) ? 'все выбраны'
-      : (sel.size > 0 ? sel.size + ' из ' + RESTS.length : 'нет выбранных');
-  }
-  _reloadMenuAfterScopeChange();
-}
-
-function onMenuCitiesAll(check) {
-  MENU_STATE.selectedDeptIds.clear();
-  if (check && typeof RESTS !== 'undefined' && RESTS) {
-    for (const r of RESTS) MENU_STATE.selectedDeptIds.add(r.id);
-  }
-  _updateMenuCitiesLabel();
-  // Перерисуем содержимое дропдауна, чтобы чекбоксы синхронизировались
-  const dd = document.getElementById('menuCitiesDropdown');
-  if (dd) dd.innerHTML = renderMenuCitiesDropdownContent();
-  _reloadMenuAfterScopeChange();
-}
-
-function _updateMenuCitiesLabel() {
-  const lbl = document.getElementById('menuCitiesLabel');
-  if (lbl) lbl.textContent = _menuCitiesLabel();
-}
-
-function _reloadMenuAfterScopeChange() {
-  // Сбрасываем кэш и перерисовываем всю вкладку. Дропдаун пере-рендерится
-  // в составе тулбара — он закроется (display:none), это ОК для UX.
-  MENU_STATE.raw = null;
-  MENU_STATE.loadedFor = null;
-  renderMenu();
-}
+// Phase 2.14: мульти-выбор городов для «Меню» теперь реализован через
+// расширенный верхний селектор ресторанов (см. buildSelList / applyScope
+// в начале файла). MENU_STATE.selectedDeptIds управляется оттуда.
 
 function renderMenuTableHeader() {
   const sortIcon = (col) => {

@@ -377,14 +377,56 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 .sel-search:focus{border-color:var(--gold)}
 .sel-search::placeholder{color:var(--text3)}
 .sel-arrow{position:absolute;right:10px;color:var(--gold);pointer-events:none;font-size:11px}
-.sel-dropdown{position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--card2);border:1px solid var(--border2);border-radius:10px;z-index:500;box-shadow:0 8px 24px rgba(0,0,0,.4);display:none;max-height:320px;overflow:hidden;flex-direction:column}
+.sel-dropdown{position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--card2);border:1px solid var(--border2);border-radius:10px;z-index:500;box-shadow:0 8px 24px rgba(0,0,0,.4);display:none;max-height:480px;overflow:hidden;flex-direction:column}
 .sel-dropdown.open{display:flex}
 .sel-list{overflow-y:auto;flex:1}
-.sel-item{padding:8px 14px;font-size:12px;color:var(--text2);cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+.sel-item{padding:8px 14px;font-size:12px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:8px}
 .sel-item:hover{background:rgba(212,168,75,.08);color:var(--text)}
 .sel-item.active{color:var(--gold);background:rgba(212,168,75,.1)}
+.sel-item.pending{background:rgba(212,168,75,.06)}
 .sel-item .sel-city{font-size:10px;color:var(--text3)}
+.sel-item .sel-cb{accent-color:var(--gold);cursor:pointer;margin:0;flex-shrink:0}
 .sel-count{font-size:10px;color:var(--text3);padding:6px 14px;border-top:1px solid var(--border)}
+
+/* Phase 2.14: actions bar в верхнем селекторе — ОК / Сброс / Все + счётчик */
+.sel-actions{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:6px 10px;
+  border-top:1px solid var(--border);
+  border-bottom:1px solid var(--border);
+  background:rgba(0,0,0,.15);
+}
+.sel-act{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:5px;
+  padding:4px 10px;
+  font-size:10px;
+  color:var(--text2);
+  cursor:pointer;
+  transition:all .15s;
+  font-family:inherit;
+  white-space:nowrap;
+}
+.sel-act:hover{border-color:var(--gold);color:var(--text)}
+.sel-act-ok{
+  background:var(--gold);
+  border-color:var(--gold);
+  color:#000;
+  font-weight:600;
+  margin-left:auto;
+}
+.sel-act-ok:hover{background:#e9b962;border-color:#e9b962;color:#000}
+.sel-act-state{
+  font-size:10px;
+  color:var(--text3);
+  margin-left:auto;
+  white-space:nowrap;
+}
+/* Когда есть state-блок — кнопке ОК не нужен margin-left:auto (state уже занял) */
+.sel-act-state + .sel-act-ok{margin-left:0}
 
 
 /* LOGIN SCREEN */
@@ -863,100 +905,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
   color:var(--text3);
   margin-left:auto;
   white-space:nowrap;
-}
-
-/* ═══ Phase 2.14: мульти-селектор городов в тулбаре «Меню» ═══════════════ */
-.menu-toolbar-cities{position:relative;display:inline-flex}
-.menu-cities-btn{
-  background:var(--bg2);
-  border:1px solid var(--border);
-  border-radius:6px;
-  padding:6px 10px;
-  font-size:11px;
-  color:var(--text2);
-  cursor:pointer;
-  transition:all .15s;
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  white-space:nowrap;
-}
-.menu-cities-btn:hover{border-color:var(--gold);color:var(--text)}
-.menu-cities-btn .caret{font-size:9px;color:var(--text3)}
-.menu-cities-dropdown{
-  position:absolute;
-  top:calc(100% + 4px);
-  left:0;
-  z-index:200;
-  background:var(--card);
-  border:1px solid var(--border2);
-  border-radius:8px;
-  box-shadow:0 6px 24px rgba(0,0,0,.4);
-  padding:10px;
-  width:340px;
-  max-height:420px;
-  display:flex;
-  flex-direction:column;
-}
-.menu-cities-dropdown[hidden]{display:none}
-.menu-cities-actions{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  padding-bottom:8px;
-  border-bottom:1px solid var(--border);
-  margin-bottom:6px;
-}
-.menu-cities-actions button{
-  background:var(--bg2);
-  border:1px solid var(--border);
-  border-radius:5px;
-  padding:4px 10px;
-  font-size:10px;
-  color:var(--text2);
-  cursor:pointer;
-  transition:all .15s;
-}
-.menu-cities-actions button:hover{border-color:var(--gold);color:var(--text)}
-.menu-cities-actions-state{
-  margin-left:auto;
-  font-size:10px;
-  color:var(--text3);
-}
-.menu-cities-list{overflow-y:auto;max-height:340px}
-.menu-cities-item{
-  display:grid;
-  grid-template-columns:auto 1fr 2fr;
-  align-items:center;
-  gap:8px;
-  padding:5px 4px;
-  font-size:11px;
-  color:var(--text2);
-  cursor:pointer;
-  border-radius:4px;
-}
-.menu-cities-item:hover{background:var(--bg2)}
-.menu-cities-item input{accent-color:var(--gold);cursor:pointer}
-.menu-cities-item .menu-cities-city{
-  font-weight:600;
-  color:var(--text);
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-.menu-cities-item .menu-cities-name{
-  color:var(--text3);
-  font-size:10px;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-.menu-cities-empty{
-  padding:20px;
-  text-align:center;
-  color:var(--text3);
-  font-size:11px;
-  font-style:italic;
 }
 
 /* Активный фильтр-чип (показывается если class-фильтр применён из матрицы) */
