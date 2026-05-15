@@ -404,18 +404,33 @@ function _loadPersistedState() {
 // Bug 1 фикс: renderAll() не покрывает «Меню» / «Персонал» / «Маркетинг»,
 // поэтому после смены scope (selApplyScope, toggleNetworkView) нужно явно
 // перерендерить активную вкладку, если это одна из «специальных».
+//
+// Phase 2.14 fix (UX flicker): селект scope может последовательно дёрнуть
+// несколько перерендеров (внутри toggleNetworkView → один, и в selApplyScope
+// сам по себе → второй). Если активна «Меню», второй renderMenu() стартовал
+// пока первый ещё ждал API, и из-за `if (MENU_STATE.loading) return null`
+// получал null → на пару секунд рисовал «Не удалось загрузить» до завершения
+// первого. Коалесцируем все синхронные вызовы в один через rAF — финальный
+// рендер стартует один раз, уже с консистентным состоянием.
+let _RERENDER_PENDING = false;
 function _rerenderActiveTab() {
-  // renderAll() рисует Обзор + Динамика + Сравнение + Анализ + Owner PnL
-  try { renderAll(); } catch (e) { console.warn('[_rerenderActiveTab] all:', e.message); }
-  const active = document.querySelector('.ntab.active');
-  const tab = active ? active.dataset.tab : null;
-  if (tab === 'menu' && typeof renderMenu === 'function') {
-    try { renderMenu(); } catch (e) { console.warn('[_rerenderActiveTab] menu:', e.message); }
-  } else if (tab === 'staff' && typeof renderStaff === 'function') {
-    try { renderStaff(); } catch (e) { console.warn('[_rerenderActiveTab] staff:', e.message); }
-  } else if (tab === 'marketing' && typeof renderMarketing === 'function') {
-    try { renderMarketing(); } catch (e) { console.warn('[_rerenderActiveTab] marketing:', e.message); }
-  }
+  if (_RERENDER_PENDING) return;
+  _RERENDER_PENDING = true;
+  const _exec = () => {
+    _RERENDER_PENDING = false;
+    try { renderAll(); } catch (e) { console.warn('[_rerenderActiveTab] all:', e.message); }
+    const active = document.querySelector('.ntab.active');
+    const tab = active ? active.dataset.tab : null;
+    if (tab === 'menu' && typeof renderMenu === 'function') {
+      try { renderMenu(); } catch (e) { console.warn('[_rerenderActiveTab] menu:', e.message); }
+    } else if (tab === 'staff' && typeof renderStaff === 'function') {
+      try { renderStaff(); } catch (e) { console.warn('[_rerenderActiveTab] staff:', e.message); }
+    } else if (tab === 'marketing' && typeof renderMarketing === 'function') {
+      try { renderMarketing(); } catch (e) { console.warn('[_rerenderActiveTab] marketing:', e.message); }
+    }
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_exec);
+  else setTimeout(_exec, 0);
 }
 
 function buildSelList(list, query='') {
@@ -524,22 +539,46 @@ function selResetRests(ev) {
 function selApplyScope(ev) {
   if (ev) ev.stopPropagation();
   const dd = document.getElementById('selDropdown');
-  // Скопировать pending → applied
-  APPLIED_SCOPE.clear();
-  PENDING_SCOPE.forEach(id => APPLIED_SCOPE.add(id));
 
-  // R — первый из выбранных (используется на не-Меню вкладках). Если
-  // ничего не выбрано (APPLIED_SCOPE пуст) — оставляем текущий R как был.
+  // Phase 2.14 fix: считаем целевой scope в локальный Set, не сохраняем
+  // в APPLIED_SCOPE до конца. Причина — toggleNetworkView(false) внутри
+  // обнуляет APPLIED_SCOPE на { R.id } (восстанавливает single-режим),
+  // а selectRest() переинициализирует R. Поэтому сначала разруливаем
+  // NETWORK_MODE + R, а APPLIED_SCOPE и MENU_STATE.selectedDeptIds
+  // выставляем уже окончательно после.
+  const _newScope = new Set();
+  PENDING_SCOPE.forEach(id => _newScope.add(id));
+
   let firstIdx = -1;
-  if (APPLIED_SCOPE.size > 0) {
+  if (_newScope.size > 0) {
     for (let i = 0; i < RESTS.length; i++) {
-      if (APPLIED_SCOPE.has(RESTS[i].id)) { firstIdx = i; break; }
+      if (_newScope.has(RESTS[i].id)) { firstIdx = i; break; }
     }
   }
 
-  // MENU_STATE.selectedDeptIds управляется ИЗ ВЕРХНЕГО СЕЛЕКТОРА —
-  // при size <= 1 это single (пустой Set, обращаемся к R.id),
-  // при size >= 2 это multi (отправляем restaurant_ids).
+  // 1) NETWORK_MODE + R разруливаем ПЕРВЫМИ (имеют побочные эффекты на scope).
+  const total = RESTS ? RESTS.length : 0;
+  const wantNetwork = total > 0 && _newScope.size === total;
+  const netCb = document.getElementById('netCb');
+  if (wantNetwork) {
+    if (!NETWORK_MODE) {
+      if (netCb) netCb.checked = true;
+      toggleNetworkView(true);
+    }
+  } else {
+    if (NETWORK_MODE) {
+      if (netCb) netCb.checked = false;
+      toggleNetworkView(false); // обнуляет APPLIED_SCOPE — это OK, восстановим ниже
+    }
+    if (firstIdx >= 0) {
+      selectRest(firstIdx);
+    }
+  }
+
+  // 2) ОКОНЧАТЕЛЬНО ставим APPLIED_SCOPE и MENU_STATE.selectedDeptIds.
+  //    Эти значения переживают побочные эффекты toggleNetworkView/selectRest.
+  APPLIED_SCOPE.clear();
+  _newScope.forEach(id => APPLIED_SCOPE.add(id));
   if (typeof MENU_STATE !== 'undefined') {
     MENU_STATE.selectedDeptIds.clear();
     if (APPLIED_SCOPE.size >= 2) {
@@ -547,51 +586,23 @@ function selApplyScope(ev) {
     }
     MENU_STATE.raw = null;
     MENU_STATE.loadedFor = null;
+    MENU_STATE.lastError = null;
   }
 
-  // Глобальная галка «Вся сеть» (NETWORK_MODE) — синхронизация:
-  //   если выбраны ВСЕ рестораны → включаем NETWORK_MODE (агрегаты по сети
-  //   на не-Меню вкладках, как раньше).
-  //   иначе → выключаем NETWORK_MODE и используем R = первый.
-  const total = RESTS ? RESTS.length : 0;
-  const wantNetwork = total > 0 && APPLIED_SCOPE.size === total;
-  const netCb = document.getElementById('netCb');
-  let _rerenderHandled = false;
-  if (wantNetwork) {
-    if (!NETWORK_MODE) {
-      if (netCb) netCb.checked = true;
-      // toggleNetworkView сам зовёт renderAll() — отметим, чтобы не дублировать.
-      toggleNetworkView(true);
-      _rerenderHandled = true;
-    }
-  } else {
-    if (NETWORK_MODE) {
-      if (netCb) netCb.checked = false;
-      toggleNetworkView(false);
-      _rerenderHandled = true;
-    }
-    if (firstIdx >= 0) {
-      selectRest(firstIdx);
-      // selectRest вызывает renderAll() для не-Меню вкладок, но не renderMenu.
-      // Пометка не ставится — ниже всё равно перерендерим активную вкладку.
-    }
-  }
-
-  // Закрыть dropdown
+  // 3) Закрыть dropdown
   if (dd) { dd.classList.remove('open'); _selOpen = false; }
-  // Обновить отображение в поле ввода
+  // 4) Обновить отображение и список
   _updateSelSearchLabel();
-  // Перерисовать список (без чекбоксов в pending — они равны applied)
   const q = (document.getElementById('selFilter') || {}).value || '';
   buildSelList(RESTS, q);
 
-  // Bug 1 фикс: явно перерендерить активную вкладку. renderAll() уже мог
-  // вызваться внутри toggleNetworkView/selectRest, но он не покрывает
-  // «Меню» / «Персонал» / «Маркетинг» — без этого данные на «Меню»
-  // не обновлялись при клике «Вся сеть».
+  // 5) Финальный рендер. _rerenderActiveTab() коалесцирует через rAF —
+  //    предыдущие вызовы из toggleNetworkView/selectRest схлопнутся в один
+  //    с финальным консистентным состоянием (без UI flicker «Не удалось
+  //    загрузить» пока первый запрос ещё в полёте).
   _rerenderActiveTab();
 
-  // Сохранить применённый выбор в localStorage (Phase 2.14)
+  // 6) Сохранить применённый выбор в localStorage
   _persistState();
 }
 
