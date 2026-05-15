@@ -1053,6 +1053,35 @@ npx tsc --noEmit
 
 ## Лог версий паспорта
 
+- **v3.54 (15.05.2026) — Phase 2.14 closed: «Меню» = multi-city + UX-фиксы.** Большая работа по вкладке Касаван-Смит в 8 коммитах.
+
+  Bug-fix таблицы (5dd54f8): «Доля %» и «vs сеть» больше не пустые. Корень — рассинхрон имён полей backend ↔ frontend (`mix_pct_group` vs `menu_mix_pct_group`, `margin_p50_net` vs `margin_per_unit_median`, `mix_pct_p50_net` vs `mix_pct_group_median`). Поправлено в 6 точках dashboard.js (renderMenuTableBody + drawer). Добавлена колонка «Фудкост %» (поле `avg_foodcost_pct` уже было в ответе, просто не отображалось). Inline `style="text-align:right"` заменён на CSS-классы `.menu-num` / `.menu-num-center` с `font-variant-numeric: tabular-nums` — цифры моноширинные, не «прыгают». Заголовки числовых колонок выровнены через `thead th:nth-child(5..10)`.
+
+  Multi-city backend (a739334): `handleMenuAnalysis` принимает опциональный CSV-параметр `restaurant_ids` (приоритет над `restaurant_id`). До 100 точек, дедупликация Set'ом, `parsePositiveIntStrict` на каждом id (SQL-injection невозможна). 7 SQL-мест переведены с `dept_uuid = '${deptUuid}'` на subquery (см. ниже).
+
+  Multi-city frontend v1 (65764b5 → удалён в 39edc73): первая попытка — отдельная кнопка «🏠 Текущий ресторан» в тулбаре Меню рядом с поиском. Пользователь не принял UX («второй тулбар путает») → откатил.
+
+  Multi-city frontend v2 (39edc73): расширил **существующий верхний селектор ресторанов**. Внутри `selDropdown` появились чекбоксы перед каждой строкой + actions-bar `[Выбрать все] [Сбросить] [N/total] [ОК]`. Введены `PENDING_SCOPE` (что отметили) и `APPLIED_SCOPE` (что применили). Клик по строке — toggle pending без загрузки. ОК — `selApplyScope()` копирует pending→applied, ставит R = первый из выбранных (для не-Меню вкладок), `MENU_STATE.selectedDeptIds = APPLIED_SCOPE` (если ≥2), при scope == все ресторанов авто-включает старый NETWORK_MODE. Закрытие dropdown без ОК — выбор отбрасывается. Поле `selSearch.value` показывает: 1 точка → город, 2..total-1 → «🏙 N точек», all → «🌐 Вся сеть». Глобальная галка «Вся сеть» (`toggleNetworkView`) теперь сразу ставит все галки в APPLIED + NETWORK_MODE on. На вкладках Обзор/Динамика/Сравнение/Анализ/Персонал/Маркетинг/Owner PnL multi-выбор НЕ используется — там R = первый из applied.
+
+  Bug 1 фикс (e04d0d1): «Вся сеть» прожималась, но данные на «Меню» не обновлялись. Корень — `renderAll()` не вызывает `renderMenu` / `renderStaff` / `renderMarketing`. Helper `_rerenderActiveTab()` дополнительно вызывает рендер активной «специальной» вкладки. Подключён в `selApplyScope` и `toggleNetworkView`.
+
+  Bug 2 фикс (e04d0d1): после refresh страница сбрасывалась на Благовещенск + [MIN_DATE..MAX_DATE]. Корень — нет persistence. Добавлены `_persistState()` / `_loadPersistedState()` с ключом `localStorage.chicko_dashboard_state_v1` (`{scope, period, v:1}`). Сохраняется при ОК / при «Вся сеть» / при `calApply('global')`. Восстанавливается в `init()` ПЕРЕД `selectRest(0)` — period (с валидацией `[MIN_DATE..MAX_DATE]`) + scope (фильтр по существующим RESTS) + auto-включение NETWORK_MODE если scope == все.
+
+  Bug 3 фикс (5b5533f): обработка ошибок. `loadMenuAnalysis()` сохраняет `MENU_STATE.lastError = e.message`. `renderMenu()` показывает «Причина: ...» + кнопка «Повторить» (сбрасывает кэш и пере-fetch'ит) вместо дженерик-сообщения. Backend (handleMenuAnalysis) возвращает `{error, message}` с реальным `err.message`.
+
+  Bug 4 фикс (8333b2f): на «Вся сеть» падал 500 (timeout CTE history). История CTE в multi-режиме (restIds.length > 1) ограничена последним годом данных: `AND d.report_date >= addYears(toDate('${end}'), -1)` — покрывает все KS-классификации (new ≤30д, dormant ≥14д, seasonal ±30д от год назад), но не сканирует все партиции с начала года.
+
+  Bug 5 фикс (41bf0cf, **критический**): 414 Request-URI Too Large на «Вся сеть» (43 точки). Корень — n8n proxy шлёт SQL в URL `?query=...`, при 43 UUID × 36 байт + `IN ('uuid1',...,'uuid43')` × 7 SQL-мест URL превышал nginx-лимит (~8KB). Решение — заменить inline-список UUID на subquery с коротким `dept_id IN (...)`:
+  ```sql
+  WHERE dept_uuid IN (
+    SELECT DISTINCT dept_uuid FROM chicko.mart_restaurant_daily_base
+    WHERE dept_id IN (101,102,...)
+  )
+  ```
+  Размер SQL почти не зависит от scope size. Бонус — убран отдельный lookup-запрос (его роль теперь у subquery), минус один CH-запрос на каждое `/api/menu-analysis`.
+
+  В проде: версия Worker `a26ee51d-730a-4652-9f79-af22f8cec284`.
+
 - **v3.53 (05.05.2026)** — Data freshness indicator: новый endpoint `/api/data-date` возвращает MAX(snapshot_date) из chicko.premiumbonus_clients. Добавлена визуальная плашка в header с золотым текстом «Данные на: YYYY-MM-DD» (верхний правый угол). Удалены дублирующие отображения дат из CRM-портрета (мета-шапка + footer). Deployed to production.
 - **v3.52 (01.05.2026)** — Forecast as_of: прогноз строится по выбранному периоду (as_of=globalEnd). Кэш по restId|as_of. Валидация на сервере. Первый день месяца — прогноз на текущий месяц через Method B/C.
 - **v3.51 (01.05.2026)** — fix(forecast): maxDateStr = today() вместо последней даты в CH (fix для 1 мая — плашка прогноза показывала апрель).
