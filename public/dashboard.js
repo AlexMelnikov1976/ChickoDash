@@ -3956,6 +3956,7 @@ async function loadMenuAnalysis() {
   const key = menuCacheKey();
   if (!key) {
     console.warn('[menu] cannot load: no restaurant or date range');
+    MENU_STATE.lastError = 'Не выбран ресторан или период';
     return null;
   }
   if (MENU_STATE.loadedFor === key && MENU_STATE.raw) {
@@ -3964,6 +3965,7 @@ async function loadMenuAnalysis() {
   if (MENU_STATE.loading) return null; // защита от двойных запросов
 
   MENU_STATE.loading = true;
+  MENU_STATE.lastError = null;
   try {
     const st = CAL_STATE.global;
     // Phase 2.9.4: KS-анализ за 2+ года бессмыслен, а бэкенд режет
@@ -3987,12 +3989,14 @@ async function loadMenuAnalysis() {
     const qs = '?' + scopeQs +
                '&start=' + encodeURIComponent(menuStart) +
                '&end=' + encodeURIComponent(menuEnd);
+    console.log('[menu] fetch ' + qs);
     const data = await apiGet('/api/menu-analysis' + qs);
     MENU_STATE.raw = data;
     MENU_STATE.loadedFor = key;
     return data;
   } catch (e) {
     console.error('[menu] load failed:', e.message);
+    MENU_STATE.lastError = e.message || 'Неизвестная ошибка';
     return null;
   } finally {
     MENU_STATE.loading = false;
@@ -4017,7 +4021,22 @@ async function renderMenu() {
 
   const data = await loadMenuAnalysis();
   if (!data) {
-    root.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--red);font-size:12px">Не удалось загрузить данные. Попробуйте обновить страницу.</div>';
+    // Phase 2.14: показываем конкретную причину + кнопку «Повторить» (сбрасывает
+    // кэш и пере-fetch'ит). Раньше было дженерик-сообщение, не давало диагностики.
+    const errMsg = (MENU_STATE.lastError || '').toString().replace(/</g,'&lt;');
+    const scopeMsg = MENU_STATE.selectedDeptIds && MENU_STATE.selectedDeptIds.size > 1
+      ? ' Выбрано ресторанов: ' + MENU_STATE.selectedDeptIds.size + '. Попробуйте уменьшить выборку или расширить период.'
+      : '';
+    root.innerHTML =
+      '<div style="text-align:center;padding:40px 20px;color:var(--red);font-size:12px">' +
+        '<div style="margin-bottom:10px">Не удалось загрузить данные анализа меню.</div>' +
+        (errMsg ? '<div style="color:var(--text3);font-size:11px;margin-bottom:14px">Причина: ' + errMsg + '</div>' : '') +
+        (scopeMsg ? '<div style="color:var(--text3);font-size:11px;margin-bottom:14px">' + scopeMsg + '</div>' : '') +
+        '<button type="button" onclick="(function(){MENU_STATE.raw=null;MENU_STATE.loadedFor=null;MENU_STATE.lastError=null;renderMenu();})()" ' +
+          'style="background:var(--gold);border:1px solid var(--gold);color:#000;font-weight:600;border-radius:6px;padding:6px 14px;font-size:11px;cursor:pointer">' +
+          'Повторить' +
+        '</button>' +
+      '</div>';
     return;
   }
 
