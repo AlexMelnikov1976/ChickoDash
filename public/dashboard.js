@@ -264,6 +264,11 @@ async function updateDataLastDate() {
       } catch (e) { /* non-JSON 200 не ожидается, но не падаем */ }
       hideLogin();
       updateDataLastDate();
+      // Phase 2.4d fix (2026-05-15): init() запускаем ТОЛЬКО после успешного
+      // /api/auth/me, иначе apiRestaurants() стартовал параллельно с verify
+      // и ловил 401 (race condition — лечилось refresh'ом, поскольку cookie
+      // к тому моменту уже была установлена сервером).
+      init();
     } else {
       showLogin();
     }
@@ -5885,7 +5890,11 @@ function renderAdminUsers(users) {
 }
 
 
-init();
+// Phase 2.4d fix (2026-05-15): init() теперь вызывается из bootAuth (~стр.267)
+// после успешного /api/auth/me. Раньше здесь был прямой `init();` — он
+// стартовал параллельно с авторизацией и при первой загрузке через
+// magic-link ловил 401 на /api/restaurants (cookie ещё не установлена).
+// Лечилось refresh'ом — после него cookie уже была в браузере.
 
 
 // ════════════════════════════════════════════════════════════════════════
