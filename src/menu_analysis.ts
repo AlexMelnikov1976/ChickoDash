@@ -312,16 +312,18 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
       password: env.CLICKHOUSE_PASSWORD || '',
     });
 
-    // Lookup всех dept_uuid по списку dept_id. restIds — отвалидированные
-    // positive integers (parsePositiveIntStrict), SQL-injection невозможна.
-    const uuidR = await ch.query(
-      `SELECT DISTINCT dept_uuid FROM chicko.mart_restaurant_daily_base WHERE dept_id IN (${restIds.join(',')})`
-    );
-    const uuidRows = uuidR.data as Array<{ dept_uuid: string }>;
-    if (!uuidRows.length) return jsonResponse({ error: 'Restaurant(s) not found' }, request, 404);
-    const deptUuids = uuidRows.map(r => r.dept_uuid);
-    // SQL-фрагмент: 'uuid1','uuid2',... — используется во всех 3-х запросах ниже.
-    const uuidsSql = deptUuids.map(u => `'${u}'`).join(',');
+    // Phase 2.14 fix (HTTP 414): раньше мы делали lookup dept_uuid'ов по
+    // restIds и подставляли их inline в IN ('uuid1',...,'uuidN'). При выборе
+    // «Вся сеть» (43 точек × 36-byte UUID + кавычки) URL вырастал >2KB,
+    // и nginx перед ClickHouse возвращал 414 Request-URI Too Large.
+    //
+    // Решение: вместо inline-списка UUID используем subquery с коротким
+    // dept_id IN (...) — размер SQL практически не зависит от количества
+    // выбранных ресторанов. Lookup убран, его роль выполняет subquery.
+    // restIds — отвалидированные positive integers (parsePositiveIntStrict),
+    // SQL-injection невозможна.
+    const restIdsCsv = restIds.join(',');
+    const uuidsSubquery = `SELECT DISTINCT dept_uuid FROM chicko.mart_restaurant_daily_base WHERE dept_id IN (${restIdsCsv})`;
 
     // Расширенное окно для seasonal — ±30 дней от календарного года назад
     const seasonalStart = shiftIsoDate(shiftOneYearBack(start), -SEASONAL_WINDOW_DAYS);
@@ -334,7 +336,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
           SELECT dept_uuid, report_date
           FROM chicko.mart_restaurant_daily_base
           WHERE is_anomaly_day = 0
-            AND dept_uuid IN (${uuidsSql})
+            AND dept_uuid IN (${uuidsSubquery})
         ),
         history AS (
           SELECT
@@ -343,7 +345,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
             max(d.report_date) AS last_sold_at
           FROM chicko.dish_sales d
           INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
-          WHERE d.dept_uuid IN (${uuidsSql})
+          WHERE d.dept_uuid IN (${uuidsSubquery})
             AND d.report_date <= '${end}'
             ${restIds.length > 1 ? `AND d.report_date >= addYears(toDate('${end}'), -1)` : ''}
             AND d.qty > 0
@@ -370,7 +372,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
       FROM chicko.dish_sales d
       INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
       INNER JOIN history h ON d.dish_code = h.dish_code
-      WHERE d.dept_uuid IN (${uuidsSql})
+      WHERE d.dept_uuid IN (${uuidsSubquery})
         AND d.report_date BETWEEN '${start}' AND '${end}'
         AND d.qty > 0
         AND d.dish_code != ''
@@ -392,7 +394,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
           SELECT DISTINCT d.dish_code
           FROM chicko.dish_sales d
           INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
-          WHERE d.dept_uuid IN (${uuidsSql})
+          WHERE d.dept_uuid IN (${uuidsSubquery})
             AND d.qty > 0
             AND d.revenue_rub > 0
             AND d.dish_code != ''
@@ -406,7 +408,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
             (SUM(d.revenue_rub) - SUM(d.foodcost_rub)) / nullIf(SUM(d.qty), 0) AS margin_per_unit
           FROM chicko.dish_sales d
           INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
-          WHERE d.dept_uuid NOT IN (${uuidsSql})
+          WHERE d.dept_uuid NOT IN (${uuidsSubquery})
             AND d.dish_code IN (SELECT dish_code FROM mine)
             AND d.qty > 0
           GROUP BY d.dept_uuid, d.dish_code
@@ -417,7 +419,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
             SUM(d.qty) AS total_q
           FROM chicko.dish_sales d
           INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
-          WHERE d.dept_uuid NOT IN (${uuidsSql})
+          WHERE d.dept_uuid NOT IN (${uuidsSubquery})
             AND d.qty > 0
           GROUP BY d.dept_uuid
         )
@@ -437,7 +439,7 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
       FROM chicko.dish_sales d
       INNER JOIN chicko.mart_restaurant_daily_base b
         ON d.dept_uuid = b.dept_uuid AND d.report_date = b.report_date
-      WHERE d.dept_uuid IN (${uuidsSql})
+      WHERE d.dept_uuid IN (${uuidsSubquery})
         AND b.is_anomaly_day = 0
         AND d.report_date BETWEEN '${seasonalStart}' AND '${seasonalEnd}'
         AND d.qty > 0
