@@ -4203,7 +4203,8 @@ function renderMenuTableHeader() {
         '<th' + thClass('total_qty') + ' onclick="sortMenuTable(\'total_qty\')">Количество' + sortIcon('total_qty') + '</th>' +
         '<th' + thClass('total_revenue') + ' onclick="sortMenuTable(\'total_revenue\')">Выручка' + sortIcon('total_revenue') + '</th>' +
         '<th' + thClass('margin_per_unit') + ' onclick="sortMenuTable(\'margin_per_unit\')">Маржа ₽/шт' + sortIcon('margin_per_unit') + '</th>' +
-        '<th' + thClass('mix_pct_group') + ' onclick="sortMenuTable(\'mix_pct_group\')">Доля %' + sortIcon('mix_pct_group') + '</th>' +
+        '<th' + thClass('avg_foodcost_pct') + ' onclick="sortMenuTable(\'avg_foodcost_pct\')">Фудкост %' + sortIcon('avg_foodcost_pct') + '</th>' +
+        '<th' + thClass('menu_mix_pct_group') + ' onclick="sortMenuTable(\'menu_mix_pct_group\')">Доля %' + sortIcon('menu_mix_pct_group') + '</th>' +
         '<th>vs сеть</th>' +
       '</tr>' +
     '</thead>'
@@ -4259,7 +4260,7 @@ function renderMenuTableBody() {
   if (!tbody) return;
   
   if (MENU_STATE.filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="menu-table-empty">Нет блюд, соответствующих фильтрам</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="menu-table-empty">Нет блюд, соответствующих фильтрам</td></tr>';
     return;
   }
   
@@ -4268,18 +4269,19 @@ function renderMenuTableBody() {
     const revenue = dish.total_revenue || 0;
     const qty = dish.total_qty || 0;
     const margin = dish.margin_per_unit || 0;
-    const mixPct = dish.mix_pct_group || 0;
-    
+    const mixPct = dish.menu_mix_pct_group || 0;
+    const fcPct = dish.avg_foodcost_pct || 0;
+
     const revStr = (revenue >= 1e6)
       ? (revenue / 1e6).toFixed(1) + 'M'
       : Math.round(revenue).toLocaleString('ru');
-    
+
     // vs сеть
     let vsNetStr = '—';
     let vsNetClass = 'menu-vs-net-na';
     if (dish.network && dish.network.n_rests >= 3) {
       const myMargin = margin;
-      const netMargin = dish.network.margin_per_unit_median || 0;
+      const netMargin = dish.network.margin_p50_net || 0;
       if (netMargin > 0) {
         const diff = ((myMargin - netMargin) / netMargin * 100);
         if (diff > 5) {
@@ -4296,15 +4298,16 @@ function renderMenuTableBody() {
 
     return (
       '<tr onclick="openMenuDrawer(\'' + escapeAttr(dish.dish_code || '') + '\')">' +
-        '<td class="rank-cell">' + (idx + 1) + '</td>' +
+        '<td class="rank-cell menu-num">' + (idx + 1) + '</td>' +
         '<td class="name-cell" title="' + escapeAttr(dish.dish_name || '') + '">' + escapeHtml(dish.dish_name || '—') + '</td>' +
         '<td class="group-cell" title="' + escapeAttr(dish.dish_group || '') + '">' + escapeHtml(dish.dish_group || '—') + '</td>' +
         '<td><span class="menu-cls-chip cls-' + (dish.ks_class || 'unknown') + '">' + (dish.ks_class || '—') + '</span></td>' +
-        '<td style="text-align:right">' + Math.round(qty).toLocaleString('ru') + '</td>' +
-        '<td style="text-align:right">' + revStr + ' ₽</td>' +
-        '<td style="text-align:right">' + Math.round(margin) + ' ₽</td>' +
-        '<td style="text-align:right">' + mixPct.toFixed(1) + '%</td>' +
-        '<td class="' + vsNetClass + '" style="text-align:center">' + vsNetStr + '</td>' +
+        '<td class="menu-num">' + Math.round(qty).toLocaleString('ru') + '</td>' +
+        '<td class="menu-num">' + revStr + ' ₽</td>' +
+        '<td class="menu-num">' + Math.round(margin) + ' ₽</td>' +
+        '<td class="menu-num">' + fcPct.toFixed(1) + '%</td>' +
+        '<td class="menu-num">' + mixPct.toFixed(1) + '%</td>' +
+        '<td class="menu-num-center ' + vsNetClass + '">' + vsNetStr + '</td>' +
       '</tr>'
     );
   }).join('');
@@ -4483,11 +4486,11 @@ function renderDrawerBody(dish) {
   if (dish.network && dish.network.n_rests >= 3) {
     const net = dish.network;
     const myMargin = margin;
-    const netMargin = net.margin_per_unit_median || 0;
+    const netMargin = net.margin_p50_net || 0;
     const marginDiff = netMargin > 0 ? ((myMargin - netMargin) / netMargin * 100) : 0;
     
-    const myMix = dish.mix_pct_group || 0;
-    const netMix = net.mix_pct_group_median || 0;
+    const myMix = dish.menu_mix_pct_group || 0;
+    const netMix = net.mix_pct_p50_net || 0;
     const mixDiff = netMix > 0 ? ((myMix - netMix) / netMix * 100) : 0;
     
     sections.push(

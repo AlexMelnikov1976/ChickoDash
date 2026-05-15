@@ -988,6 +988,20 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 .menu-vs-net-down{color:var(--red);font-weight:600}
 .menu-vs-net-na  {color:var(--text3)}
 
+/* Числовые колонки: правый край + табличные цифры (моноширинные цифры разной ширины
+   в шрифте Inter — без tabular-nums числа «прыгают» по позиции) */
+.menu-table td.menu-num,
+.menu-table td.menu-num-center{
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+}
+.menu-table td.menu-num       {text-align:right}
+.menu-table td.menu-num-center{text-align:center}
+/* Заголовки числовых колонок выравниваем так же, как ячейки —
+   колонки 5..10 в текущем порядке (Кол-во / Выручка / Маржа / Фудкост / Доля / vs сеть). */
+.menu-table thead th:nth-child(n+5):nth-child(-n+9){text-align:right}
+.menu-table thead th:nth-child(10){text-align:center}
+
 /* Empty state для таблицы */
 .menu-table-empty{
   text-align:center;
