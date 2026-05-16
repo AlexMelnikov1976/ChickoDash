@@ -325,6 +325,21 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
     const restIdsCsv = restIds.join(',');
     const uuidsSubquery = `SELECT DISTINCT dept_uuid FROM chicko.mart_restaurant_daily_base WHERE dept_id IN (${restIdsCsv})`;
 
+    // Phase 2.14 fix (dormant false-positive): days_since_last_sale считается
+    // от `end`, но если end > max(report_date) в данных (юзер выбрал период
+    // дальше, чем D-1 свежесть), ВСЕ блюда становятся dormant. Берём фактический
+    // max(report_date) в scope и используем его как effectiveEnd в dateDiff'ах.
+    const maxR = await ch.query(
+      `SELECT toString(max(report_date)) AS m FROM chicko.dish_sales WHERE dept_uuid IN (${uuidsSubquery}) AND report_date <= '${end}'`
+    );
+    const actualMaxRows = maxR.data as Array<{ m: string }>;
+    const actualMax = actualMaxRows.length ? actualMaxRows[0].m : '';
+    // effectiveEnd: если фактический max < выбранного end, используем его;
+    // если данных в scope нет (actualMax === '') — fallback на end (классификация
+    // даст ks=empty, total_qty=0 → classifyKS вернёт [] корректно).
+    const effectiveEnd = (actualMax && actualMax < end) ? actualMax : end;
+    console.log(`[menu] end=${end} actualMax=${actualMax} effectiveEnd=${effectiveEnd}`);
+
     // Расширенное окно для seasonal — ±30 дней от календарного года назад
     const seasonalStart = shiftIsoDate(shiftOneYearBack(start), -SEASONAL_WINDOW_DAYS);
     const seasonalEnd = shiftIsoDate(shiftOneYearBack(end), SEASONAL_WINDOW_DAYS);
@@ -367,8 +382,8 @@ export async function handleMenuAnalysis(request: Request, env: Env): Promise<Re
         round(SUM(d.foodcost_rub) / nullIf(SUM(d.revenue_rub), 0) * 100, 1) AS avg_foodcost_pct,
         toString(h.first_sold_at) AS first_sold_at,
         toString(h.last_sold_at) AS last_sold_at,
-        dateDiff('day', h.first_sold_at, toDate('${end}')) AS days_in_menu,
-        dateDiff('day', h.last_sold_at, toDate('${end}')) AS days_since_last_sale
+        dateDiff('day', h.first_sold_at, toDate('${effectiveEnd}')) AS days_in_menu,
+        dateDiff('day', h.last_sold_at, toDate('${effectiveEnd}')) AS days_since_last_sale
       FROM chicko.dish_sales d
       INNER JOIN valid_days v ON d.dept_uuid = v.dept_uuid AND d.report_date = v.report_date
       INNER JOIN history h ON d.dish_code = h.dish_code
