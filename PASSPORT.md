@@ -1053,6 +1053,22 @@ npx tsc --noEmit
 
 ## Лог версий паспорта
 
+- **v3.56 (15.05.2026) — Phase 2.14 final: мульти-выбор скоупится только на «Меню».** По обратной связи пользователя: чекбоксы и actions-bar (ОК / Сброс / Все) в верхнем селекторе должны появляться **только** на вкладке «Касаван-Смит». На всех остальных вкладках (Обзор / Динамика / Сравнение / Анализ / Персонал / Маркетинг / Owner PnL) селектор должен вести себя как до Phase 2.14 — single-click сразу применяет выбор, без чекбоксов и без actions-bar.
+
+  Изменения (коммит 801ad65):
+  - Новый helper `_isMenuTabActive()` — определяет активную вкладку через `.ntab.active[data-tab="menu"]`.
+  - `buildSelList()` ветвится: на «Меню» — рендерит чекбоксы и `selToggleRest`-обработчик (toggle в PENDING_SCOPE), на остальных — legacy single-click через `pickRest(idx)` (как до Phase 2.14, мгновенное применение).
+  - `_updateSelSearchLabel()` ветвится: на не-Меню — `R.city` (или «🌐 Вся сеть» при NETWORK_MODE), на Меню — мульти-лейбл от APPLIED_SCOPE.
+  - CSS: `.sel-actions` скрыт по умолчанию, виден только при `.sel-dropdown.menu-mode`. Класс ставится в `buildSelList`.
+  - В `goTab()` после переключения вкладки — `buildSelList(RESTS) + _updateSelSearchLabel()` для перерисовки селектора в нужном режиме.
+
+  Поведение state:
+  - APPLIED_SCOPE и MENU_STATE.selectedDeptIds живут между вкладками — мульти-выбор не сбрасывается при переходе на Обзор. Возврат на «Меню» — мульти-выбор виден снова.
+  - Single-click на не-Меню вкладке = `pickRest` → APPLIED_SCOPE редуцируется до `{ R.id }` и MENU_STATE.selectedDeptIds очищается. UX: «выбрал на Обзоре Калининград → пошёл на Меню, там тоже Калининград».
+  - Backend не трогался — он уже поддерживает оба параметра (single `restaurant_id` и CSV `restaurant_ids`), фронт сам выбирает что слать.
+
+  В проде: версия Worker `3b21bfdb-9045-47ed-aeeb-5b9e194d7e4c`.
+
 - **v3.55 (15.05.2026) — Phase 2.14 hotfix: race + dormant false-positive.** Два пост-релизных фикса по обратной связи пользователя.
 
   **rAF coalescing (90c6ec2).** Симптом — при смене scope (например «Вся сеть» → 2 точки) на ~2 сек появлялся error-UI «Не удалось загрузить данные», потом данные подгружались. Корень — race condition: `_rerenderActiveTab()` вызывался дважды подряд (один внутри `toggleNetworkView`, второй явный в `selApplyScope`). Второй `renderMenu()` стартовал пока первый ещё в полёте, получал `null` из `if (loading) return null` → рисовал error UI. Когда первый завершался, данные подменялись. Фикс — флаг `_RERENDER_PENDING` + `requestAnimationFrame`: множественные синхронные вызовы `_rerenderActiveTab()` схлопываются в один rAF callback. `renderMenu()` вызывается ровно один раз с финальным состоянием. Заодно — переупорядочен `selApplyScope`: APPLIED_SCOPE и MENU_STATE.selectedDeptIds устанавливаются **после** `toggleNetworkView`/`selectRest` (которые их затирали на single { R.id } при выходе из NETWORK_MODE).
