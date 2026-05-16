@@ -433,12 +433,25 @@ function _rerenderActiveTab() {
   else setTimeout(_exec, 0);
 }
 
+// Phase 2.14: мульти-выбор работает ТОЛЬКО на вкладке «Меню» (Касаван-Смит).
+// На остальных вкладках селектор — single-click (как до Phase 2.14):
+// одна точка либо «Вся сеть» через netCb. Это определяется по активной .ntab.
+function _isMenuTabActive() {
+  const active = document.querySelector('.ntab.active');
+  return !!(active && active.dataset && active.dataset.tab === 'menu');
+}
+
 function buildSelList(list, query='') {
   const ul = document.getElementById('selList');
   const cnt = document.getElementById('selCount');
+  const dd = document.getElementById('selDropdown');
   if (!ul) return;
   const q = query.toLowerCase();
   const filtered = q ? list.filter(r => (r.name+r.city).toLowerCase().includes(q)) : list;
+  const menuMode = _isMenuTabActive();
+  // CSS-флаг для actions-bar: видим только в menu-mode.
+  if (dd) dd.classList.toggle('menu-mode', menuMode);
+
   ul.innerHTML = filtered.map((r,i) => {
     const idx = RESTS.indexOf(r);
     const isActive = R && r.name === R.name;
@@ -446,15 +459,23 @@ function buildSelList(list, query='') {
     const isKaln = r.city && r.city.toLowerCase().includes('калининград');
     const locked = _KALN_LOCKED && !isKaln;
     const lockStyle = locked ? 'opacity:0.3;pointer-events:none;cursor:default;' : '';
-    // Чекбокс — multi-выбор, без авто-загрузки; применяется по ОК.
-    return `<div class="sel-item${isActive?' active':''}${isPending?' pending':''}" style="${lockStyle}" ${locked ? '' : `onclick="selToggleRest(${idx}, event)"`}>
-      <input type="checkbox" class="sel-cb" ${isPending?'checked':''} ${locked?'disabled':''} onclick="selToggleRest(${idx}, event)">
+
+    if (menuMode) {
+      // Меню: чекбоксы, клик = toggle в PENDING_SCOPE, применяется по ОК.
+      return `<div class="sel-item${isActive?' active':''}${isPending?' pending':''}" style="${lockStyle}" ${locked ? '' : `onclick="selToggleRest(${idx}, event)"`}>
+        <input type="checkbox" class="sel-cb" ${isPending?'checked':''} ${locked?'disabled':''} onclick="selToggleRest(${idx}, event)">
+        <span style="font-weight:500;color:var(--text)">${r.city}</span>
+        <span class="sel-city" style="flex:1;text-align:right">${r.name.replace('Чико (','').replace(')','').replace('Чико Рико ','Рико ').slice(0,24)}</span>
+      </div>`;
+    }
+    // Не-Меню: legacy single-click, без чекбокса. Клик = немедленно применить.
+    return `<div class="sel-item${isActive?' active':''}" style="${lockStyle}" ${locked ? '' : `onclick="pickRest(${idx})"`}>
       <span style="font-weight:500;color:var(--text)">${r.city}</span>
       <span class="sel-city" style="flex:1;text-align:right">${r.name.replace('Чико (','').replace(')','').replace('Чико Рико ','Рико ').slice(0,24)}</span>
     </div>`;
   }).join('');
   if (cnt) cnt.textContent = filtered.length + ' из ' + RESTS.length + ' ресторанов';
-  _updateSelActState();
+  if (menuMode) _updateSelActState();
 }
 
 function _updateSelActState() {
@@ -470,10 +491,16 @@ function _updateSelActState() {
 function _updateSelSearchLabel() {
   const inp = document.getElementById('selSearch');
   if (!inp) return;
+  // На не-Меню вкладках — legacy: либо город R, либо «Вся сеть» при NETWORK_MODE.
+  // На Меню — мульти-выбор: 0/1 → город, N>1 → «🏙 N точек», все → «🌐 Вся сеть».
+  if (!_isMenuTabActive()) {
+    if (NETWORK_MODE) { inp.value = '🌐 Вся сеть'; return; }
+    inp.value = (R && R.city) ? R.city : '';
+    return;
+  }
   const n = APPLIED_SCOPE.size;
   const total = (typeof RESTS !== 'undefined' && RESTS) ? RESTS.length : 0;
   if (n === 0) {
-    // Single legacy режим — показываем город текущего R, как было до Phase 2.14.
     if (R && R.city) inp.value = R.city; else inp.value = '';
   } else if (n === 1) {
     const onlyId = Array.from(APPLIED_SCOPE)[0];
@@ -1147,6 +1174,11 @@ function goTab(el) {
   document.getElementById('p-'+tab).classList.add('active');
   // Phase 2.9.4: запоминаем вкладку для восстановления после рефреша
   try { sessionStorage.setItem('chicko_tab', tab); } catch(e) {}
+  // Phase 2.14: режим верхнего селектора зависит от вкладки. На «Меню» —
+  // multi-выбор (чекбоксы + actions-bar ОК/Сброс/Все). На остальных —
+  // legacy single-click (как до Phase 2.14). Перерисовываем список и
+  // лейбл при смене вкладки.
+  try { buildSelList(RESTS); _updateSelSearchLabel(); } catch(e) { console.warn('[goTab] sel:', e.message); }
   if(tab==='dynamics') renderDynamics();
   if(tab==='compare') renderCompare();
   if(tab==='analysis') renderAnalysis();

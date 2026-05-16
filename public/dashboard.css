@@ -388,8 +388,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 .sel-item .sel-cb{accent-color:var(--gold);cursor:pointer;margin:0;flex-shrink:0}
 .sel-count{font-size:10px;color:var(--text3);padding:6px 14px;border-top:1px solid var(--border)}
 
-/* Phase 2.14: actions bar в верхнем селекторе — ОК / Сброс / Все + счётчик */
-.sel-actions{
+/* Phase 2.14: actions bar в верхнем селекторе — ОК / Сброс / Все + счётчик.
+   Виден ТОЛЬКО когда selDropdown в режиме «Меню» (class .menu-mode), потому
+   что мульти-выбор работает только на вкладке Касаван-Смит. */
+.sel-actions{display:none}
+.sel-dropdown.menu-mode .sel-actions{
   display:flex;
   align-items:center;
   gap:6px;
