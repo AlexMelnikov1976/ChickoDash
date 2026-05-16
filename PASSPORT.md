@@ -1053,6 +1053,14 @@ npx tsc --noEmit
 
 ## Лог версий паспорта
 
+- **v3.55 (15.05.2026) — Phase 2.14 hotfix: race + dormant false-positive.** Два пост-релизных фикса по обратной связи пользователя.
+
+  **rAF coalescing (90c6ec2).** Симптом — при смене scope (например «Вся сеть» → 2 точки) на ~2 сек появлялся error-UI «Не удалось загрузить данные», потом данные подгружались. Корень — race condition: `_rerenderActiveTab()` вызывался дважды подряд (один внутри `toggleNetworkView`, второй явный в `selApplyScope`). Второй `renderMenu()` стартовал пока первый ещё в полёте, получал `null` из `if (loading) return null` → рисовал error UI. Когда первый завершался, данные подменялись. Фикс — флаг `_RERENDER_PENDING` + `requestAnimationFrame`: множественные синхронные вызовы `_rerenderActiveTab()` схлопываются в один rAF callback. `renderMenu()` вызывается ровно один раз с финальным состоянием. Заодно — переупорядочен `selApplyScope`: APPLIED_SCOPE и MENU_STATE.selectedDeptIds устанавливаются **после** `toggleNetworkView`/`selectRest` (которые их затирали на single { R.id } при выходе из NETWORK_MODE).
+
+  **Dormant false-positive (d4ebc5d).** Симптом — «Вся сеть» + период «1 мар — 31 май» → 0 Stars / 0 Plowhorses / 0 Puzzles / 0 Dogs / 0 New / 0 Too_small, **693 Dormant** из 763 блюд. Корень — `days_since_last_sale = dateDiff('day', last_sold_at, '${end}')` использовал выбранный конец периода (2026-05-31), а данные есть только до D-1 (2026-05-14). Разница 17 дней > `DORMANT_THRESHOLD_DAYS=14` → ВСЕ блюда формально dormant, даже активно продававшиеся до самого края данных. Фикс — добавлен запрос `SELECT max(report_date) FROM chicko.dish_sales WHERE dept_uuid IN (scope) AND report_date <= end`. Используется `effectiveEnd = min(end, actualMax)` в обоих `dateDiff`'ах (`days_in_menu` и `days_since_last_sale`). Лёгкий запрос (один max-индекс по выборке точек). Проблема воспроизводилась как в multi-, так и в single-режиме для любого периода, заканчивающегося после фактической свежести данных.
+
+  В проде: версия Worker `355209a5-b147-4ba2-b393-ea30857fbaa6`.
+
 - **v3.54 (15.05.2026) — Phase 2.14 closed: «Меню» = multi-city + UX-фиксы.** Большая работа по вкладке Касаван-Смит в 8 коммитах.
 
   Bug-fix таблицы (5dd54f8): «Доля %» и «vs сеть» больше не пустые. Корень — рассинхрон имён полей backend ↔ frontend (`mix_pct_group` vs `menu_mix_pct_group`, `margin_p50_net` vs `margin_per_unit_median`, `mix_pct_p50_net` vs `mix_pct_group_median`). Поправлено в 6 точках dashboard.js (renderMenuTableBody + drawer). Добавлена колонка «Фудкост %» (поле `avg_foodcost_pct` уже было в ответе, просто не отображалось). Inline `style="text-align:right"` заменён на CSS-классы `.menu-num` / `.menu-num-center` с `font-variant-numeric: tabular-nums` — цифры моноширинные, не «прыгают». Заголовки числовых колонок выровнены через `thead th:nth-child(5..10)`.
